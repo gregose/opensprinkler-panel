@@ -54,6 +54,8 @@ jobs:
         run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}" "esptool==${{ env.ESPTOOL_VERSION }}"
       - name: Build firmware
         run: pio run -e cyd-35r
+      - name: Build diag firmware
+        run: GIT_SHA=$(git rev-parse --short HEAD) pio run -e cyd-35r-diag
       - name: Build flashable firmware artifact
         run: |
           set -euo pipefail
