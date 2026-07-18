@@ -56,6 +56,12 @@ static constexpr const char* NVS_PASS  = "wifi_pass";
 static constexpr const char* NVS_HOST  = "os_host";
 static constexpr const char* NVS_PWMD5 = "os_pw_md5";
 
+// Timeout for the NVS interactive setter (ms).
+static constexpr unsigned long NVS_INPUT_TIMEOUT_MS = 30000;
+
+// Timeout for waiting for touch release during calibration (ms).
+static constexpr unsigned long TOUCH_RELEASE_TIMEOUT_MS = 5000;
+
 // ---------------------------------------------------------------------------
 // Hardware objects
 // ---------------------------------------------------------------------------
@@ -261,8 +267,15 @@ static void m2_calibration() {
             }
             delay(50);
         }
-        // Wait for release.
-        { uint16_t dx, dy; while (tft.getTouchRaw(&dx, &dy)) delay(30); }
+        // Wait for release (with timeout to avoid hanging on sensor fault).
+        {
+            uint16_t dx, dy;
+            const unsigned long t0 = millis();
+            while (tft.getTouchRaw(&dx, &dy) &&
+                   (millis() - t0) < TOUCH_RELEASE_TIMEOUT_MS) {
+                delay(30);
+            }
+        }
     }
 
 #ifdef HAVE_TOUCH_CAL
@@ -403,7 +416,7 @@ static void nvs_set_interactive() {
     Serial.println("NVS> (os_pw_md5 accepts plaintext — MD5 computed on-device)");
 
     String line;
-    const unsigned long deadline = millis() + 30000;
+    const unsigned long deadline = millis() + NVS_INPUT_TIMEOUT_MS;
     while (millis() < deadline) {
         if (Serial.available()) {
             const char c = (char)Serial.read();
