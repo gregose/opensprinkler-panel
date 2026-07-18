@@ -88,3 +88,8 @@ jobs:
         with:
           name: ${{ env.FIRMWARE_ARTIFACT_NAME }}
           path: firmware-artifact/
+      # Compile-check the diagnostic firmware LAST: building this env perturbs
+      # the .pio/build/cyd-35r output dir, so it must run after the production
+      # artifact has been packaged and uploaded.
+      - name: Build diag firmware
+        run: GIT_SHA=$(git rev-parse --short HEAD) pio run -e cyd-35r-diag
