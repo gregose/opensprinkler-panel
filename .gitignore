@@ -6,3 +6,5 @@ firmware-artifact/
 .DS_Store
 *.pyc
 __pycache__/
+logs/
+.serial-monitor/

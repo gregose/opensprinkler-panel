@@ -8,12 +8,15 @@ port=""
 pr=""
 repo=""
 run_id=""
+state_dir="${MON_STATE_DIR:-.serial-monitor}"
 
 usage() {
   cat <<'EOF'
-Usage: tools/flash.sh [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>]
+Usage: tools/flash.sh [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
 
 Download the merged firmware artifact from GitHub Actions and flash it at 0x0.
+If tools/monitor.sh is running, it releases the port for the flash and resumes
+afterward automatically.
 EOF
 }
 
@@ -110,6 +113,10 @@ while [[ $# -gt 0 ]]; do
       repo="${2:-}"
       shift 2
       ;;
+    --state-dir)
+      state_dir="${2:-}"
+      shift 2
+      ;;
     --run-id)
       run_id="${2:-}"
       shift 2
@@ -165,6 +172,18 @@ if [[ -z "$selected_run_id" || -z "$merged_firmware" ]]; then
 fi
 
 run_id="$selected_run_id"
+
+# Coordinate with a running tools/monitor.sh: ask it to release the port, wait
+# for it to let go, flash, then clear the pause so it reconnects and re-captures
+# the boot banner. If no monitor is running this is a brief, harmless no-op.
+mkdir -p "$state_dir"
+resume_monitor() { rm -f "$state_dir/pause"; }
+trap resume_monitor EXIT
+: > "$state_dir/pause"
+for _ in $(seq 1 50); do
+  [[ -e "$state_dir/active" ]] || break
+  sleep 0.1
+done
 
 printf 'Flashing run %s from %s to %s\n' "$run_id" "$repo" "$port"
 python3 -m esptool --chip esp32 --port "$port" write_flash 0x0 "$merged_firmware"

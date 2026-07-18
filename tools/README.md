@@ -41,12 +41,27 @@ finds `merged-firmware.bin`, then writes it at `0x0`.
 ./tools/monitor.sh --port /dev/ttyUSB0
 ```
 
-This opens `python3 -m serial.tools.miniterm` at `115200`.
+This streams serial output to both stdout and a log file (`logs/serial.log` by
+default) at `115200`, pulsing DTR/RTS on connect to capture a full boot banner.
+It runs happily in the foreground for a human, or in the background for an agent
+that greps the log:
+
+```bash
+./tools/monitor.sh &           # background; logs to logs/serial.log
+grep -n "tick=" logs/serial.log | tail -20
+```
+
+You do not need to stop the monitor before flashing. When `tools/flash.sh`
+runs, the monitor automatically releases the serial port for the duration of the
+flash, then reconnects and re-captures the boot. Coordination happens through a
+small state directory (`.serial-monitor/` by default; override with
+`--state-dir` or `MON_STATE_DIR`).
 
 ## Feedback loop
 
 1. Push or update the branch. Cloud CI builds the firmware artifact.
-2. Run `tools/flash.sh` locally, then `tools/monitor.sh`.
+2. Start `tools/monitor.sh` (once), then run `tools/flash.sh` whenever a new
+   artifact is ready — the monitor yields the port and resumes on its own.
 3. Capture flash outcome, boot logs, RGB heartbeat, and UI behavior.
 4. Report those observations back to the cloud coding session so the next change
    can build on real hardware feedback.
