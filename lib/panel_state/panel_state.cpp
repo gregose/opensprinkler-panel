@@ -130,8 +130,11 @@ void PanelState::on_jc(const JcData& jc) {
 
   // Determine which station (if any) the controller says is active.
   // A station is considered running if its sbits bit is set AND ps[sid].rem > 0.
+  // Skip non-runnable sids (disabled/master) so they are never mistaken for the
+  // active station even if the controller reports a stray sbit/rem.
   int jc_running_sid = -1;
   for (int sid = 0; sid < static_cast<int>(jc.ps.size()); ++sid) {
+    if (model_.runnable_index(sid) == -1) continue;
     if (board_bit_set(jc.sbits, sid) && jc.ps[sid].rem > 0) {
       jc_running_sid = sid;
       break;
