@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 # Toolchain versions are kept identical to .github/workflows/copilot-setup-steps.yml
@@ -12,6 +11,8 @@ on:
 env:
   PYTHON_VERSION: "3.11"
   PLATFORMIO_VERSION: "6.1.19"
+  ESPTOOL_VERSION: "4.11.0"
+  FIRMWARE_ARTIFACT_NAME: "cyd-35r-firmware"
 
 jobs:
   native-tests:
@@ -50,6 +51,40 @@ jobs:
             ~/.cache/pip
           key: pio-fw-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
       - name: Install PlatformIO
-        run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}"
+        run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}" "esptool==${{ env.ESPTOOL_VERSION }}"
       - name: Build firmware
         run: pio run -e cyd-35r
+      - name: Build flashable firmware artifact
+        run: |
+          set -euo pipefail
+
+          build_dir=".pio/build/cyd-35r"
+          framework_dir="$HOME/.platformio/packages/framework-arduinoespressif32"
+          boot_app0_bin="$framework_dir/tools/partitions/boot_app0.bin"
+          artifact_dir="firmware-artifact"
+
+          test -f "$boot_app0_bin"
+
+          rm -rf "$artifact_dir"
+          mkdir -p "$artifact_dir/flash"
+
+          cp "$build_dir/bootloader.bin" "$artifact_dir/bootloader.bin"
+          cp "$build_dir/partitions.bin" "$artifact_dir/partitions.bin"
+          cp "$build_dir/firmware.bin" "$artifact_dir/firmware.bin"
+          cp "$boot_app0_bin" "$artifact_dir/boot_app0.bin"
+          cp flash/index.html flash/manifest.json "$artifact_dir/flash/"
+
+          python3 -m esptool --chip esp32 merge_bin \
+            -o "$artifact_dir/merged-firmware.bin" \
+            --flash_mode dio \
+            --flash_freq 40m \
+            --flash_size 4MB \
+            0x1000 "$artifact_dir/bootloader.bin" \
+            0x8000 "$artifact_dir/partitions.bin" \
+            0xe000 "$artifact_dir/boot_app0.bin" \
+            0x10000 "$artifact_dir/firmware.bin"
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FIRMWARE_ARTIFACT_NAME }}
+          path: firmware-artifact/

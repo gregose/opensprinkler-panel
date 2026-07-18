@@ -2,7 +2,8 @@ name: "Copilot Setup Steps"
 
 # Prepares the Copilot cloud agent's ephemeral dev environment with the SAME
 # toolchain CI uses (see .github/workflows/ci.yml): Python 3.11 + PlatformIO
-# 6.1.19, plus the ESP32 platform/libraries pinned in platformio.ini
+# 6.1.19 + esptool 4.11.0, plus the ESP32 platform/libraries pinned in
+# platformio.ini
 # (espressif32@7.0.1). Pre-installing the packages here means cloud sessions
 # start with the toolchain warm instead of discovering it by trial and error.
 #
@@ -32,10 +33,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install PlatformIO
-        run: pip install "platformio==6.1.19"
+      - name: Install PlatformIO + esptool
+        run: pip install "platformio==6.1.19" "esptool==4.11.0"
 
       - name: Pre-install ESP32 + native toolchains and libraries
         run: |
           pio pkg install -e cyd-35r
           pio pkg install -e native
+
+      # Pre-warm libraries that individual milestones will add to platformio.ini
+      # DURING the agent's work phase, after these setup steps have already run.
+      # The agent's runtime firewall may block registry.platformio.org, so fetch
+      # them here (full network) into global storage where the LDF can find them.
+      # This is why M5 (#6) initially vendored Unity — avoid that by pre-warming.
+      # If you add libraries not listed here, either add them to this list or
+      # allowlist registry.platformio.org in the coding agent firewall settings.
+      - name: Pre-warm milestone libraries (global)
+        run: |
+          pio pkg install -g --library "throwtheswitch/Unity@^2.6.0"
+          pio pkg install -g --library "bblanchon/ArduinoJson@^7"

@@ -1,0 +1,16 @@
+{
+  "name": "OpenSprinkler Station Control Panel",
+  "version": "ci-artifact",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "../merged-firmware.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
