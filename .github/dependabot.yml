@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  # Keep the GitHub Actions in ci.yml and copilot-setup-steps.yml current.
+  # Dependabot understands SHA-pinned actions and bumps both the hash and the
+  # trailing "# vX.Y.Z" version comment together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # One combined PR for routine action bumps instead of one per action.
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
+  # Local flash/serial bridge Python toolchain (tools/requirements.txt).
+  # NOTE: this does NOT cover the PlatformIO/ESP32 build deps in platformio.ini
+  # (Dependabot has no PlatformIO ecosystem) — those are still bumped by hand,
+  # keeping platformio.ini and copilot-setup-steps.yml pre-warm in sync.
+  - package-ecosystem: "pip"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "tools"
