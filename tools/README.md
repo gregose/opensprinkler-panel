@@ -4,14 +4,21 @@ These scripts are the lightweight local "flash & debug" companion to the cloud
 build. CI owns all compilation. The local machine only downloads a finished
 artifact, flashes it over USB, and captures observations for the cloud session.
 
-## Install only two Python packages
+## One-time setup
 
-No PlatformIO toolchain is needed locally.
+No PlatformIO toolchain is needed locally — CI owns all compilation. The local
+side only needs esptool + pyserial (pinned to match CI) and the GitHub CLI.
 
 ```bash
-python3 -m pip install "esptool==4.11.0" "pyserial==3.5"
+./tools/setup.sh   # creates a repo-local .venv (Python 3.11) with the pinned tools
 gh auth login
 ```
+
+`setup.sh` requires Python >=3.10 on PATH (prefers 3.11 to match CI). On macOS:
+`brew install python@3.11`, then re-run it. The venv lives at `.venv/` (git
+-ignored); `flash.sh`, `monitor.sh` and `seed-nvs.sh` activate it automatically,
+so you never need to `source` it or reference an absolute path. The pinned
+versions live in `tools/requirements.txt`.
 
 ## Flash the latest CI artifact for a branch
 

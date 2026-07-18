@@ -1,0 +1,10 @@
+# Local flash/serial bridge Python toolchain.
+#
+# These are for the Mac that flashes and monitors the board over USB — NOT for
+# the firmware build (that happens in cloud CI). Versions are pinned to match
+# .github/workflows/ci.yml so local esptool behavior is identical to the tool
+# that produces the binaries.
+#
+# Install into a repo-local .venv with: ./tools/setup.sh
+esptool==4.11.0
+pyserial>=3.5

@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Use the repo-local flash toolchain venv if present (see tools/setup.sh).
+# shellcheck source=tools/_venv.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
+
 # Background-friendly serial monitor for the local flash/debug bridge.
 #
 # Unlike a bare miniterm, this monitor:
