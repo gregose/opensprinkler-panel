@@ -65,3 +65,33 @@ small state directory (`.serial-monitor/` by default; override with
 3. Capture flash outcome, boot logs, RGB heartbeat, and UI behavior.
 4. Report those observations back to the cloud coding session so the next change
    can build on real hardware feedback.
+
+## Seed NVS credentials after a full flash
+
+`tools/flash.sh` writes `merged-firmware.bin` at `0x0`, which wipes NVS.
+Use `tools/seed-nvs.sh` to seed Wi-Fi and OpenSprinkler credentials into the
+`cyd-35r-diag` firmware so the production `cyd-35r` firmware can connect and
+load `/jn` before M4 provisioning exists.
+
+Flash the diagnostic firmware first (download the `cyd-35r-diag` artifact from
+CI, or build locally with `pio run -e cyd-35r-diag`), then:
+
+```bash
+./tools/seed-nvs.sh \
+  --ssid  "MyNetwork" \
+  --pass  "wifi-password" \
+  --host  "192.168.1.100" \
+  --ospw  "openspr-device-password"
+```
+
+The `--ospw` value is the plaintext OpenSprinkler device password. The
+diagnostic firmware hashes it to MD5 on-chip via `MD5Builder` before storing it
+in NVS — plaintext is never persisted.
+
+Options:
+
+- `--port /dev/ttyUSB0` overrides auto-detection (same logic as `flash.sh`).
+- All credential flags are optional; omit any you do not want to change.
+
+After seeding, flash the production `cyd-35r` firmware. It reads the same NVS
+namespace (`osp-panel`) and connects automatically.
