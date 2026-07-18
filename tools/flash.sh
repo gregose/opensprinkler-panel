@@ -59,7 +59,7 @@ PY
 
 resolve_candidate_run_ids() {
   local active_repo="$1"
-  local run_json_query='map(select(.status == "completed" and .conclusion == "success")) | .[].databaseId'
+  local successful_runs_filter='map(select(.status == "completed" and .conclusion == "success")) | .[].databaseId'
 
   if [[ -n "$run_id" ]]; then
     printf '%s\n' "$run_id"
@@ -75,7 +75,7 @@ resolve_candidate_run_ids() {
       --event pull_request \
       --json databaseId,status,conclusion \
       --limit 20 \
-      --jq "$run_json_query"
+      --jq "$successful_runs_filter"
     return
   fi
 
@@ -89,7 +89,7 @@ resolve_candidate_run_ids() {
     --branch "$branch" \
     --json databaseId,status,conclusion \
     --limit 20 \
-    --jq "$run_json_query"
+    --jq "$successful_runs_filter"
 }
 
 while [[ $# -gt 0 ]]; do
