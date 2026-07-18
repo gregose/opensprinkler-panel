@@ -14,32 +14,6 @@ void setUp() {}
 void tearDown() {}
 
 // ---------------------------------------------------------------------------
-// md5_hex — known vectors (RFC 1321 §A.5)
-// ---------------------------------------------------------------------------
-
-void test_md5_empty_string() {
-  TEST_ASSERT_EQUAL_STRING("d41d8cd98f00b204e9800998ecf8427e",
-                           md5_hex("").c_str());
-}
-
-void test_md5_abc() {
-  TEST_ASSERT_EQUAL_STRING("900150983cd24fb0d6963f7d28e17f72",
-                           md5_hex("abc").c_str());
-}
-
-void test_md5_longer_message() {
-  // "message digest"
-  TEST_ASSERT_EQUAL_STRING("f96b697d7cb7938d525a2f31aaf161d0",
-                           md5_hex("message digest").c_str());
-}
-
-void test_md5_opendoor() {
-  // Default OS password; used in URL-building tests below.
-  TEST_ASSERT_EQUAL_STRING("a6d82bced638de3def1e9bbb4983225c",
-                           md5_hex("opendoor").c_str());
-}
-
-// ---------------------------------------------------------------------------
 // URL builders
 // ---------------------------------------------------------------------------
 
@@ -201,14 +175,14 @@ struct RecordingTransport {
 };
 
 static const std::string kHost = "http://192.168.1.100";
-static const std::string kPw = "opendoor";
-// md5("opendoor") = a6d82bced638de3def1e9bbb4983225c
+// The client is constructed with the pre-hashed pw (as stored in NVS
+// `os_pw_md5`); this is md5("opendoor"), the default OS password.
 static const std::string kMd5 = "a6d82bced638de3def1e9bbb4983225c";
 
 void test_client_fetch_jn() {
   RecordingTransport rt;
   rt.response = kJnBody;
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   JnData d;
   TEST_ASSERT_TRUE(c.fetch_jn(d));
@@ -223,7 +197,7 @@ void test_client_fetch_jn() {
 void test_client_fetch_jc() {
   RecordingTransport rt;
   rt.response = kJcBody;
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   JcData d;
   TEST_ASSERT_TRUE(c.fetch_jc(d));
@@ -237,7 +211,7 @@ void test_client_fetch_jc() {
 void test_client_run_station() {
   RecordingTransport rt;
   rt.response = R"({"result":1})";
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_TRUE(c.run_station(2, 180));
   TEST_ASSERT_TRUE(c.connected());
@@ -252,7 +226,7 @@ void test_client_run_station() {
 void test_client_stop_station() {
   RecordingTransport rt;
   rt.response = R"({"result":1})";
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_TRUE(c.stop_station(4));
   TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rt.calls.size()));
@@ -266,7 +240,7 @@ void test_client_stop_station() {
 void test_client_stop_all() {
   RecordingTransport rt;
   rt.response = R"({"result":1})";
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_TRUE(c.stop_all());
   TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rt.calls.size()));
@@ -278,7 +252,7 @@ void test_client_advance_off_then_on() {
   // advance must issue stop(from) then run(to) in that exact order.
   RecordingTransport rt;
   rt.response = R"({"result":1})";
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_TRUE(c.advance(1, 3, 240));
   TEST_ASSERT_EQUAL_INT(2, static_cast<int>(rt.calls.size()));
@@ -297,7 +271,7 @@ void test_client_advance_aborts_if_stop_fails() {
   // If the first (stop) call fails, advance must not issue the run call.
   RecordingTransport rt;
   rt.response = "";  // empty = network error
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_FALSE(c.advance(1, 3, 240));
   TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rt.calls.size()));  // only the stop
@@ -307,7 +281,7 @@ void test_client_advance_aborts_if_stop_fails() {
 void test_client_extend_off_then_on_same_sid() {
   RecordingTransport rt;
   rt.response = R"({"result":1})";
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   TEST_ASSERT_TRUE(c.extend(2, 300));
   TEST_ASSERT_EQUAL_INT(2, static_cast<int>(rt.calls.size()));
@@ -324,7 +298,7 @@ void test_client_extend_off_then_on_same_sid() {
 void test_client_network_error_sets_disconnected() {
   RecordingTransport rt;
   rt.response = "";  // simulate timeout/failure
-  OsClient c(kHost, kPw, [&rt](const std::string& url) { return rt(url); });
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
 
   JcData d;
   TEST_ASSERT_FALSE(c.fetch_jc(d));
@@ -336,10 +310,6 @@ void test_client_network_error_sets_disconnected() {
 int main(int, char**) {
   UNITY_BEGIN();
 
-  RUN_TEST(test_md5_empty_string);
-  RUN_TEST(test_md5_abc);
-  RUN_TEST(test_md5_longer_message);
-  RUN_TEST(test_md5_opendoor);
 
   RUN_TEST(test_build_jn_url);
   RUN_TEST(test_build_jc_url);

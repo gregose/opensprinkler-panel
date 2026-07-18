@@ -78,11 +78,6 @@ bool parse_jc(const std::string& body, JcData& out);
 OsResult parse_result(const std::string& body);
 
 // ---------------------------------------------------------------------------
-// Portable MD5 hex digest (lowercase, 32 chars).  Used to build pw= params.
-// ---------------------------------------------------------------------------
-std::string md5_hex(const std::string& input);
-
-// ---------------------------------------------------------------------------
 // Transport type: given a URL returns the response body, or "" on failure.
 // ---------------------------------------------------------------------------
 using Transport = std::function<std::string(const std::string& url)>;
@@ -92,10 +87,12 @@ using Transport = std::function<std::string(const std::string& url)>;
 // ---------------------------------------------------------------------------
 class OsClient {
  public:
-  // host   = "http://<ip-or-hostname>" (no trailing slash)
-  // pw     = plaintext device password (will be MD5-hashed internally)
-  // xport  = injected transport function
-  OsClient(const std::string& host, const std::string& pw, Transport xport);
+  // host    = "http://<ip-or-hostname>" (no trailing slash)
+  // pw_md5  = MD5 hex of the device password, as stored in NVS `os_pw_md5`
+  //           (hashed once at provisioning via arduino-esp32 MD5Builder — the
+  //           pure client never sees or hashes plaintext).
+  // xport   = injected transport function
+  OsClient(const std::string& host, const std::string& pw_md5, Transport xport);
 
   // True after the last request succeeded.
   bool connected() const { return connected_; }
@@ -125,7 +122,7 @@ class OsClient {
 
  private:
   std::string host_;
-  std::string pw_hex_;   // pre-computed MD5 of the plaintext password
+  std::string pw_hex_;   // MD5 hex of the device password (supplied, from NVS)
   Transport transport_;
   bool connected_ = false;
 };
