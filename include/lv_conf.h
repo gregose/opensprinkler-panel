@@ -81,7 +81,6 @@
 #define LV_USE_LABEL   1
 #define LV_USE_BTN     1
 #define LV_USE_SWITCH  1
-#define LV_USE_LINE    1
 #define LV_USE_OBJ     1
 
 /* ---- Theme ------------------------------------------------------------- */

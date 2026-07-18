@@ -94,6 +94,7 @@ bool PanelState::tick(uint32_t now_ms) {
     const uint32_t secs = elapsed / 1000u;
     if (secs > 0u) {
       last_countdown_tick_ms_ += secs * 1000u;
+      // countdown_s > 0 is guaranteed by the outer guard above.
       if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
         view_.countdown_s = 0;
         on_station_expired();

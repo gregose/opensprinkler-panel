@@ -147,10 +147,11 @@ static lv_obj_t* sw_auto_adv    = nullptr;
 static lv_obj_t* lbl_aa_hint    = nullptr;
 
 // Grid
-static lv_obj_t* lbl_grid_title = nullptr;
-static lv_obj_t* grid_cont      = nullptr;
-static lv_obj_t* stn_pills[24]  = {};
-static int       g_pill_count   = 0;
+static lv_obj_t* lbl_grid_title  = nullptr;
+static lv_obj_t* grid_cont       = nullptr;
+static lv_obj_t* stn_pills[24]   = {};
+static lv_obj_t* stn_pill_lbls[24] = {};  // labels inside pills for recoloring
+static int       g_pill_count    = 0;
 
 // Overlays
 static lv_obj_t* sleep_overlay  = nullptr;
@@ -165,9 +166,17 @@ static void fmt_countdown(char* buf, int secs) {
 }
 
 static void fmt_rssi_bars(char* buf, int bars) {
-    // 0-4 bars using block characters
-    const char* strs[] = {"----", "|\x2D\x2D\x2D", "||\x2D\x2D", "|||-", "||||"};
+    // 0-4 bars using block characters; - is the "empty bar" placeholder
+    const char* strs[] = {"----", "|---", "||--", "|||-", "||||"};
     snprintf(buf, 16, "%s", strs[(bars < 0) ? 0 : (bars > 4 ? 4 : bars)]);
+}
+
+// Store/retrieve a station sid (int) as lv_obj user_data (void*).
+static void set_pill_sid(lv_obj_t* obj, int sid) {
+    lv_obj_set_user_data(obj, reinterpret_cast<void*>(static_cast<intptr_t>(sid)));
+}
+static int get_pill_sid(lv_obj_t* obj) {
+    return static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(obj)));
 }
 
 // Create a button with a centered text label.
@@ -211,8 +220,7 @@ static void ev_auto_adv(lv_event_t* e) {
 static void ev_pill(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
         lv_obj_t* pill = static_cast<lv_obj_t*>(lv_event_get_target(e));
-        const int sid = static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(pill)));
-        g_ps->select_station(sid);
+        g_ps->select_station(get_pill_sid(pill));
     }
 }
 static void ev_touch_any(lv_event_t* e) {
@@ -326,6 +334,7 @@ static void build_ui() {
 
     // ---- Action row (Prev / Advance / Stop — same baseline) -----------
     // One consistent row pinned between the panels and the grid.
+    // U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK (‹)
     btn_prev = make_btn(scr, "\xe2\x80\xb9 Prev",
                         CLR_LINE, CLR_TEXT);           // ghost style
     lv_obj_set_size(btn_prev, LEFT_W / 2 - 4, ACTION_H);
@@ -333,6 +342,7 @@ static void build_ui() {
     lv_obj_add_flag(btn_prev, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_prev, ev_prev, LV_EVENT_CLICKED, nullptr);
 
+    // U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK (›)
     btn_advance = make_btn(scr, "Advance \xe2\x80\xba",
                            CLR_TEAL, CLR_BG);          // teal
     lv_obj_set_size(btn_advance, LEFT_W / 2 - 4, ACTION_H);
@@ -340,6 +350,7 @@ static void build_ui() {
     lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
 
+    // U+25A0 BLACK SQUARE (■)
     btn_stop = make_btn(scr, "\xe2\x96\xa0 Stop",
                         CLR_RED, CLR_BG);               // red
     lv_obj_set_size(btn_stop, RIGHT_W - 8, ACTION_H);
@@ -454,6 +465,7 @@ static void build_ui() {
 static void build_grid() {
     for (int i = 0; i < g_pill_count; ++i) {
         if (stn_pills[i]) { lv_obj_delete(stn_pills[i]); stn_pills[i] = nullptr; }
+        stn_pill_lbls[i] = nullptr;
     }
     g_pill_count = 0;
 
@@ -474,7 +486,7 @@ static void build_grid() {
         lv_obj_set_style_bg_color(pill, hex_color(CLR_LINE), 0);
         lv_obj_set_style_radius(pill, 6, 0);
         lv_obj_set_style_border_width(pill, 0, 0);
-        lv_obj_set_user_data(pill, reinterpret_cast<void*>(static_cast<intptr_t>(sid)));
+        set_pill_sid(pill, sid);
 
         char num[8];
         snprintf(num, sizeof(num), "%d", sid + 1);
@@ -485,7 +497,8 @@ static void build_grid() {
         lv_obj_center(lbl);
 
         lv_obj_add_event_cb(pill, ev_pill, LV_EVENT_CLICKED, nullptr);
-        stn_pills[g_pill_count++] = pill;
+        stn_pill_lbls[g_pill_count] = lbl;
+        stn_pills[g_pill_count++]   = pill;
     }
 }
 
@@ -569,15 +582,11 @@ static void ui_update() {
     // Pill highlights
     for (int i = 0; i < g_pill_count; ++i) {
         if (!stn_pills[i]) continue;
-        const int sid = static_cast<int>(
-            reinterpret_cast<intptr_t>(lv_obj_get_user_data(stn_pills[i])));
-        const bool active = running && (sid == v.running_sid);
+        const bool active = running && (get_pill_sid(stn_pills[i]) == v.running_sid);
         lv_obj_set_style_bg_color(stn_pills[i],
             hex_color(active ? CLR_TEAL : CLR_LINE), 0);
-        // Find the label child and recolor it.
-        lv_obj_t* lbl = lv_obj_get_child(stn_pills[i], 0);
-        if (lbl) {
-            lv_obj_set_style_text_color(lbl,
+        if (stn_pill_lbls[i]) {
+            lv_obj_set_style_text_color(stn_pill_lbls[i],
                 hex_color(active ? CLR_BG : CLR_TEXT), 0);
         }
     }
