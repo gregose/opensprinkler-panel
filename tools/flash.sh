@@ -57,9 +57,9 @@ print(devices[0])
 PY
 }
 
-resolve_run_id() {
+resolve_candidate_run_ids() {
   local active_repo="$1"
-  local run_json_query='map(select(.status == "completed" and .conclusion == "success")) | .[0].databaseId'
+  local run_json_query='map(select(.status == "completed" and .conclusion == "success")) | .[].databaseId'
 
   if [[ -n "$run_id" ]]; then
     printf '%s\n' "$run_id"
@@ -132,12 +132,6 @@ if [[ -n "$branch" && -n "$pr" ]]; then
 fi
 
 repo="$(resolve_repo)"
-run_id="$(resolve_run_id "$repo")"
-
-if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-  printf '%s\n' "No successful ci.yml run found for the requested branch or PR." >&2
-  exit 1
-fi
 
 if [[ -z "$port" ]]; then
   port="$(detect_port)"
@@ -146,13 +140,31 @@ fi
 download_dir="$(mktemp -d)"
 trap 'rm -rf "$download_dir"' EXIT
 
-gh run download "$run_id" -R "$repo" -n "$artifact_name" -D "$download_dir"
+selected_run_id=""
+merged_firmware=""
+while IFS= read -r candidate_run_id; do
+  [[ -n "$candidate_run_id" && "$candidate_run_id" != "null" ]] || continue
 
-merged_firmware="$(find "$download_dir" -name merged-firmware.bin -print -quit)"
-if [[ -z "$merged_firmware" ]]; then
-  printf '%s\n' "merged-firmware.bin not found in downloaded artifact." >&2
+  candidate_dir="$download_dir/$candidate_run_id"
+  mkdir -p "$candidate_dir"
+
+  if ! gh run download "$candidate_run_id" -R "$repo" -n "$artifact_name" -D "$candidate_dir" >/dev/null 2>&1; then
+    continue
+  fi
+
+  merged_firmware="$(find "$candidate_dir" -name merged-firmware.bin -print -quit)"
+  if [[ -n "$merged_firmware" ]]; then
+    selected_run_id="$candidate_run_id"
+    break
+  fi
+done < <(resolve_candidate_run_ids "$repo")
+
+if [[ -z "$selected_run_id" || -z "$merged_firmware" ]]; then
+  printf '%s\n' "No successful ci.yml run with a ${artifact_name} artifact was found." >&2
   exit 1
 fi
+
+run_id="$selected_run_id"
 
 printf 'Flashing run %s from %s to %s\n' "$run_id" "$repo" "$port"
 python3 -m esptool --chip esp32 --port "$port" write_flash 0x0 "$merged_firmware"

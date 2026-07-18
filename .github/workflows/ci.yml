@@ -74,7 +74,7 @@ jobs:
           cp "$boot_app0_bin" "$artifact_dir/boot_app0.bin"
           cp flash/index.html flash/manifest.json "$artifact_dir/flash/"
 
-          python -m esptool --chip esp32 merge_bin \
+          python3 -m esptool --chip esp32 merge_bin \
             -o "$artifact_dir/merged-firmware.bin" \
             --flash_mode dio \
             --flash_freq 40m \
