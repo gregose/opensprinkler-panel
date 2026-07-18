@@ -52,3 +52,6 @@ jobs:
         run: |
           pio pkg install -g --library "throwtheswitch/Unity@^2.6.0"
           pio pkg install -g --library "bblanchon/ArduinoJson@^7"
+          pio pkg install -g --library "bodmer/TFT_eSPI@^2.5"
+          pio pkg install -g --library "lvgl/lvgl@^9.2"
+          pio pkg install -g --library "tzapu/WiFiManager@^2.0"

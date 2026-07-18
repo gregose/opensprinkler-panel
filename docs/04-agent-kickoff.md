@@ -47,7 +47,7 @@ host + MD5(password) + `ota_pass` + tunables in NVS (`Preferences`); BOOT-hold
 clears config and re-enters the portal. *Done when:* first boot with no config
 opens the portal, saved config survives reboot, BOOT-hold re-provisions.
 
-**M4.5 — Wireless dev loop (OTA + network logs).** Switch to the `default.csv`
+**M4.5 — Wireless dev loop (OTA + network logs).** Switch to the `min_spiffs.csv`
 dual-OTA partition table; add an `ArduinoOTA` responder (password from NVS, mDNS
 hostname `ospanel.local`) and a lightweight `WiFiServer` TCP log sink that mirrors
 `Serial`, both behind a `DEV_LOOP` build flag. Add `tools/ota.sh` (download the
@@ -100,5 +100,5 @@ package's `01`/`02` are the tie-breakers for behavior and API.
 - **USB `flash.sh` writes the merged image at `0x0` → it wipes NVS** (Wi-Fi + OS
   config) every time; that's bootstrap/recovery only. Iterate with **OTA**
   (`tools/ota.sh`), which rewrites only the app partition and preserves NVS
-  (`03` §Wireless dev loop). OTA requires the **`default.csv` dual-OTA partition
+  (`03` §Wireless dev loop). OTA requires the **`min_spiffs.csv` dual-OTA partition
   table** (M4.5).
