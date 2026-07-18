@@ -12,7 +12,11 @@ env:
   PYTHON_VERSION: "3.11"
   PLATFORMIO_VERSION: "6.1.19"
   ESPTOOL_VERSION: "4.11.0"
-  FIRMWARE_ARTIFACT_NAME: "cyd-35r-firmware"
+  # Artifact base names; the short commit SHA is appended per run so multiple
+  # builds are distinguishable when downloading/flashing (tools/flash.sh matches
+  # these by prefix). Keep in sync with tools/flash.sh.
+  PROD_ARTIFACT_BASE: "cyd-35r-firmware"
+  DIAG_ARTIFACT_BASE: "cyd-35r-diag-firmware"
 
 jobs:
   native-tests:
@@ -43,6 +47,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      - name: Resolve build metadata
+        id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
       - name: Cache PlatformIO
         uses: actions/cache@v4
         with:
@@ -52,44 +59,28 @@ jobs:
           key: pio-fw-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
       - name: Install PlatformIO
         run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}" "esptool==${{ env.ESPTOOL_VERSION }}"
-      - name: Build firmware
+
+      # Production firmware (M6 UI). Build + package BEFORE the diag build, which
+      # overwrites the shared .pio/build toolchain outputs that merge_bin reads.
+      - name: Build production firmware (cyd-35r)
         run: pio run -e cyd-35r
-      - name: Build flashable firmware artifact
-        run: |
-          set -euo pipefail
-
-          build_dir=".pio/build/cyd-35r"
-          framework_dir="$HOME/.platformio/packages/framework-arduinoespressif32"
-          boot_app0_bin="$framework_dir/tools/partitions/boot_app0.bin"
-          artifact_dir="firmware-artifact"
-
-          test -f "$boot_app0_bin"
-
-          rm -rf "$artifact_dir"
-          mkdir -p "$artifact_dir/flash"
-
-          cp "$build_dir/bootloader.bin" "$artifact_dir/bootloader.bin"
-          cp "$build_dir/partitions.bin" "$artifact_dir/partitions.bin"
-          cp "$build_dir/firmware.bin" "$artifact_dir/firmware.bin"
-          cp "$boot_app0_bin" "$artifact_dir/boot_app0.bin"
-          cp flash/index.html flash/manifest.json "$artifact_dir/flash/"
-
-          python3 -m esptool --chip esp32 merge_bin \
-            -o "$artifact_dir/merged-firmware.bin" \
-            --flash_mode dio \
-            --flash_freq 40m \
-            --flash_size 4MB \
-            0x1000 "$artifact_dir/bootloader.bin" \
-            0x8000 "$artifact_dir/partitions.bin" \
-            0xe000 "$artifact_dir/boot_app0.bin" \
-            0x10000 "$artifact_dir/firmware.bin"
-      - name: Upload firmware artifact
+      - name: Package production firmware
+        run: tools/package-firmware.sh cyd-35r firmware-artifact/production --web
+      - name: Upload production firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FIRMWARE_ARTIFACT_NAME }}
-          path: firmware-artifact/
-      # Compile-check the diagnostic firmware LAST: building this env perturbs
-      # the .pio/build/cyd-35r output dir, so it must run after the production
-      # artifact has been packaged and uploaded.
-      - name: Build diag firmware
-        run: GIT_SHA=$(git rev-parse --short HEAD) pio run -e cyd-35r-diag
+          name: ${{ env.PROD_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
+          path: firmware-artifact/production/
+
+      # Diagnostic bring-up firmware. Built AFTER the production artifact is
+      # packaged because building this env perturbs the shared .pio/build output
+      # dir (it would wipe cyd-35r's bootloader.bin before merge_bin runs).
+      - name: Build diagnostic firmware (cyd-35r-diag)
+        run: GIT_SHA=${{ steps.meta.outputs.sha }} pio run -e cyd-35r-diag
+      - name: Package diagnostic firmware
+        run: tools/package-firmware.sh cyd-35r-diag firmware-artifact/diag
+      - name: Upload diagnostic firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
+          path: firmware-artifact/diag/

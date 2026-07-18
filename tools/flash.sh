@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-artifact_name="cyd-35r-firmware"
+artifact_prefix="cyd-35r-firmware"
 branch=""
 port=""
 pr=""
@@ -12,9 +12,11 @@ state_dir="${MON_STATE_DIR:-.serial-monitor}"
 
 usage() {
   cat <<'EOF'
-Usage: tools/flash.sh [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
+Usage: tools/flash.sh [--diag] [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
 
 Download the merged firmware artifact from GitHub Actions and flash it at 0x0.
+By default the production firmware (cyd-35r-firmware-<sha>) is flashed; pass
+--diag to flash the diagnostic bring-up firmware (cyd-35r-diag-firmware-<sha>).
 If tools/monitor.sh is running, it releases the port for the flash and resumes
 afterward automatically.
 EOF
@@ -97,6 +99,10 @@ resolve_candidate_run_ids() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --diag)
+      artifact_prefix="cyd-35r-diag-firmware"
+      shift
+      ;;
     --branch)
       branch="${2:-}"
       shift 2
@@ -155,6 +161,12 @@ while IFS= read -r candidate_run_id; do
   candidate_dir="$download_dir/$candidate_run_id"
   mkdir -p "$candidate_dir"
 
+  # Artifact names are suffixed with the commit SHA, so resolve the actual name
+  # for this run by matching the prefix (production vs --diag).
+  artifact_name="$(gh api "repos/$repo/actions/runs/$candidate_run_id/artifacts" \
+    --jq '.artifacts[].name' 2>/dev/null | grep -m1 "^${artifact_prefix}-" || true)"
+  [[ -n "$artifact_name" ]] || continue
+
   if ! gh run download "$candidate_run_id" -R "$repo" -n "$artifact_name" -D "$candidate_dir" >/dev/null 2>&1; then
     continue
   fi
@@ -167,7 +179,7 @@ while IFS= read -r candidate_run_id; do
 done < <(resolve_candidate_run_ids "$repo")
 
 if [[ -z "$selected_run_id" || -z "$merged_firmware" ]]; then
-  printf '%s\n' "No successful ci.yml run with a ${artifact_name} artifact was found." >&2
+  printf '%s\n' "No successful ci.yml run with a ${artifact_prefix}-<sha> artifact was found." >&2
   exit 1
 fi
 

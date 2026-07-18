@@ -27,12 +27,17 @@ gh auth login
 
 Options:
 
+- `--diag` flashes the diagnostic bring-up firmware
+  (`cyd-35r-diag-firmware-<sha>`) instead of the production firmware.
 - `--port /dev/ttyUSB0` overrides auto-detection.
 - `--run-id 1234567890` flashes a specific workflow run.
 - `--repo gregose/opensprinkler-panel` overrides the current repository remote.
 
-The script downloads the `cyd-35r-firmware` artifact with `gh run download`,
-finds `merged-firmware.bin`, then writes it at `0x0`.
+Each CI run publishes two artifacts, suffixed with the short commit SHA so
+multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production) and
+`cyd-35r-diag-firmware-<sha>` (diagnostic). `flash.sh` resolves the right one
+for a run by prefix, downloads it with `gh run download`, finds
+`merged-firmware.bin`, then writes it at `0x0`.
 
 ## Open a serial monitor
 
@@ -73,8 +78,8 @@ Use `tools/seed-nvs.sh` to seed Wi-Fi and OpenSprinkler credentials into the
 `cyd-35r-diag` firmware so the production `cyd-35r` firmware can connect and
 load `/jn` before M4 provisioning exists.
 
-Flash the diagnostic firmware first (download the `cyd-35r-diag` artifact from
-CI, or build locally with `pio run -e cyd-35r-diag`), then:
+Flash the diagnostic firmware first with `./tools/flash.sh --diag` (or build
+locally with `pio run -e cyd-35r-diag`), then:
 
 ```bash
 ./tools/seed-nvs.sh \
