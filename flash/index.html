@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenSprinkler panel firmware flash</title>
+    <script
+      type="module"
+      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+    ></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 2rem auto;
+        max-width: 40rem;
+        padding: 0 1rem;
+      }
+
+      code {
+        background: #f3f4f6;
+        border-radius: 0.25rem;
+        padding: 0.15rem 0.3rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OpenSprinkler panel firmware</h1>
+    <p>Connect the ESP32 panel over USB, then flash the merged CI image over WebSerial.</p>
+    <p>
+      If you opened this page from the downloaded CI artifact, keep
+      <code>merged-firmware.bin</code> one directory above this page so the manifest
+      can find it.
+    </p>
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate">Connect and flash</button>
+    </esp-web-install-button>
+  </body>
+</html>

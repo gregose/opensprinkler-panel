@@ -47,6 +47,30 @@ pio run  -e cyd-35r     # compile the firmware
 pio run  -e cyd-35r -t upload && pio device monitor   # flash + serial (local, with board)
 ```
 
+## Flashing without a local toolchain
+
+Cloud CI builds the firmware on every push and pull request, then uploads a
+`cyd-35r-firmware` artifact with this layout:
+
+```text
+merged-firmware.bin
+bootloader.bin
+partitions.bin
+boot_app0.bin
+firmware.bin
+flash/index.html
+flash/manifest.json
+```
+
+- **Primary path, local flash/debug:** install only `esptool` + `pyserial`, then use
+  [`tools/flash.sh`](tools/flash.sh) to download a branch or PR artifact and write
+  `merged-firmware.bin` at `0x0`. Use [`tools/monitor.sh`](tools/monitor.sh) for a
+  115200 serial monitor. Full workflow in [`tools/README.md`](tools/README.md).
+- **Browser flashing:** after extracting the artifact, open `flash/index.html` in
+  Chrome or Edge and flash over WebSerial with ESP Web Tools.
+- **Fallback:** `python3 -m esptool --chip esp32 --port <port> write_flash 0x0 merged-firmware.bin`
+  flashes the merged image directly.
+
 ### Develop without the controller
 
 ```bash
@@ -57,10 +81,11 @@ Point the panel's configured host at `your-machine-ip:8080`.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the native unit tests and compiles the firmware
-on every push/PR. `.github/workflows/copilot-setup-steps.yml` pre-installs the
-**same** Python + PlatformIO + ESP32 toolchain for Copilot cloud sessions, so CI
-and cloud development stay in lockstep.
+`.github/workflows/ci.yml` runs the native unit tests, compiles the firmware, and
+publishes the flashable firmware artifact on every push/PR.
+`.github/workflows/copilot-setup-steps.yml` pre-installs the **same** Python +
+PlatformIO + esptool toolchain for Copilot cloud sessions, so CI and cloud
+development stay in lockstep.
 
 ## Roadmap
 

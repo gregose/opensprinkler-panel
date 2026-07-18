@@ -1,7 +1,10 @@
 .pio/
 .pioenvs/
 .piolibdeps/
+firmware-artifact/
 .vscode/
 .DS_Store
 *.pyc
 __pycache__/
+logs/
+.serial-monitor/
