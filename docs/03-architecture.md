@@ -46,6 +46,7 @@ Why:
   board = esp32dev                  ; ESP32-WROOM-32E, 4MB flash, no PSRAM
   board_build.f_flash = 40000000L
   board_build.flash_mode = dio
+  board_build.partitions = default.csv   ; dual-app OTA layout (ota_0/ota_1 + nvs), enables wireless updates
   monitor_speed = 115200
   lib_deps =
     bodmer/TFT_eSPI
@@ -74,6 +75,7 @@ Why:
 - **Display + touch:** **TFT_eSPI** (bodmer) — ST7796U display driver *and* XPT2046 resistive-touch reader (with `touch_calibrate` / `setTouch`). One library covers both on the shared SPI bus.
 - **GUI:** **LVGL 9.x**. Provide `lv_conf.h`; draw buffers in **internal RAM** (small partial buffers — no PSRAM). Enable a monospace font for the digits (or convert JetBrains Mono; a built-in LVGL mono is an acceptable fallback).
 - **Provisioning:** **WiFiManager** (tzapu).
+- **OTA + wireless logs:** **ArduinoOTA** (bundled in arduino-esp32, no extra `lib_deps`) as the OTA responder; a tiny built-in `WiFiServer` TCP log sink. Both are framework built-ins — **M4.5 adds no new PlatformIO dependencies**.
 - **HTTP:** built-in `HTTPClient` (short timeouts, see `02`).
 - **JSON:** `ArduinoJson`.
 - **Config storage:** `Preferences` (NVS).
@@ -91,7 +93,8 @@ Why:
 ## Configuration & provisioning (NVS + captive portal)
 
 Config to persist in NVS (`Preferences`): `wifi_ssid`, `wifi_pass`,
-`os_host` (IP or mDNS name), `os_pw_md5` (MD5 of device password), and any
+`os_host` (IP or mDNS name), `os_pw_md5` (MD5 of device password),
+`ota_pass` (ArduinoOTA/log-stream password), and any
 tunables you expose (`run_time_default`, `sleep_minutes`).
 
 **First run / no valid config / Wi-Fi fails to connect:**
@@ -105,6 +108,35 @@ tunables you expose (`run_time_default`, `sleep_minutes`).
 NVS/creds and re-enter the portal (also fall into the portal automatically if
 Wi-Fi can't connect after a few tries). An on-screen "Settings → reconfigure" is
 optional/nice-to-have.
+
+---
+
+## Wireless dev loop (OTA + network logs)
+
+Mirrors the ESPHome iterate-without-USB loop. **Why it works:** OTA rewrites
+only the **app partition** — the bootloader, partition table, and **NVS**
+(Wi-Fi creds + `os_host` + `os_pw_md5`) are left intact, so connectivity and
+config survive every app iteration. Contrast the USB `flash.sh` path, which
+writes `merged-firmware.bin` at `0x0` (**full flash → wipes NVS**); use USB only
+for bootstrap/recovery, then OTA for iteration.
+
+- **OTA responder:** `ArduinoOTA` (framework built-in) with a password from NVS
+  (`ota_pass`) + a stable mDNS hostname (e.g. `ospanel.local`). Guard behind a
+  `DEV_LOOP` build flag so release builds can omit it.
+- **Log sink:** a small `WiFiServer` TCP log server (e.g. port 2323) that echoes
+  what goes to `Serial` to any connected client — LAN-only, lightweight (no
+  ESPAsyncWebServer/WebSerial, to protect the no-PSRAM RAM budget).
+- **Local push (no compiler):** `tools/ota.sh` downloads the **app-only
+  `firmware.bin`** from the CI artifact (not the merged bin) and pushes it with
+  the standalone **`espota.py`** (Python only — mirrors how `flash.sh` shells out
+  to `esptool`). CI should drop `espota.py` into the firmware artifact so the
+  local bridge stays PlatformIO-free.
+- **Local logs:** `tools/logs.sh` connects to the TCP log port, tees to
+  `logs/serial.log`, and auto-reconnects across OTA reboots (same ergonomics as
+  `monitor.sh`).
+
+Adds **no new PlatformIO libraries** (ArduinoOTA + WiFiServer are framework
+built-ins), so the copilot-instructions pre-warm rule is not triggered.
 
 ---
 
