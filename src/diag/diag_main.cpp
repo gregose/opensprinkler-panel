@@ -55,12 +55,11 @@ static constexpr const char* NVS_SSID  = "wifi_ssid";
 static constexpr const char* NVS_PASS  = "wifi_pass";
 static constexpr const char* NVS_HOST  = "os_host";
 static constexpr const char* NVS_PWMD5 = "os_pw_md5";
+static constexpr const char* NVS_TOUCHCAL = "touch_cal";  // uint16_t calData[5] blob
 
 // Timeout for the NVS interactive setter (ms).
 static constexpr unsigned long NVS_INPUT_TIMEOUT_MS = 30000;
 
-// Timeout for waiting for touch release during calibration (ms).
-static constexpr unsigned long TOUCH_RELEASE_TIMEOUT_MS = 5000;
 
 // ---------------------------------------------------------------------------
 // Hardware objects
@@ -186,8 +185,25 @@ static void m1_step_rotation() {
 }
 
 // ---------------------------------------------------------------------------
-// M2 — Raw touch stream + 3-point calibration
+// M2 — Raw touch stream + calibration (TFT_eSPI built-in)
 // ---------------------------------------------------------------------------
+// Load a saved calData[5] blob from NVS and apply it via setTouch(). Returns
+// true if a valid calibration was found and applied.
+static bool load_touch_cal() {
+    uint16_t calData[5] = {0};
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    const size_t got = prefs.getBytes(NVS_TOUCHCAL, calData, sizeof(calData));
+    prefs.end();
+    if (got == sizeof(calData)) {
+        tft.setTouch(calData);
+        Serial.printf("Touch: loaded calibration from NVS '%s'.\n", NVS_TOUCHCAL);
+        return true;
+    }
+    Serial.printf("Touch: no saved calibration (run 'c' to calibrate).\n");
+    return false;
+}
+
 static void m2_draw_crosshair(int x, int y, uint16_t color) {
     tft.drawLine(x - 10, y, x + 10, y, color);
     tft.drawLine(x, y - 10, x, y + 10, color);
@@ -224,84 +240,46 @@ static void m2_touch_stream() {
 }
 
 static void m2_calibration() {
-    // Three calibration targets at well-separated screen positions.
-    struct { int x; int y; const char* label; } targets[] = {
-        { SCREEN_W / 6,     SCREEN_H / 6,     "TL" },
-        { SCREEN_W * 5 / 6, SCREEN_H / 2,     "MR" },
-        { SCREEN_W / 2,     SCREEN_H * 5 / 6, "BC" },
-    };
+    // Use TFT_eSPI's built-in interactive calibration: it draws corner targets,
+    // collects the taps, and fills a uint16_t calData[5] blob (xmin, ymin, xmax,
+    // ymax, rotation-flag). We then apply it with setTouch() and persist it to
+    // NVS so every firmware (this diag build + production M6) maps touch->pixel
+    // identically. No custom calibration math — this is the standard XPT2046 path.
+    uint16_t calData[5] = {0};
 
-    uint16_t raw_x[3] = {}, raw_y[3] = {};
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.println("Touch calibration");
+    tft.setTextSize(1);
+    tft.println("");
+    tft.println(" Tap each highlighted corner arrow.");
+    Serial.println("M2 cal: tap the corner arrows as they appear...");
 
-    for (int i = 0; i < 3; ++i) {
-        tft.fillScreen(TFT_BLACK);
-        const int cx = targets[i].x;
-        const int cy = targets[i].y;
-        // Draw a prominent crosshair target.
-        tft.drawLine(cx - 20, cy, cx + 20, cy, TFT_RED);
-        tft.drawLine(cx, cy - 20, cx, cy + 20, TFT_RED);
-        tft.drawCircle(cx, cy, 10, TFT_RED);
-        tft.drawCircle(cx, cy, 3, TFT_WHITE);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.setTextSize(2);
-        tft.setTextDatum(TC_DATUM);
-        tft.drawString(targets[i].label, cx, cy + 25);
-        tft.setTextDatum(TL_DATUM);
-        Serial.printf("M2 cal [%d/3]: tap %s (%d,%d) ...\n",
-                      i + 1, targets[i].label, cx, cy);
+    tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 20);
+    tft.setTouch(calData);
 
-        // Wait for a stable press.
-        while (true) {
-            uint16_t rx = 0, ry = 0;
-            if (tft.getTouchRaw(&rx, &ry)) {
-                raw_x[i] = rx;
-                raw_y[i] = ry;
-                uint16_t tx = 0, ty = 0;
-                tft.getTouch(&tx, &ty);
-                tft.drawCircle((int)tx, (int)ty, 4, TFT_GREEN);
-                Serial.printf("M2 cal: raw=(%u,%u) screen=(%u,%u)\n",
-                              (unsigned)rx, (unsigned)ry,
-                              (unsigned)tx, (unsigned)ty);
-                delay(300);
-                break;
-            }
-            delay(50);
-        }
-        // Wait for release (with timeout to avoid hanging on sensor fault).
-        {
-            uint16_t dx, dy;
-            const unsigned long t0 = millis();
-            while (tft.getTouchRaw(&dx, &dy) &&
-                   (millis() - t0) < TOUCH_RELEASE_TIMEOUT_MS) {
-                delay(30);
-            }
-        }
-    }
+    // Persist the 10-byte blob to NVS.
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putBytes(NVS_TOUCHCAL, calData, sizeof(calData));
+    prefs.end();
 
-#ifdef HAVE_TOUCH_CAL
-    // When lib/touch_cal is available (issue #17), feed raw pairs into fit().
-    #include "touch_cal.h"
-    touch_cal::CalibPoints pts;
-    for (int i = 0; i < 3; ++i) {
-        pts.screen[i] = {targets[i].x, targets[i].y};
-        pts.raw[i]    = {raw_x[i], raw_y[i]};
-    }
-    const touch_cal::CalibResult cal = touch_cal::fit(pts);
-    Serial.print("M2 cal: blob (hex): ");
-    const uint8_t* b = reinterpret_cast<const uint8_t*>(&cal);
-    for (size_t j = 0; j < sizeof(cal); ++j) Serial.printf("%02x", b[j]);
+    Serial.print("M2 cal: calData[5] = { ");
+    for (int i = 0; i < 5; ++i) Serial.printf("%u%s", (unsigned)calData[i], i < 4 ? ", " : " ");
+    Serial.println("}");
+    Serial.print("M2 cal: blob (hex) = ");
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(calData);
+    for (size_t j = 0; j < sizeof(calData); ++j) Serial.printf("%02x", b[j]);
     Serial.println();
-    Serial.println("M2 cal: paste blob into NVS 'touch_cal' key.");
-#else
-    // No touch_cal lib yet — print raw pairs for manual analysis.
-    Serial.println("M2 cal: raw calibration pairs (screen -> raw):");
-    for (int i = 0; i < 3; ++i) {
-        Serial.printf("  screen(%d,%d) -> raw(%u,%u)\n",
-                      targets[i].x, targets[i].y,
-                      (unsigned)raw_x[i], (unsigned)raw_y[i]);
-    }
-    Serial.println("M2 cal: rebuild with -DHAVE_TOUCH_CAL once lib/touch_cal is merged.");
-#endif
+    Serial.printf("M2 cal: saved to NVS '%s'. Run 't' to verify tracking.\n", NVS_TOUCHCAL);
+
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.println("Calibration saved");
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +460,7 @@ static void print_help() {
     Serial.println("  i  Toggle invertDisplay (M1)");
     Serial.println("  r  Step display rotation (M1)");
     Serial.println("  t  Touch stream: raw ADC x/y/z + screen coords (M2, 'q' stop)");
-    Serial.println("  c  3-point touch calibration (M2)");
+    Serial.println("  c  Touch calibration (TFT_eSPI calibrateTouch, saves to NVS)");
     Serial.println("  l  LVGL smoke test: button + timer label (M3, 'q' stop)");
     Serial.println("  n  Print NVS config");
     Serial.println("  s  Set NVS key (interactive / tools/seed-nvs.sh)");
@@ -505,6 +483,7 @@ void setup() {
     tft.init();
     tft.setRotation(g_rotation);
     tft.fillScreen(TFT_BLACK);
+    load_touch_cal();
 
     m0_boot_banner();
     print_help();
