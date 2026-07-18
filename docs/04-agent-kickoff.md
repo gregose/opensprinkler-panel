@@ -42,10 +42,22 @@ font available for digits. *Done when:* an LVGL button reacts to touch and a lab
 updates smoothly on a timer.
 
 **M4 — Provisioning + NVS.** WiFiManager captive portal with custom fields for
-**OS host** + **device password**; persist Wi-Fi + host + MD5(password) +
-tunables in NVS (`Preferences`); BOOT-hold clears config and re-enters the
-portal. *Done when:* first boot with no config opens the portal, saved config
-survives reboot, BOOT-hold re-provisions.
+**OS host** + **device password** (+ optional **OTA password**); persist Wi-Fi +
+host + MD5(password) + `ota_pass` + tunables in NVS (`Preferences`); BOOT-hold
+clears config and re-enters the portal. *Done when:* first boot with no config
+opens the portal, saved config survives reboot, BOOT-hold re-provisions.
+
+**M4.5 — Wireless dev loop (OTA + network logs).** Switch to the `default.csv`
+dual-OTA partition table; add an `ArduinoOTA` responder (password from NVS, mDNS
+hostname `ospanel.local`) and a lightweight `WiFiServer` TCP log sink that mirrors
+`Serial`, both behind a `DEV_LOOP` build flag. Add `tools/ota.sh` (download the
+app-only `firmware.bin` from the CI artifact, push with standalone `espota.py`)
+and `tools/logs.sh` (stream the TCP log port to `logs/serial.log`, auto-reconnect
+across reboots); CI includes `espota.py` in the artifact. See `03` §Wireless dev
+loop. **Adds no new PlatformIO deps** (framework built-ins). *Done when:* after a
+one-time USB flash, a subsequent `tools/ota.sh` pushes new firmware over Wi-Fi
+**without wiping NVS config**, and `tools/logs.sh` shows boot + runtime logs with
+no USB attached.
 
 **M5 — API client (against the mock).** Implement the `02` client: `/jn` load,
 `/jc` poll, `/cm` run/off (with off-then-on helpers), `/cv` stop; short timeouts;
@@ -85,3 +97,8 @@ package's `01`/`02` are the tie-breakers for behavior and API.
 - Single-task model → no LVGL locking needed; don't add threads first (`03`).
 - ST7796U rotation/offset/inversion needs tuning; **resistive touch must be calibrated and the calibration persisted in NVS** (`03`).
 - Filter **disabled and master** stations from the grid (`01`, `02`).
+- **USB `flash.sh` writes the merged image at `0x0` → it wipes NVS** (Wi-Fi + OS
+  config) every time; that's bootstrap/recovery only. Iterate with **OTA**
+  (`tools/ota.sh`), which rewrites only the app partition and preserves NVS
+  (`03` §Wireless dev loop). OTA requires the **`default.csv` dual-OTA partition
+  table** (M4.5).
