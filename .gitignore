@@ -8,3 +8,4 @@ firmware-artifact/
 __pycache__/
 logs/
 .serial-monitor/
+.venv/

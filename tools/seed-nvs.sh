@@ -23,6 +23,10 @@
 
 set -euo pipefail
 
+# Use the repo-local flash toolchain venv if present (see tools/setup.sh).
+# shellcheck source=tools/_venv.sh
+source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
+
 port=""
 ssid=""
 wifi_pass=""
