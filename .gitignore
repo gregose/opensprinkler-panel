@@ -1,6 +1,7 @@
 .pio/
 .pioenvs/
 .piolibdeps/
+firmware-artifact/
 .vscode/
 .DS_Store
 *.pyc
