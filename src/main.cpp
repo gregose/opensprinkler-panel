@@ -1,34 +1,741 @@
+// M6 — UX & state machine
+//
+// Single-screen panel firmware for the ESP32-3248S035R (CYD).
+// Wires lib/panel_state (pure C++ state machine) to the LVGL UI, TFT_eSPI
+// display/touch, and the OpenSprinkler HTTP API via OsClient.
+//
+// Hardware: ESP32-WROOM-32E, ST7796U display (480×320 landscape), XPT2046
+// resistive touch — both on the same SPI bus. See docs/03 for the pin map.
+//
+// Architecture: single-task Arduino loop (docs/03 §concurrency).
+//   - loop() calls lv_timer_handler() every ~5 ms.
+//   - A millis()-based scheduler drives the ~2 s /jc poll and the 5-min sleep.
+//   - User actions (LVGL event callbacks) call PanelState, which calls OsClient.
+//   - PanelState::tick() decides when to poll; the loop issues the actual HTTP
+//     call and feeds the result back via on_jc()/on_jc_error().
+//
+// Provisioning (WiFi + OS host + password) uses Preferences NVS.
+// Full WiFiManager captive portal is M4; this file reads existing NVS keys.
+
 #include <Arduino.h>
+#include <HTTPClient.h>
+#include <Preferences.h>
+#include <WiFi.h>
+#include <memory>
 
-// M0 — Toolchain bring-up: serial hello + RGB-LED heartbeat.
-// On the E32R35T / ESP32-3248S035R the RGB LED is common-anode (LOW = on) on
-// GPIO22/16/17, and the LCD backlight is on GPIO27 (HIGH = on).
-// See docs/03-architecture.md for the full pin map.
-static const int PIN_LED_R = 22;
-static const int PIN_LED_G = 16;
-static const int PIN_LED_B = 17;
-static const int PIN_BACKLIGHT = 27;
+#include <lvgl.h>
+#include <TFT_eSPI.h>
 
-void setup() {
-  Serial.begin(115200);
-  delay(200);
-  Serial.println("OpenSprinkler panel — M0 toolchain OK");
+#include "os_client.h"
+#include "panel_state.h"
+#include "station_model.h"
 
-  pinMode(PIN_LED_R, OUTPUT);
-  pinMode(PIN_LED_G, OUTPUT);
-  pinMode(PIN_LED_B, OUTPUT);
-  pinMode(PIN_BACKLIGHT, OUTPUT);
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+static constexpr int PIN_BACKLIGHT = 27;
+static constexpr int PIN_BOOT_BTN  = 0;
+static constexpr int LEDC_CHANNEL  = 0;
+static constexpr int LEDC_FREQ_HZ  = 5000;
+static constexpr int LEDC_RES_BITS = 8;
+static constexpr uint8_t BACKLIGHT_ON  = 255;
+static constexpr uint8_t BACKLIGHT_OFF = 0;
 
-  digitalWrite(PIN_LED_R, HIGH);      // off (common-anode)
-  digitalWrite(PIN_LED_G, HIGH);      // off
-  digitalWrite(PIN_LED_B, HIGH);      // off
-  digitalWrite(PIN_BACKLIGHT, HIGH);  // backlight on
+static constexpr int SCREEN_W = 480;
+static constexpr int SCREEN_H = 320;
+// Draw buffer: 480×4 pixels — keeps BSS small on the no-PSRAM ESP32.
+static constexpr int DRAW_BUF_LINES = 4;
+
+// NVS keys (matches M4 provisioning schema).
+static constexpr const char* NVS_NS        = "osp-panel";
+static constexpr const char* NVS_SSID      = "wifi_ssid";
+static constexpr const char* NVS_PASS      = "wifi_pass";
+static constexpr const char* NVS_HOST      = "os_host";
+static constexpr const char* NVS_PWMD5     = "os_pw_md5";
+static constexpr const char* NVS_RT        = "run_time_s";
+static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
+
+// Visual tokens (docs/01 §5).
+static constexpr uint32_t CLR_BG    = 0x07100f;
+static constexpr uint32_t CLR_TEXT  = 0xe9f2ef;
+static constexpr uint32_t CLR_MUTED = 0x7f938f;
+static constexpr uint32_t CLR_TEAL  = 0x35d0c3;
+static constexpr uint32_t CLR_AMBER = 0xf2a63b;
+static constexpr uint32_t CLR_RED   = 0xff5b5b;
+static constexpr uint32_t CLR_LINE  = 0x1a2e2b;
+
+// Build an lv_color_t from a 0xRRGGBB constant.
+static inline lv_color_t hex_color(uint32_t hex) {
+    return lv_color_make((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
 }
 
+// Compatibility: hide/show using LVGL 9 flags.
+static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
+    if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    else        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---------------------------------------------------------------------------
+// Hardware objects
+// ---------------------------------------------------------------------------
+static TFT_eSPI tft;
+
+// LVGL draw buffer (static, internal SRAM — no PSRAM on this board).
+static lv_color_t draw_buf[SCREEN_W * DRAW_BUF_LINES];
+
+// ---------------------------------------------------------------------------
+// Application state
+// ---------------------------------------------------------------------------
+static osp::StationModel g_model;
+static std::unique_ptr<osp::OsClient>   g_client;
+static std::unique_ptr<osp::PanelState> g_ps;
+
+// NVS config cache.
+static String g_os_host;
+static String g_pw_md5;
+
+// ---------------------------------------------------------------------------
+// LVGL callbacks
+// ---------------------------------------------------------------------------
+static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
+                           uint8_t* px_map) {
+    const int32_t w = area->x2 - area->x1 + 1;
+    const int32_t h = area->y2 - area->y1 + 1;
+    tft.startWrite();
+    tft.setAddrWindow(area->x1, area->y1, w, h);
+    // px_map is packed RGB565 (LV_COLOR_FORMAT_RGB565, 2 bytes/pixel).
+    tft.pushPixels(reinterpret_cast<const uint16_t*>(px_map), w * h);
+    tft.endWrite();
+    lv_display_flush_ready(disp);
+}
+
+static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
+    uint16_t tx = 0, ty = 0;
+    const bool pressed = tft.getTouch(&tx, &ty);
+    data->state   = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    data->point.x = static_cast<int32_t>(tx);
+    data->point.y = static_cast<int32_t>(ty);
+}
+
+// ---------------------------------------------------------------------------
+// UI widgets
+// ---------------------------------------------------------------------------
+// Top bar
+static lv_obj_t* lbl_host   = nullptr;
+static lv_obj_t* lbl_panel  = nullptr;
+static lv_obj_t* lbl_ctrl   = nullptr;
+
+// Left panel states
+static lv_obj_t* pnl_idle       = nullptr;
+static lv_obj_t* lbl_idle_head  = nullptr;
+static lv_obj_t* lbl_idle_sub   = nullptr;
+static lv_obj_t* pnl_running    = nullptr;
+static lv_obj_t* lbl_eyebrow    = nullptr;
+static lv_obj_t* lbl_stn_name   = nullptr;
+static lv_obj_t* lbl_countdown  = nullptr;
+
+// Bottom action row (running only)
+static lv_obj_t* btn_prev       = nullptr;
+static lv_obj_t* btn_advance    = nullptr;
+static lv_obj_t* btn_stop       = nullptr;
+
+// Right panel
+static lv_obj_t* btn_rt_minus   = nullptr;
+static lv_obj_t* lbl_rt_value   = nullptr;
+static lv_obj_t* btn_rt_plus    = nullptr;
+static lv_obj_t* sw_auto_adv    = nullptr;
+static lv_obj_t* lbl_aa_hint    = nullptr;
+
+// Grid
+static lv_obj_t* lbl_grid_title  = nullptr;
+static lv_obj_t* grid_cont       = nullptr;
+static lv_obj_t* stn_pills[24]   = {};
+static lv_obj_t* stn_pill_lbls[24] = {};  // labels inside pills for recoloring
+static int       g_pill_count    = 0;
+
+// Overlays
+static lv_obj_t* sleep_overlay  = nullptr;
+static lv_obj_t* lbl_toast      = nullptr;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+static void fmt_countdown(char* buf, int secs) {
+    if (secs < 0) secs = 0;
+    snprintf(buf, 16, "%d:%02d", secs / 60, secs % 60);
+}
+
+static void fmt_rssi_bars(char* buf, int bars) {
+    // 0-4 bars using block characters; - is the "empty bar" placeholder
+    const char* strs[] = {"----", "|---", "||--", "|||-", "||||"};
+    snprintf(buf, 16, "%s", strs[(bars < 0) ? 0 : (bars > 4 ? 4 : bars)]);
+}
+
+// Store/retrieve a station sid (int) as lv_obj user_data (void*).
+static void set_pill_sid(lv_obj_t* obj, int sid) {
+    lv_obj_set_user_data(obj, reinterpret_cast<void*>(static_cast<intptr_t>(sid)));
+}
+static int get_pill_sid(lv_obj_t* obj) {
+    return static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(obj)));
+}
+
+// Create a button with a centered text label.
+static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
+                           uint32_t bg, uint32_t fg) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_style_bg_color(btn, hex_color(bg), 0);
+    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, hex_color(fg), 0);
+    lv_obj_center(lbl);
+    return btn;
+}
+
+// ---------------------------------------------------------------------------
+// Event handlers
+// ---------------------------------------------------------------------------
+static void ev_prev(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->prev();
+}
+static void ev_advance(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->advance();
+}
+static void ev_stop(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->stop();
+}
+static void ev_rt_minus(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps)
+        g_ps->set_run_time(g_ps->view().run_time_s - osp::PanelState::kRunTimeStep);
+}
+static void ev_rt_plus(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps)
+        g_ps->set_run_time(g_ps->view().run_time_s + osp::PanelState::kRunTimeStep);
+}
+static void ev_auto_adv(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED && g_ps)
+        g_ps->set_auto_advance(lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED));
+}
+static void ev_pill(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
+        lv_obj_t* pill = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        g_ps->select_station(get_pill_sid(pill));
+    }
+}
+static void ev_touch_any(lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_PRESSED && g_ps)
+        g_ps->on_touch(millis());
+}
+
+// ---------------------------------------------------------------------------
+// UI construction
+// ---------------------------------------------------------------------------
+
+// Layout constants (all in pixels, 480×320 landscape).
+static constexpr int TOP_H    = 26;
+static constexpr int GRID_H   = 108;
+static constexpr int ACTION_H = 48;
+static constexpr int RIGHT_W  = 190;
+static constexpr int LEFT_W   = SCREEN_W - RIGHT_W;  // 290 px
+// Content area between top bar and grid.
+static constexpr int CONTENT_Y = TOP_H + 1;
+static constexpr int CONTENT_H = SCREEN_H - CONTENT_Y - GRID_H;
+// Panels stop ACTION_H above the grid.
+static constexpr int PANEL_H   = CONTENT_H - ACTION_H;
+static constexpr int ACTION_Y  = CONTENT_Y + PANEL_H;
+static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
+
+static void build_ui() {
+    lv_obj_t* scr = lv_screen_active();
+    lv_obj_set_style_bg_color(scr, hex_color(CLR_BG), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_add_event_cb(scr, ev_touch_any, LV_EVENT_PRESSED, nullptr);
+
+    // ---- Top bar -------------------------------------------------------
+    {
+        lv_obj_t* bar = lv_obj_create(scr);
+        lv_obj_set_size(bar, SCREEN_W, TOP_H);
+        lv_obj_set_pos(bar, 0, 0);
+        lv_obj_set_style_bg_color(bar, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_pad_all(bar, 2, 0);
+        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+        lbl_host = lv_label_create(bar);
+        lv_obj_set_style_text_font(lbl_host, &lv_font_montserrat_12, 0);
+        lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
+        lv_label_set_text(lbl_host, "\xe2\x97\x8E connecting...");
+
+        lbl_panel = lv_label_create(bar);
+        lv_obj_set_style_text_font(lbl_panel, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_panel, hex_color(CLR_MUTED), 0);
+        lv_obj_align(lbl_panel, LV_ALIGN_RIGHT_MID, -112, 0);
+        lv_label_set_text(lbl_panel, "PANEL ----");
+
+        lbl_ctrl = lv_label_create(bar);
+        lv_obj_set_style_text_font(lbl_ctrl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_ctrl, hex_color(CLR_MUTED), 0);
+        lv_obj_align(lbl_ctrl, LV_ALIGN_RIGHT_MID, -4, 0);
+        lv_label_set_text(lbl_ctrl, "CTRL ----");
+    }
+
+    // ---- Left panel: Idle ---------------------------------------------
+    pnl_idle = lv_obj_create(scr);
+    lv_obj_set_size(pnl_idle, LEFT_W, PANEL_H);
+    lv_obj_set_pos(pnl_idle, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(pnl_idle, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(pnl_idle, 0, 0);
+    lv_obj_set_style_pad_all(pnl_idle, 14, 0);
+    lv_obj_clear_flag(pnl_idle, LV_OBJ_FLAG_SCROLLABLE);
+
+    lbl_idle_head = lv_label_create(pnl_idle);
+    lv_label_set_text(lbl_idle_head, "Select a station");
+    lv_obj_set_style_text_font(lbl_idle_head, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_idle_head, hex_color(CLR_TEXT), 0);
+    lv_obj_align(lbl_idle_head, LV_ALIGN_TOP_LEFT, 0, 14);
+
+    lbl_idle_sub = lv_label_create(pnl_idle);
+    // UTF-8 down-pointing small triangle (▾ U+25BE = 0xE2 0x96 0xBE)
+    lv_label_set_text(lbl_idle_sub, "\xe2\x96\xbe Tap a station below to start");
+    lv_obj_set_style_text_font(lbl_idle_sub, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
+    lv_obj_align(lbl_idle_sub, LV_ALIGN_TOP_LEFT, 0, 50);
+
+    // ---- Left panel: Running ------------------------------------------
+    pnl_running = lv_obj_create(scr);
+    lv_obj_set_size(pnl_running, LEFT_W, PANEL_H);
+    lv_obj_set_pos(pnl_running, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(pnl_running, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(pnl_running, 0, 0);
+    lv_obj_set_style_pad_all(pnl_running, 14, 0);
+    lv_obj_clear_flag(pnl_running, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pnl_running, LV_OBJ_FLAG_HIDDEN);  // hidden until running
+
+    lbl_eyebrow = lv_label_create(pnl_running);
+    lv_label_set_text(lbl_eyebrow, "Station 1");
+    lv_obj_set_style_text_font(lbl_eyebrow, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_eyebrow, hex_color(CLR_TEAL), 0);
+    lv_obj_align(lbl_eyebrow, LV_ALIGN_TOP_LEFT, 0, 2);
+
+    lbl_stn_name = lv_label_create(pnl_running);
+    lv_label_set_text(lbl_stn_name, "");
+    lv_obj_set_width(lbl_stn_name, LEFT_W - 28);
+    lv_label_set_long_mode(lbl_stn_name, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl_stn_name, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(lbl_stn_name, hex_color(CLR_TEXT), 0);
+    lv_obj_align(lbl_stn_name, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    lbl_countdown = lv_label_create(pnl_running);
+    lv_label_set_text(lbl_countdown, "0:00");
+    lv_obj_set_style_text_font(lbl_countdown, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
+    lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
+
+    // ---- Action row (Prev / Advance / Stop — same baseline) -----------
+    // One consistent row pinned between the panels and the grid.
+    // U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK (‹)
+    btn_prev = make_btn(scr, "\xe2\x80\xb9 Prev",
+                        CLR_LINE, CLR_TEXT);           // ghost style
+    lv_obj_set_size(btn_prev, LEFT_W / 2 - 4, ACTION_H);
+    lv_obj_set_pos(btn_prev, 0, ACTION_Y);
+    lv_obj_add_flag(btn_prev, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(btn_prev, ev_prev, LV_EVENT_CLICKED, nullptr);
+
+    // U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK (›)
+    btn_advance = make_btn(scr, "Advance \xe2\x80\xba",
+                           CLR_TEAL, CLR_BG);          // teal
+    lv_obj_set_size(btn_advance, LEFT_W / 2 - 4, ACTION_H);
+    lv_obj_set_pos(btn_advance, LEFT_W / 2 + 4, ACTION_Y);
+    lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
+
+    // U+25A0 BLACK SQUARE (■)
+    btn_stop = make_btn(scr, "\xe2\x96\xa0 Stop",
+                        CLR_RED, CLR_BG);               // red
+    lv_obj_set_size(btn_stop, RIGHT_W - 8, ACTION_H);
+    lv_obj_set_pos(btn_stop, LEFT_W + 4, ACTION_Y);
+    lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
+
+    // ---- Right panel ---------------------------------------------------
+    {
+        lv_obj_t* pnl = lv_obj_create(scr);
+        lv_obj_set_size(pnl, RIGHT_W, PANEL_H + ACTION_H);
+        lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
+        lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(pnl, 0, 0);
+        lv_obj_set_style_pad_all(pnl, 10, 0);
+        lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Run time label
+        lv_obj_t* rt_lbl = lv_label_create(pnl);
+        lv_label_set_text(rt_lbl, "Run time");
+        lv_obj_set_style_text_font(rt_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(rt_lbl, hex_color(CLR_MUTED), 0);
+        lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+
+        // Run-time stepper: [−]  MM:SS  [+]
+        btn_rt_minus = make_btn(pnl, "\xe2\x88\x92", CLR_LINE, CLR_TEXT);
+        lv_obj_set_size(btn_rt_minus, 36, 36);
+        lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, 18);
+        lv_obj_add_event_cb(btn_rt_minus, ev_rt_minus, LV_EVENT_CLICKED, nullptr);
+
+        lbl_rt_value = lv_label_create(pnl);
+        lv_label_set_text(lbl_rt_value, "1:00");
+        lv_obj_set_style_text_font(lbl_rt_value, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(lbl_rt_value, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0, 26);
+
+        btn_rt_plus = make_btn(pnl, "+", CLR_LINE, CLR_TEXT);
+        lv_obj_set_size(btn_rt_plus, 36, 36);
+        lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
+        lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
+
+        // Auto-advance label + switch
+        lv_obj_t* aa_lbl = lv_label_create(pnl);
+        lv_label_set_text(aa_lbl, "Auto-advance");
+        lv_obj_set_style_text_font(aa_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(aa_lbl, hex_color(CLR_MUTED), 0);
+        lv_obj_align(aa_lbl, LV_ALIGN_TOP_LEFT, 0, 64);
+
+        sw_auto_adv = lv_switch_create(pnl);
+        lv_obj_set_size(sw_auto_adv, 52, 26);
+        lv_obj_align(sw_auto_adv, LV_ALIGN_TOP_RIGHT, 0, 60);
+        lv_obj_set_style_bg_color(sw_auto_adv,
+                                   hex_color(CLR_TEAL),
+                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_add_event_cb(sw_auto_adv, ev_auto_adv, LV_EVENT_VALUE_CHANGED, nullptr);
+
+        lbl_aa_hint = lv_label_create(pnl);
+        lv_label_set_text(lbl_aa_hint, "Stops when time ends");
+        lv_obj_set_style_text_font(lbl_aa_hint, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_aa_hint, hex_color(CLR_MUTED), 0);
+        lv_label_set_long_mode(lbl_aa_hint, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(lbl_aa_hint, RIGHT_W - 20);
+        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 0, 92);
+    }
+
+    // ---- Grid area -----------------------------------------------------
+    lbl_grid_title = lv_label_create(scr);
+    lv_label_set_text(lbl_grid_title, "Stations");
+    lv_obj_set_style_text_font(lbl_grid_title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_grid_title, hex_color(CLR_MUTED), 0);
+    lv_obj_set_pos(lbl_grid_title, 8, GRID_Y + 2);
+
+    grid_cont = lv_obj_create(scr);
+    lv_obj_set_size(grid_cont, SCREEN_W - 8, GRID_H - 20);
+    lv_obj_set_pos(grid_cont, 4, GRID_Y + 18);
+    lv_obj_set_style_bg_color(grid_cont, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(grid_cont, 0, 0);
+    lv_obj_set_style_pad_all(grid_cont, 2, 0);
+    lv_obj_set_style_pad_gap(grid_cont, 4, 0);
+    lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(grid_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(grid_cont, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid_cont,
+                           LV_FLEX_ALIGN_START,
+                           LV_FLEX_ALIGN_CENTER,
+                           LV_FLEX_ALIGN_CENTER);
+
+    // ---- Sleep overlay -------------------------------------------------
+    sleep_overlay = lv_obj_create(scr);
+    lv_obj_set_size(sleep_overlay, SCREEN_W, SCREEN_H);
+    lv_obj_set_pos(sleep_overlay, 0, 0);
+    lv_obj_set_style_bg_color(sleep_overlay, hex_color(0x000000), 0);
+    lv_obj_set_style_bg_opa(sleep_overlay, LV_OPA_COVER, 0);
+    lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    // ---- Toast label ---------------------------------------------------
+    lbl_toast = lv_label_create(scr);
+    lv_label_set_text(lbl_toast, "");
+    lv_obj_set_style_text_font(lbl_toast, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_toast, hex_color(CLR_TEXT), 0);
+    lv_obj_set_style_bg_color(lbl_toast, hex_color(CLR_LINE), 0);
+    lv_obj_set_style_bg_opa(lbl_toast, LV_OPA_80, 0);
+    lv_obj_set_style_pad_all(lbl_toast, 6, 0);
+    lv_obj_set_style_radius(lbl_toast, 6, 0);
+    lv_obj_align(lbl_toast, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_add_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---------------------------------------------------------------------------
+// Build station pill buttons from g_model
+// ---------------------------------------------------------------------------
+static void build_grid() {
+    for (int i = 0; i < g_pill_count; ++i) {
+        if (stn_pills[i]) { lv_obj_delete(stn_pills[i]); stn_pills[i] = nullptr; }
+        stn_pill_lbls[i] = nullptr;
+    }
+    g_pill_count = 0;
+
+    const auto& runnable = g_model.runnable_sids();
+    const int n = static_cast<int>(runnable.size());
+    if (n == 0) return;
+
+    const osp::GridLayout layout = g_model.layout();
+    // Pill size: fit layout.cols pills in (SCREEN_W-12) with 4 px gaps.
+    const int inner_w = SCREEN_W - 12;
+    const int pill_w  = (inner_w - (layout.cols - 1) * 4) / layout.cols;
+    const int pill_h  = 36;
+
+    for (int i = 0; i < n && i < 24; ++i) {
+        const int sid = runnable[i];
+        lv_obj_t* pill = lv_btn_create(grid_cont);
+        lv_obj_set_size(pill, pill_w, pill_h);
+        lv_obj_set_style_bg_color(pill, hex_color(CLR_LINE), 0);
+        lv_obj_set_style_radius(pill, 6, 0);
+        lv_obj_set_style_border_width(pill, 0, 0);
+        set_pill_sid(pill, sid);
+
+        char num[8];
+        snprintf(num, sizeof(num), "%d", sid + 1);
+        lv_obj_t* lbl = lv_label_create(pill);
+        lv_label_set_text(lbl, num);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, hex_color(CLR_TEXT), 0);
+        lv_obj_center(lbl);
+
+        lv_obj_add_event_cb(pill, ev_pill, LV_EVENT_CLICKED, nullptr);
+        stn_pill_lbls[g_pill_count] = lbl;
+        stn_pills[g_pill_count++]   = pill;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sync LVGL widgets from the current PanelView
+// ---------------------------------------------------------------------------
+static void ui_update() {
+    if (!g_ps) return;
+    const osp::PanelView& v = g_ps->view();
+    char buf[64];
+
+    // Top bar: host indicator
+    {
+        const char* dot = v.connected
+            ? "\xe2\x97\x89"   // ◉ UTF-8
+            : "\xe2\x97\x8e";  // ◎ UTF-8
+        snprintf(buf, sizeof(buf), "%s %s", dot, g_os_host.c_str());
+        lv_label_set_text(lbl_host, buf);
+        lv_obj_set_style_text_color(lbl_host,
+                                     hex_color(v.connected ? CLR_TEAL : CLR_RED), 0);
+
+        // PANEL bars
+        char bars[16];
+        fmt_rssi_bars(bars, osp::rssi_to_bars(WiFi.RSSI()));
+        snprintf(buf, sizeof(buf), "PANEL %s", bars);
+        lv_label_set_text(lbl_panel, buf);
+
+        // CTRL bars (or — — when unreachable)
+        if (v.connected) {
+            fmt_rssi_bars(bars, osp::rssi_to_bars(v.ctrl_rssi));
+            snprintf(buf, sizeof(buf), "CTRL %s", bars);
+        } else {
+            snprintf(buf, sizeof(buf), "CTRL \xe2\x80\x94\xe2\x80\x94");  // — —
+        }
+        lv_label_set_text(lbl_ctrl, buf);
+    }
+
+    // Phase visibility
+    const bool running = (v.phase == osp::Phase::Running);
+    obj_set_hidden(pnl_idle,    running);
+    obj_set_hidden(pnl_running, !running);
+    obj_set_hidden(btn_prev,    !running);
+    obj_set_hidden(btn_advance, !running);
+    obj_set_hidden(btn_stop,    !running);
+
+    if (running) {
+        // Eyebrow: "Station N"
+        snprintf(buf, sizeof(buf), "Station %d", v.running_sid + 1);
+        lv_label_set_text(lbl_eyebrow, buf);
+
+        // Station name
+        const auto& stns = g_model.stations();
+        const char* name = (v.running_sid >= 0 &&
+                            v.running_sid < static_cast<int>(stns.size()))
+                            ? stns[v.running_sid].name.c_str() : "\xe2\x80\x94";
+        lv_label_set_text(lbl_stn_name, name);
+
+        // Countdown (MM:SS)
+        char cd[16];
+        fmt_countdown(cd, v.countdown_s);
+        lv_label_set_text(lbl_countdown, cd);
+    }
+
+    // Run-time value
+    snprintf(buf, sizeof(buf), "%d:%02d", v.run_time_s / 60, v.run_time_s % 60);
+    lv_label_set_text(lbl_rt_value, buf);
+
+    // Auto-advance switch
+    const bool sw_checked = lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED);
+    if (v.auto_advance != sw_checked) {
+        if (v.auto_advance) lv_obj_add_state(sw_auto_adv, LV_STATE_CHECKED);
+        else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
+    }
+    lv_label_set_text(lbl_aa_hint,
+                      v.auto_advance ? "Runs the next station"
+                                     : "Stops when time ends");
+
+    // Grid label
+    lv_label_set_text(lbl_grid_title, running ? "Jump to station" : "Stations");
+
+    // Pill highlights
+    for (int i = 0; i < g_pill_count; ++i) {
+        if (!stn_pills[i]) continue;
+        const bool active = running && (get_pill_sid(stn_pills[i]) == v.running_sid);
+        lv_obj_set_style_bg_color(stn_pills[i],
+            hex_color(active ? CLR_TEAL : CLR_LINE), 0);
+        if (stn_pill_lbls[i]) {
+            lv_obj_set_style_text_color(stn_pill_lbls[i],
+                hex_color(active ? CLR_BG : CLR_TEXT), 0);
+        }
+    }
+
+    // Sleep overlay + backlight
+    obj_set_hidden(sleep_overlay, !v.sleeping);
+    ledcWrite(LEDC_CHANNEL, v.sleeping ? BACKLIGHT_OFF : BACKLIGHT_ON);
+
+    // Toast
+    if (!v.toast.empty()) {
+        lv_label_set_text(lbl_toast, v.toast.c_str());
+        lv_obj_remove_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP transport
+// ---------------------------------------------------------------------------
+static osp::Transport make_http_transport() {
+    return [](const std::string& url) -> std::string {
+        HTTPClient http;
+        http.setConnectTimeout(1500);
+        http.setTimeout(1500);
+        if (!http.begin(url.c_str())) return "";
+        const int code = http.GET();
+        if (code != HTTP_CODE_OK) { http.end(); return ""; }
+        const String body = http.getString();
+        http.end();
+        return body.c_str();
+    };
+}
+
+// ---------------------------------------------------------------------------
+// setup()
+// ---------------------------------------------------------------------------
+void setup() {
+    Serial.begin(115200);
+    delay(200);
+    Serial.println("OpenSprinkler panel — M6 booting");
+
+    // Backlight via LEDC PWM (GPIO27 per docs/03).
+    ledcSetup(LEDC_CHANNEL, LEDC_FREQ_HZ, LEDC_RES_BITS);
+    ledcAttachPin(PIN_BACKLIGHT, LEDC_CHANNEL);
+    ledcWrite(LEDC_CHANNEL, BACKLIGHT_ON);
+
+    pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+
+    // ---- TFT init -------------------------------------------------------
+    tft.init();
+    tft.setRotation(1);  // landscape — tune rotation/offset on-device (docs/03)
+    tft.fillScreen(TFT_BLACK);
+
+    // ---- LVGL init ------------------------------------------------------
+    lv_init();
+    lv_display_t* disp = lv_display_create(SCREEN_W, SCREEN_H);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_flush_cb(disp, disp_flush_cb);
+    lv_display_set_buffers(disp, draw_buf, nullptr,
+                           sizeof(draw_buf),
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    lv_indev_t* indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, touchpad_read_cb);
+
+    // ---- Load NVS config ------------------------------------------------
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    const String ssid   = prefs.getString(NVS_SSID,  "");
+    const String pass   = prefs.getString(NVS_PASS,  "");
+    g_os_host           = prefs.getString(NVS_HOST,  "192.168.1.100");
+    g_pw_md5            = prefs.getString(NVS_PWMD5, DEFAULT_PW_MD5);
+    const int saved_rt  = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
+    prefs.end();
+
+    // ---- Build base UI --------------------------------------------------
+    build_ui();
+    lv_timer_handler();
+
+    // ---- Connect WiFi ---------------------------------------------------
+    if (!ssid.isEmpty()) {
+        Serial.printf("Connecting to %s\n", ssid.c_str());
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(ssid.c_str(), pass.c_str());
+        const unsigned long t0 = millis();
+        while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 15000) {
+            delay(200);
+            lv_timer_handler();
+        }
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("WiFi OK: %s\n", WiFi.localIP().toString().c_str());
+        } else {
+            Serial.println("WiFi connect timeout");
+        }
+    } else {
+        Serial.println("No WiFi creds in NVS (run M4 provisioning first)");
+    }
+
+    // ---- Init OsClient --------------------------------------------------
+    const String host_url = "http://" + g_os_host;
+    g_client.reset(new osp::OsClient(
+        host_url.c_str(), g_pw_md5.c_str(), make_http_transport()));
+
+    // ---- Load /jn (station config, cached for session) -----------------
+    if (WiFi.status() == WL_CONNECTED) {
+        osp::JnData jn;
+        if (g_client->fetch_jn(jn)) {
+            g_model.load(jn.snames, jn.stn_dis, jn.masop, jn.masop2);
+            Serial.printf("Stations: %d total, %d runnable\n",
+                          static_cast<int>(jn.snames.size()),
+                          g_model.runnable_count());
+        } else {
+            Serial.println("/jn failed — no station list yet");
+        }
+    }
+
+    // ---- Init state machine + grid -------------------------------------
+    g_ps.reset(new osp::PanelState(g_model, *g_client, saved_rt));
+    build_grid();
+    ui_update();
+}
+
+// ---------------------------------------------------------------------------
+// loop()
+// ---------------------------------------------------------------------------
 void loop() {
-  digitalWrite(PIN_LED_G, LOW);       // green on
-  Serial.println("heartbeat");
-  delay(500);
-  digitalWrite(PIN_LED_G, HIGH);      // green off
-  delay(500);
+    static uint32_t last_lv_tick_ms = 0;
+    const uint32_t now = millis();
+
+    // LVGL internal tick (drives animations and timers).
+    if (now - last_lv_tick_ms >= 5u) {
+        lv_tick_inc(now - last_lv_tick_ms);
+        last_lv_tick_ms = now;
+    }
+    lv_timer_handler();
+
+    if (!g_ps) return;
+
+    // Tick the state machine; issue a /jc poll when requested.
+    if (g_ps->tick(now) && WiFi.status() == WL_CONNECTED) {
+        osp::JcData jc;
+        if (g_client->fetch_jc(jc)) {
+            g_ps->on_jc(jc);
+        } else {
+            g_ps->on_jc_error();
+        }
+    }
+
+    ui_update();
 }

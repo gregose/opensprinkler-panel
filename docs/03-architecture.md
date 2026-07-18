@@ -46,7 +46,7 @@ Why:
   board = esp32dev                  ; ESP32-WROOM-32E, 4MB flash, no PSRAM
   board_build.f_flash = 40000000L
   board_build.flash_mode = dio
-  board_build.partitions = default.csv   ; dual-app OTA layout (ota_0/ota_1 + nvs), enables wireless updates
+  board_build.partitions = min_spiffs.csv ; dual-app OTA layout (~1.9MB/slot); fits the LVGL app (~1.3MB) with headroom and enables wireless updates
   monitor_speed = 115200
   lib_deps =
     bodmer/TFT_eSPI
