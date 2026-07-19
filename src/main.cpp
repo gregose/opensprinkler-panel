@@ -236,7 +236,39 @@ static bool connect_wifi(const String& ssid, const String& pass) {
     return false;
 }
 
-// Start the WiFiManager captive-portal.
+// Shared helper: build NVS-merged OS/OTA fields from portal parameter values.
+// Saves a complete record to NVS.  WiFi creds (ssid/pass) are passed in as-is
+// (AP portal supplies new ones; STA portal keeps the existing ones).
+static void save_portal_params_to_nvs(const String& ssid,
+                                      const String& pass,
+                                      const String& current_host,
+                                      const String& current_pw_md5,
+                                      const WiFiManagerParameter& os_host_param,
+                                      const WiFiManagerParameter& os_pass_param,
+                                      const WiFiManagerParameter& ota_pass_param) {
+    const String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
+
+    String saved_host = osp::normalize_os_host(os_host_param.getValue()).c_str();
+    if (saved_host.isEmpty()) saved_host = normalized_host;
+    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
+
+    const String plain_os_pass = osp::trim_ascii(os_pass_param.getValue()).c_str();
+    String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
+    if (!plain_os_pass.isEmpty()) {
+        saved_pw_md5 = osp::normalize_md5_hex(md5_hex(plain_os_pass).c_str()).c_str();
+    } else if (!osp::is_valid_md5_hex(saved_pw_md5.c_str())) {
+        saved_pw_md5 = DEFAULT_PW_MD5;
+    }
+
+    const String saved_ota_pass = osp::trim_ascii(ota_pass_param.getValue()).c_str();
+    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass);
+    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s)\n",
+                  saved_host.c_str(),
+                  osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
+                  saved_ota_pass.isEmpty() ? "empty" : "set");
+}
+
+// Start the WiFiManager captive-portal (AP mode).
 //
 // current_ssid / current_pass are the NVS-stored WiFi credentials.  They are
 // used as a fallback if WiFi.SSID()/psk() are empty after the portal connects
@@ -256,8 +288,8 @@ static bool start_provisioning_portal(const String& current_ssid,
                                       const String& current_ota_pass,
                                       bool non_destructive,
                                       bool* touch_cal_reset_out) {
-    const char* mode_str = non_destructive ? "Edit config" : "Setup mode";
-    draw_boot_message(mode_str, "Join Wi-Fi OSPanel-Setup",
+    draw_boot_message(non_destructive ? "Edit config" : "Setup mode",
+                      "Join Wi-Fi OSPanel-Setup",
                       "Open the captive portal");
 
     char host_buf[65] = {};
@@ -308,26 +340,87 @@ static bool start_provisioning_portal(const String& current_ssid,
     const String saved_ssid = !WiFi.SSID().isEmpty() ? WiFi.SSID() : current_ssid;
     const String saved_pass = !WiFi.psk().isEmpty()  ? WiFi.psk()  : current_pass;
 
-    String saved_host = osp::normalize_os_host(os_host_param.getValue()).c_str();
-    if (saved_host.isEmpty()) saved_host = normalized_host;
-    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
-
-    const String plain_os_pass = osp::trim_ascii(os_pass_param.getValue()).c_str();
-    String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
-    if (!plain_os_pass.isEmpty()) {
-        saved_pw_md5 = osp::normalize_md5_hex(md5_hex(plain_os_pass).c_str()).c_str();
-    } else if (!osp::is_valid_md5_hex(saved_pw_md5.c_str())) {
-        saved_pw_md5 = DEFAULT_PW_MD5;
-    }
-
-    const String saved_ota_pass = osp::trim_ascii(ota_pass_param.getValue()).c_str();
-    save_config_to_nvs(saved_ssid, saved_pass, saved_host, saved_pw_md5, saved_ota_pass);
-    Serial.printf("Provisioning saved for host %s (pw_md5 %s, ota_pass %s)\n",
-                  saved_host.c_str(),
-                  osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
-                  saved_ota_pass.isEmpty() ? "empty" : "set");
+    save_portal_params_to_nvs(saved_ssid, saved_pass, current_host, current_pw_md5,
+                               os_host_param, os_pass_param, ota_pass_param);
 
     if (non_destructive && touch_cal_reset_out) {
+        *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
+    }
+    return true;
+}
+
+// Serve the edit-config portal over the existing STA connection (non-blocking).
+// The device stays on home WiFi; the user browses to the LAN IP.  Runs a
+// wm.process() loop for up to PORTAL_EDIT_TIMEOUT_S seconds.
+//
+// Returns true if the user saved params (NVS record written).
+// Returns false if the loop timed out without a save.
+//
+// touch_cal_reset_out: set to true if the user checked "Reset touch calibration".
+static bool start_sta_web_portal(const String& current_ssid,
+                                 const String& current_pass,
+                                 const String& current_host,
+                                 const String& current_pw_md5,
+                                 const String& current_ota_pass,
+                                 bool* touch_cal_reset_out) {
+    char host_buf[65] = {};
+    char ota_buf[65] = {};
+    String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
+    String trimmed_ota = osp::trim_ascii(current_ota_pass.c_str()).c_str();
+    normalized_host.toCharArray(host_buf, sizeof(host_buf));
+    trimmed_ota.toCharArray(ota_buf, sizeof(ota_buf));
+
+    WiFiManager wm;
+
+    WiFiManagerParameter os_host_param("os_host", "OpenSprinkler host",
+                                       host_buf, sizeof(host_buf));
+    WiFiManagerParameter os_pass_param("os_pass", "OpenSprinkler device password",
+                                       "", 65,
+                                       "type='password' autocomplete='off'");
+    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (optional)",
+                                        ota_buf, sizeof(ota_buf),
+                                        "type='password' autocomplete='off'");
+    WiFiManagerParameter reset_touch_param("reset_touch",
+                                           "Reset touch calibration",
+                                           "", 2,
+                                           "type='checkbox' value='1'");
+
+    wm.addParameter(&os_host_param);
+    wm.addParameter(&os_pass_param);
+    wm.addParameter(&ota_pass_param);
+    wm.addParameter(&reset_touch_param);
+
+    bool params_saved = false;
+    wm.setSaveParamsCallback([&params_saved]() { params_saved = true; });
+
+    wm.startWebPortal();
+
+    String ip_url = "http://";
+    ip_url += WiFi.localIP().toString();
+    ip_url += "/";
+    Serial.printf("STA web portal started at %s\n", ip_url.c_str());
+    draw_boot_message("Edit config at:", ip_url.c_str(),
+                      "Save to apply, wait to skip");
+
+    const unsigned long t0 = millis();
+    const unsigned long timeout_ms = (unsigned long)PORTAL_EDIT_TIMEOUT_S * 1000UL;
+    while ((millis() - t0) < timeout_ms) {
+        wm.process();
+        if (params_saved) break;
+        delay(10);
+    }
+    wm.stopWebPortal();
+
+    if (!params_saved) {
+        Serial.println("STA edit portal timed out without save");
+        return false;
+    }
+
+    // WiFi creds unchanged — keep the existing NVS ssid/pass.
+    save_portal_params_to_nvs(current_ssid, current_pass, current_host, current_pw_md5,
+                               os_host_param, os_pass_param, ota_pass_param);
+
+    if (touch_cal_reset_out) {
         *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
     }
     return true;
@@ -376,12 +469,38 @@ static bool ensure_network_config() {
     }
 
     // --- Non-destructive config edit (3–10 s hold) ----------------------
-    // Open the edit portal pre-filled from existing config with a 180 s
-    // timeout.  On save: persist merged config, handle optional touch-cal
-    // reset, then reboot.  On timeout: continue with existing config intact.
+    // Try to reconnect in STA mode and serve config over the existing WiFi
+    // so the user can browse to the device IP on their LAN.  If STA connect
+    // fails (creds changed / AP gone), fall back to the AP captive portal.
+    // On save or timeout in STA mode: reboot into the UX.
+    // On timeout via the AP portal fallback: continue with existing config.
     if (mode == BootMode::kEditConfig) {
         Serial.println("BOOT held 3 s: non-destructive config edit");
         bool touch_cal_reset = false;
+
+        const bool sta_ok = connect_wifi(ssid, pass);
+        if (sta_ok) {
+            // STA connected — serve config over existing WiFi, no AP needed.
+            const bool saved = start_sta_web_portal(ssid, pass, g_os_host,
+                                                     g_pw_md5, ota_pass,
+                                                     &touch_cal_reset);
+            if (saved && touch_cal_reset) {
+                Serial.println("Touch cal reset: removing NVS key");
+                Preferences prefs;
+                prefs.begin(NVS_NS, false);
+                prefs.remove(NVS_TOUCHCAL);
+                prefs.end();
+            }
+            // Reboot whether or not the user saved — closes the web server
+            // cleanly and ensures any config changes take effect.
+            Serial.println(saved ? "Config saved; rebooting into UX"
+                                 : "STA edit portal timed out; rebooting");
+            ESP.restart();
+        }
+
+        // STA connect failed — fall back to AP captive portal so the user
+        // can still fix the WiFi credentials.
+        Serial.println("STA connect failed; falling back to AP captive portal");
         const bool saved = start_provisioning_portal(ssid, pass, g_os_host,
                                                       g_pw_md5, ota_pass,
                                                       true, &touch_cal_reset);
@@ -396,9 +515,8 @@ static bool ensure_network_config() {
             Serial.println("Config saved; rebooting into UX");
             ESP.restart();
         }
-        // Portal timed out without save — continue with existing config.
+        // AP portal timed out without save — continue with existing config.
         Serial.println("Edit portal timed out; resuming with existing config");
-        if (WiFi.status() == WL_CONNECTED) return true;
         return connect_wifi(ssid, pass);
     }
 
