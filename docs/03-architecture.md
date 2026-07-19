@@ -56,6 +56,7 @@ Why:
   build_flags =
     -D USER_SETUP_LOADED=1
     -D ST7796_DRIVER=1
+    -D LOAD_GLCD=1 -D LOAD_FONT2=1 -D LOAD_FONT4=1 -D LOAD_GFXFF=1
     -D TFT_WIDTH=320
     -D TFT_HEIGHT=480
     -D TFT_MISO=12 -D TFT_MOSI=13 -D TFT_SCLK=14
@@ -66,6 +67,8 @@ Why:
     -D LV_CONF_PATH=... (or lv_conf.h in include/)
   ```
   (Provide TFT_eSPI's setup either via these `build_flags` or a `User_Setup.h`; pin the platform/library versions once the build is green — they move.)
+
+> **Gotcha (verified on hardware):** with `USER_SETUP_LOADED=1`, TFT_eSPI compiles **only** the fonts you explicitly enable. Without `LOAD_GLCD`/`LOAD_FONT*`/`LOAD_GFXFF`, `drawString()`/`print()` silently render **nothing** (graphics primitives still work), which reads as a "blank text" display fault. The production UI is LVGL-rendered so it wouldn't catch this — but the diag firmware's labels and `calibrateTouch()` prompts need these flags. Keep them in the shared `[cyd_common]` build_flags so both envs get them.
 
 - **No PSRAM.** LVGL draw buffers must live in **internal DRAM** and be **small/partial** (e.g. a 480×40 line buffer, ~38 KB × 2), not a full framebuffer (480×320×2 ≈ 300 KB won't fit). This is the standard CYD approach; the single-task model below still applies.
 
