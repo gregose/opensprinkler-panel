@@ -34,11 +34,11 @@ cp "$build_dir/partitions.bin" "$out_dir/partitions.bin"
 cp "$build_dir/firmware.bin"   "$out_dir/firmware.bin"
 cp "$boot_app0_bin"            "$out_dir/boot_app0.bin"
 
-python3 -m esptool --chip esp32 merge_bin \
+python3 -m esptool --chip esp32 merge-bin \
   -o "$out_dir/merged-firmware.bin" \
-  --flash_mode dio \
-  --flash_freq 40m \
-  --flash_size 4MB \
+  --flash-mode dio \
+  --flash-freq 40m \
+  --flash-size 4MB \
   0x1000 "$out_dir/bootloader.bin" \
   0x8000 "$out_dir/partitions.bin" \
   0xe000 "$out_dir/boot_app0.bin" \
