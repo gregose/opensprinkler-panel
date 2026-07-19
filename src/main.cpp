@@ -52,6 +52,7 @@ static constexpr unsigned long BOOT_HOLD_EDIT_MS    = 3000;
 static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
 static constexpr int           PORTAL_EDIT_TIMEOUT_S = 180;
 static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
 
 // Boot-hold mode: determined at startup by measuring how long BOOT is held.
 enum class BootMode { kNormal, kEditConfig, kFactoryClear };
@@ -366,9 +367,8 @@ static bool ensure_network_config() {
         pass = "";
         ota_pass = "";
         Serial.println("Factory clear complete; starting provisioning portal");
-        bool ignored = false;
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   false, &ignored);
+                                   false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -412,9 +412,8 @@ static bool ensure_network_config() {
     }
     if (!has_config || !connected) {
         Serial.println("Starting provisioning portal");
-        bool ignored = false;
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   false, &ignored);
+                                   false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -468,7 +467,7 @@ static void run_touch_calibration() {
     prefs.end();
     Serial.println("Touch: calibration complete and saved to NVS.");
     draw_boot_message("Calibration saved");
-    delay(1000);
+    delay(CALIBRATION_COMPLETE_DELAY_MS);
 }
 
 // Ensure touch is calibrated: load from NVS if present, otherwise run the
