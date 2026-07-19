@@ -59,6 +59,14 @@ void test_build_cv_url() {
       url.c_str());
 }
 
+void test_build_jo_url() {
+  const std::string url = build_jo_url("http://192.168.1.100",
+                                       "a6d82bced638de3def1e9bbb4983225c");
+  TEST_ASSERT_EQUAL_STRING(
+      "http://192.168.1.100/jo?pw=a6d82bced638de3def1e9bbb4983225c",
+      url.c_str());
+}
+
 // ---------------------------------------------------------------------------
 // parse_jn
 // ---------------------------------------------------------------------------
@@ -79,7 +87,7 @@ void test_parse_jn_fields() {
   TEST_ASSERT_EQUAL_STRING("North Beds", d.snames[2].c_str());
   TEST_ASSERT_EQUAL_INT(1, static_cast<int>(d.stn_dis.size()));
   TEST_ASSERT_EQUAL_INT(4, d.stn_dis[0]);    // sid 2 disabled
-  TEST_ASSERT_EQUAL_INT(32, d.masop[0]);     // sid 5 master
+  TEST_ASSERT_EQUAL_INT(32, d.masop[0]);     // sid 5 pump-associated (masop bit)
   TEST_ASSERT_EQUAL_INT(0, d.masop2[0]);
 }
 
@@ -131,6 +139,30 @@ void test_parse_jc_malformed() {
   JcData d;
   TEST_ASSERT_FALSE(parse_jc("not json", d));
   TEST_ASSERT_FALSE(parse_jc("{}", d));    // missing devt
+}
+
+// ---------------------------------------------------------------------------
+// parse_jo (master station indices)
+// ---------------------------------------------------------------------------
+
+void test_parse_jo_fields() {
+  JoData d;
+  TEST_ASSERT_TRUE(parse_jo(R"({"mas":6,"mas2":10})", d));
+  TEST_ASSERT_EQUAL_INT(6, d.mas);
+  TEST_ASSERT_EQUAL_INT(10, d.mas2);
+}
+
+void test_parse_jo_none_and_missing() {
+  // Greg's controller: mas=0 => no master; mas2 absent => defaults to 0.
+  JoData d;
+  TEST_ASSERT_TRUE(parse_jo(R"({"mas":0})", d));
+  TEST_ASSERT_EQUAL_INT(0, d.mas);
+  TEST_ASSERT_EQUAL_INT(0, d.mas2);
+}
+
+void test_parse_jo_malformed() {
+  JoData d;
+  TEST_ASSERT_FALSE(parse_jo("not json", d));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +238,22 @@ void test_client_fetch_jc() {
   TEST_ASSERT_EQUAL_STRING(
       ("http://192.168.1.100/jc?pw=" + kMd5).c_str(),
       rt.calls[0].c_str());
+}
+
+void test_client_fetch_jo() {
+  RecordingTransport rt;
+  rt.response = R"({"mas":0,"mas2":0})";
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
+
+  JoData d;
+  TEST_ASSERT_TRUE(c.fetch_jo(d));
+  TEST_ASSERT_TRUE(c.connected());
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rt.calls.size()));
+  TEST_ASSERT_EQUAL_STRING(
+      ("http://192.168.1.100/jo?pw=" + kMd5).c_str(),
+      rt.calls[0].c_str());
+  TEST_ASSERT_EQUAL_INT(0, d.mas);
+  TEST_ASSERT_EQUAL_INT(0, d.mas2);
 }
 
 void test_client_run_station() {
@@ -316,6 +364,7 @@ int main(int, char**) {
   RUN_TEST(test_build_cm_url_run);
   RUN_TEST(test_build_cm_url_stop);
   RUN_TEST(test_build_cv_url);
+  RUN_TEST(test_build_jo_url);
 
   RUN_TEST(test_parse_jn_fields);
   RUN_TEST(test_parse_jn_malformed);
@@ -324,6 +373,10 @@ int main(int, char**) {
   RUN_TEST(test_parse_jc_missing_rssi);
   RUN_TEST(test_parse_jc_malformed);
 
+  RUN_TEST(test_parse_jo_fields);
+  RUN_TEST(test_parse_jo_none_and_missing);
+  RUN_TEST(test_parse_jo_malformed);
+
   RUN_TEST(test_parse_result_ok);
   RUN_TEST(test_parse_result_unauthorized);
   RUN_TEST(test_parse_result_not_permitted);
@@ -331,6 +384,7 @@ int main(int, char**) {
 
   RUN_TEST(test_client_fetch_jn);
   RUN_TEST(test_client_fetch_jc);
+  RUN_TEST(test_client_fetch_jo);
   RUN_TEST(test_client_run_station);
   RUN_TEST(test_client_stop_station);
   RUN_TEST(test_client_stop_all);

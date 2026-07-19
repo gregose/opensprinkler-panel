@@ -18,6 +18,10 @@ std::string build_jc_url(const std::string& host, const std::string& pw) {
   return host + "/jc?pw=" + pw;
 }
 
+std::string build_jo_url(const std::string& host, const std::string& pw) {
+  return host + "/jo?pw=" + pw;
+}
+
 std::string build_cm_url(const std::string& host, const std::string& pw,
                          int sid, bool en, int t_sec) {
   char buf[256];
@@ -98,6 +102,15 @@ bool parse_jc(const std::string& body, JcData& out) {
   return true;
 }
 
+bool parse_jo(const std::string& body, JoData& out) {
+  JsonDocument doc;
+  if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
+  // /jo carries the master station options. Missing keys => no master (0).
+  out.mas = doc["mas"] | 0;
+  out.mas2 = doc["mas2"] | 0;
+  return true;
+}
+
 OsResult parse_result(const std::string& body) {
   JsonDocument doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) {
@@ -132,6 +145,13 @@ bool OsClient::fetch_jc(JcData& out) {
   const std::string body = transport_(build_jc_url(host_, pw_hex_));
   if (body.empty()) { connected_ = false; return false; }
   connected_ = parse_jc(body, out);
+  return connected_;
+}
+
+bool OsClient::fetch_jo(JoData& out) {
+  const std::string body = transport_(build_jo_url(host_, pw_hex_));
+  if (body.empty()) { connected_ = false; return false; }
+  connected_ = parse_jo(body, out);
   return connected_;
 }
 

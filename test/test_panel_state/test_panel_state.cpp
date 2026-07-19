@@ -38,7 +38,7 @@ static StationModel make_model(int n) {
   for (int i = 0; i < n; ++i)
     names.push_back("S" + std::to_string(i + 1));
   StationModel m;
-  m.load(names, {}, {}, {});
+  m.load(names, {}, 0, 0);
   return m;
 }
 
@@ -160,7 +160,7 @@ void test_select_nonrunnable_station_is_noop() {
   // Build a model with station 1 disabled.
   StationModel model;
   std::vector<uint8_t> stn_dis = {0b00000010};  // disable sid 1
-  model.load({"A", "B", "C"}, stn_dis, {}, {});
+  model.load({"A", "B", "C"}, stn_dis, 0, 0);
   FixedTransport t;
   t.response = R"({"result":1})";
   OsClient client("http://h", "p", [&t](const std::string& u) { return t(u); });
