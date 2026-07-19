@@ -641,6 +641,13 @@ void setup() {
 
     // ---- TFT init -------------------------------------------------------
     tft.init();
+    // LVGL 9 renders RGB565 in the ESP32's native little-endian byte order, but
+    // tft.pushPixels() sends 16-bit words MSB-first — so LVGL buffers must be
+    // byte-swapped or colours come out wrong (near-black bg renders red-ish,
+    // anti-aliased text edges turn to rainbow speckle). setSwapBytes only affects
+    // buffer pushes (pushPixels/pushImage), NOT fillScreen/drawString, so raw
+    // graphics are unaffected. Must be set before any LVGL flush.
+    tft.setSwapBytes(true);
     tft.setRotation(1);  // landscape — tune rotation/offset on-device (docs/03)
     tft.fillScreen(TFT_BLACK);
 
