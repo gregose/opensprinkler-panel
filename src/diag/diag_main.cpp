@@ -9,6 +9,8 @@
 //   t  Raw touch stream (M2, 'q' to stop)
 //   c  3-point touch calibration (M2)
 //   l  LVGL smoke test (M3, 'q' to stop)
+//   w  WiFi connect test (uses NVS creds; prints IP/RSSI/gateway/DNS)
+//   o  OpenSprinkler API test (read-only /jn + /jc via lib/os_client)
 //   n  Print NVS config
 //   s  Set NVS key (interactive — see tools/seed-nvs.sh for scripted use)
 //   x  Clear NVS namespace
@@ -19,12 +21,16 @@
 // Do NOT modify src/main.cpp — this file is the sole source for diag logic.
 
 #include <Arduino.h>
+#include <HTTPClient.h>
 #include <MD5Builder.h>
 #include <Preferences.h>
+#include <WiFi.h>
 #include <esp_system.h>
 
 #include <TFT_eSPI.h>
 #include <lvgl.h>
+
+#include "os_client.h"
 
 // ---------------------------------------------------------------------------
 // Git SHA — injected by CI via -D FW_GIT_SHA (GIT_SHA env var at build time).
@@ -59,6 +65,11 @@ static constexpr const char* NVS_TOUCHCAL = "touch_cal";  // uint16_t calData[5]
 
 // Timeout for the NVS interactive setter (ms).
 static constexpr unsigned long NVS_INPUT_TIMEOUT_MS = 30000;
+
+// WiFi association timeout for the 'w'/'o' network tests (ms).
+static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+// HTTP connect/read timeout for the OpenSprinkler API test (ms).
+static constexpr int HTTP_TIMEOUT_MS = 2000;
 
 
 // ---------------------------------------------------------------------------
@@ -451,6 +462,173 @@ static void nvs_clear() {
 }
 
 // ---------------------------------------------------------------------------
+// Network / OpenSprinkler API tests (W = WiFi, O = OS API)
+// ---------------------------------------------------------------------------
+// These reuse the exact production path so bring-up can isolate a fault to a
+// single layer (link -> WiFi -> DNS -> HTTP -> auth -> JSON parse) WITHOUT the
+// LVGL UI in the way. lib/os_client (the M5 client, native-tested) builds the
+// URLs and parses the responses; this file supplies a real HTTPClient GET.
+// Both commands are strictly READ-ONLY (/jn + /jc) — no station is actuated.
+
+// Connect to WiFi using the SSID/pass stored in NVS. Returns true if already
+// connected or association succeeds within WIFI_CONNECT_TIMEOUT_MS. Prints a
+// per-layer summary (creds -> association -> IP/RSSI/gateway/DNS).
+static bool wifi_connect_from_nvs() {
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("WiFi: already connected (IP %s, RSSI %d dBm).\n",
+                      WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+        return true;
+    }
+
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    const String ssid = prefs.getString(NVS_SSID, "");
+    const String pass = prefs.getString(NVS_PASS, "");
+    prefs.end();
+
+    if (ssid.isEmpty()) {
+        Serial.println("WiFi: FAIL — no wifi_ssid in NVS (seed it with 's' or "
+                       "tools/seed-nvs.sh).");
+        return false;
+    }
+
+    Serial.printf("WiFi: connecting to SSID \"%s\"...\n", ssid.c_str());
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+
+    const unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           (millis() - t0) < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(200);
+        Serial.print('.');
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.printf("WiFi: FAIL — not connected after %lu ms (status=%d). "
+                      "Check SSID/pass and 2.4GHz coverage.\n",
+                      WIFI_CONNECT_TIMEOUT_MS, (int)WiFi.status());
+        return false;
+    }
+
+    Serial.println("WiFi: OK");
+    Serial.printf("  IP      : %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("  RSSI    : %d dBm\n", (int)WiFi.RSSI());
+    Serial.printf("  Gateway : %s\n", WiFi.gatewayIP().toString().c_str());
+    Serial.printf("  Subnet  : %s\n", WiFi.subnetMask().toString().c_str());
+    Serial.printf("  DNS     : %s\n", WiFi.dnsIP().toString().c_str());
+    return true;
+}
+
+// 'w' — WiFi connectivity test.
+static void w_wifi_test() {
+    Serial.println("\n=== W: WiFi test ===");
+    wifi_connect_from_nvs();
+}
+
+// HTTP GET helper: performs the request, prints status + body length, and
+// returns the body ("" on failure). Mirrors main.cpp's transport but with
+// verbose diagnostics for bench use.
+static String diag_http_get(const String& label, const std::string& url) {
+    Serial.printf("  GET %s\n", label.c_str());
+    HTTPClient http;
+    http.setConnectTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(HTTP_TIMEOUT_MS);
+    if (!http.begin(url.c_str())) {
+        Serial.println("    FAIL — http.begin() rejected the URL.");
+        return "";
+    }
+    const int code = http.GET();
+    if (code <= 0) {
+        Serial.printf("    FAIL — transport error: %s\n",
+                      http.errorToString(code).c_str());
+        http.end();
+        return "";
+    }
+    const String body = http.getString();
+    http.end();
+    Serial.printf("    HTTP %d, %u bytes\n", code, (unsigned)body.length());
+    if (code != HTTP_CODE_OK) {
+        Serial.println("    WARN — non-200 status; body parse may fail.");
+    }
+    return body;
+}
+
+// 'o' — OpenSprinkler API test (read-only). Ensures WiFi is up, then fetches
+// /jn (station config) and /jc (controller status) using lib/os_client URL
+// builders + parsers, and prints a decoded summary. Actuates nothing.
+static void o_os_api_test() {
+    Serial.println("\n=== O: OpenSprinkler API test (read-only /jn + /jc) ===");
+
+    if (!wifi_connect_from_nvs()) {
+        Serial.println("OS: aborted — WiFi not connected.");
+        return;
+    }
+
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    const String host   = prefs.getString(NVS_HOST,  "");
+    const String pw_md5 = prefs.getString(NVS_PWMD5, "");
+    prefs.end();
+
+    if (host.isEmpty()) {
+        Serial.println("OS: FAIL — no os_host in NVS (seed it with 's').");
+        return;
+    }
+    const std::string host_url = std::string("http://") + host.c_str();
+    const std::string pw       = pw_md5.c_str();
+    Serial.printf("OS: host %s (pw_md5 %s)\n", host_url.c_str(),
+                  pw_md5.isEmpty() ? "(empty!)" : "set");
+
+    // ---- /jn : station configuration ------------------------------------
+    const String jn_body = diag_http_get("/jn", osp::build_jn_url(host_url, pw));
+    if (jn_body.isEmpty()) {
+        Serial.println("OS: FAIL — no /jn response (check host, DNS, auth).");
+        return;
+    }
+    osp::JnData jn;
+    if (!osp::parse_jn(jn_body.c_str(), jn)) {
+        Serial.println("OS: FAIL — /jn parse error (unexpected JSON / auth failure?).");
+        return;
+    }
+    const size_t nstations = jn.snames.size();
+    Serial.printf("OS: /jn OK — %u stations:\n", (unsigned)nstations);
+    for (size_t sid = 0; sid < nstations; ++sid) {
+        const bool dis = (sid / 8) < jn.stn_dis.size() &&
+                         ((jn.stn_dis[sid / 8] >> (sid % 8)) & 0x01);
+        Serial.printf("   [%2u] %-24s %s\n", (unsigned)sid,
+                      jn.snames[sid].c_str(), dis ? "(disabled)" : "");
+    }
+
+    // ---- /jc : controller status ----------------------------------------
+    const String jc_body = diag_http_get("/jc", osp::build_jc_url(host_url, pw));
+    if (jc_body.isEmpty()) {
+        Serial.println("OS: FAIL — no /jc response.");
+        return;
+    }
+    osp::JcData jc;
+    if (!osp::parse_jc(jc_body.c_str(), jc)) {
+        Serial.println("OS: FAIL — /jc parse error.");
+        return;
+    }
+    Serial.printf("OS: /jc OK — devt=%d, controller RSSI=%d dBm\n",
+                  jc.devt, jc.rssi);
+    int running = 0;
+    for (size_t sid = 0; sid < nstations; ++sid) {
+        const bool on = (sid / 8) < jc.sbits.size() &&
+                        ((jc.sbits[sid / 8] >> (sid % 8)) & 0x01);
+        if (on) {
+            const int rem = sid < jc.ps.size() ? jc.ps[sid].rem : 0;
+            Serial.printf("   RUNNING [%2u] %-20s rem=%ds\n", (unsigned)sid,
+                          sid < nstations ? jn.snames[sid].c_str() : "?", rem);
+            ++running;
+        }
+    }
+    Serial.printf("OS: %d station(s) currently running.\n", running);
+    Serial.println("OS: PASS — WiFi + HTTP + auth + JSON parse all OK.");
+}
+
+// ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 static void print_help() {
@@ -462,6 +640,8 @@ static void print_help() {
     Serial.println("  t  Touch stream: raw ADC x/y/z + screen coords (M2, 'q' stop)");
     Serial.println("  c  Touch calibration (TFT_eSPI calibrateTouch, saves to NVS)");
     Serial.println("  l  LVGL smoke test: button + timer label (M3, 'q' stop)");
+    Serial.println("  w  WiFi connect test (NVS creds -> IP/RSSI/gateway/DNS)");
+    Serial.println("  o  OpenSprinkler API test: read-only /jn + /jc via os_client");
     Serial.println("  n  Print NVS config");
     Serial.println("  s  Set NVS key (interactive / tools/seed-nvs.sh)");
     Serial.println("  x  Clear NVS namespace");
@@ -503,6 +683,8 @@ void loop() {
         case 't': m2_touch_stream();     break;
         case 'c': m2_calibration();      break;
         case 'l': m3_lvgl_smoke();       break;
+        case 'w': w_wifi_test();         break;
+        case 'o': o_os_api_test();       break;
         case 'n': nvs_print();           break;
         case 's': nvs_set_interactive(); break;
         case 'x': nvs_clear();           break;
