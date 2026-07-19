@@ -17,7 +17,7 @@ std::string trim_ascii(const std::string& input) {
   return std::string(first, last);
 }
 
-static bool starts_with_ci(const std::string& input, const char* prefix) {
+static bool starts_with_case_insensitive(const std::string& input, const char* prefix) {
   for (size_t i = 0; prefix[i] != '\0'; ++i) {
     if (i >= input.size()) return false;
     if (std::tolower(static_cast<unsigned char>(input[i])) !=
@@ -30,8 +30,8 @@ static bool starts_with_ci(const std::string& input, const char* prefix) {
 
 std::string normalize_os_host(const std::string& input) {
   std::string out = trim_ascii(input);
-  if (starts_with_ci(out, "http://")) out.erase(0, 7);
-  else if (starts_with_ci(out, "https://")) out.erase(0, 8);
+  if (starts_with_case_insensitive(out, "http://")) out.erase(0, 7);
+  else if (starts_with_case_insensitive(out, "https://")) out.erase(0, 8);
   while (!out.empty() && out.back() == '/') out.pop_back();
   return out;
 }

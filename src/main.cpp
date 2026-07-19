@@ -61,6 +61,7 @@ static constexpr const char* NVS_OTA       = "ota_pass";
 static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
+static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
 static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
 
 // Visual tokens (docs/01 §5).
@@ -260,7 +261,7 @@ static bool start_provisioning_portal(const String& current_host,
     const String saved_pass = WiFi.psk();
     String saved_host = osp::normalize_os_host(os_host.getValue()).c_str();
     if (saved_host.isEmpty()) saved_host = normalized_host;
-    if (saved_host.isEmpty()) saved_host = "192.168.1.100";
+    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
 
     const String plain_os_pass = osp::trim_ascii(os_pass.getValue()).c_str();
     String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
@@ -745,8 +746,8 @@ static void ui_update() {
         const char* dot = v.connected
             ? "\xe2\x97\x89"   // ◉ UTF-8
             : "\xe2\x97\x8e";  // ◎ UTF-8
-        snprintf(buf, sizeof(buf), "%s %s", dot,
-                 g_os_host.isEmpty() ? "unconfigured" : g_os_host.c_str());
+        const char* host_display = g_os_host.isEmpty() ? "unconfigured" : g_os_host.c_str();
+        snprintf(buf, sizeof(buf), "%s %s", dot, host_display);
         lv_label_set_text(lbl_host, buf);
         lv_obj_set_style_text_color(lbl_host,
                                      hex_color(v.connected ? CLR_TEAL : CLR_RED), 0);
