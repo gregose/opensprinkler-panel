@@ -19,14 +19,17 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <MD5Builder.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <memory>
 
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
 #include "os_client.h"
+#include "panel_config.h"
 #include "panel_state.h"
 #include "station_model.h"
 
@@ -45,6 +48,8 @@ static constexpr int SCREEN_W = 480;
 static constexpr int SCREEN_H = 320;
 // Draw buffer: 480×4 pixels — keeps BSS small on the no-PSRAM ESP32.
 static constexpr int DRAW_BUF_LINES = 4;
+static constexpr unsigned long BOOT_HOLD_CLEAR_MS = 3000;
+static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 
 // NVS keys (matches M4 provisioning schema).
 static constexpr const char* NVS_NS        = "osp-panel";
@@ -52,8 +57,12 @@ static constexpr const char* NVS_SSID      = "wifi_ssid";
 static constexpr const char* NVS_PASS      = "wifi_pass";
 static constexpr const char* NVS_HOST      = "os_host";
 static constexpr const char* NVS_PWMD5     = "os_pw_md5";
+static constexpr const char* NVS_OTA       = "ota_pass";
+static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
+static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
+static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
 
 // Visual tokens (docs/01 §5).
 static constexpr uint32_t CLR_BG    = 0x07100f;
@@ -96,6 +105,221 @@ static std::unique_ptr<osp::PanelState> g_ps;
 // NVS config cache.
 static String g_os_host;
 static String g_pw_md5;
+
+// ---------------------------------------------------------------------------
+// Provisioning + NVS helpers
+// ---------------------------------------------------------------------------
+static String md5_hex(const String& plaintext) {
+    MD5Builder md5;
+    md5.begin();
+    md5.add(plaintext);
+    md5.calculate();
+    return md5.toString();
+}
+
+static void draw_boot_message(const char* line1,
+                              const char* line2 = nullptr,
+                              const char* line3 = nullptr) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(8, 12);
+    tft.println("OpenSprinkler panel");
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setCursor(8, 52);
+    tft.println(line1);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    if (line2) {
+        tft.setCursor(8, 84);
+        tft.println(line2);
+    }
+    if (line3) {
+        tft.setCursor(8, 108);
+        tft.println(line3);
+    }
+}
+
+static void load_config_from_nvs(String* ssid,
+                                 String* pass,
+                                 String* os_host,
+                                 String* pw_md5,
+                                 String* ota_pass,
+                                 int* run_time_s) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    if (ssid) *ssid = prefs.getString(NVS_SSID, "");
+    if (pass) *pass = prefs.getString(NVS_PASS, "");
+    if (os_host) *os_host = prefs.getString(NVS_HOST, "");
+    if (pw_md5) *pw_md5 = prefs.getString(NVS_PWMD5, "");
+    if (ota_pass) *ota_pass = prefs.getString(NVS_OTA, "");
+    if (run_time_s) *run_time_s = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
+    prefs.end();
+}
+
+static void save_config_to_nvs(const String& ssid,
+                               const String& pass,
+                               const String& os_host,
+                               const String& pw_md5,
+                               const String& ota_pass) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putString(NVS_SSID, ssid);
+    prefs.putString(NVS_PASS, pass);
+    prefs.putString(NVS_HOST, os_host);
+    prefs.putString(NVS_PWMD5, pw_md5);
+    if (ota_pass.isEmpty()) prefs.remove(NVS_OTA);
+    else                    prefs.putString(NVS_OTA, ota_pass);
+    prefs.end();
+}
+
+static void save_run_time_to_nvs(int run_time_s) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putInt(NVS_RT, run_time_s);
+    prefs.end();
+}
+
+static void clear_provisioning_config() {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    // Preserve touch_cal so BOOT-hold reprovision does not force recalibration.
+    prefs.remove(NVS_SSID);
+    prefs.remove(NVS_PASS);
+    prefs.remove(NVS_HOST);
+    prefs.remove(NVS_PWMD5);
+    prefs.remove(NVS_OTA);
+    prefs.remove(NVS_RT);
+    prefs.end();
+}
+
+static bool boot_hold_requests_reprovision() {
+    if (digitalRead(PIN_BOOT_BTN) != LOW) return false;
+    draw_boot_message("Hold BOOT to clear config", "Keep holding for 3 seconds");
+    const unsigned long t0 = millis();
+    while (digitalRead(PIN_BOOT_BTN) == LOW) {
+        if ((millis() - t0) >= BOOT_HOLD_CLEAR_MS) return true;
+        delay(10);
+    }
+    return false;
+}
+
+static bool connect_wifi(const String& ssid, const String& pass) {
+    if (ssid.isEmpty()) return false;
+    Serial.printf("Connecting to %s\n", ssid.c_str());
+    draw_boot_message("Connecting Wi-Fi", ssid.c_str());
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+    const unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           (millis() - t0) < WIFI_CONNECT_TIMEOUT_MS) {
+        delay(200);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("WiFi OK: %s\n", WiFi.localIP().toString().c_str());
+        return true;
+    }
+    Serial.println("WiFi connect timeout");
+    return false;
+}
+
+static bool start_provisioning_portal(const String& current_host,
+                                      const String& current_pw_md5,
+                                      const String& current_ota_pass) {
+    draw_boot_message("Setup mode", "Join Wi-Fi OSPanel-Setup",
+                      "Open the captive portal");
+
+    char host_buf[65] = {};
+    char ota_buf[65] = {};
+    String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
+    String trimmed_ota = osp::trim_ascii(current_ota_pass.c_str()).c_str();
+    normalized_host.toCharArray(host_buf, sizeof(host_buf));
+    trimmed_ota.toCharArray(ota_buf, sizeof(ota_buf));
+
+    WiFiManager wm;
+
+    WiFiManagerParameter os_host("os_host", "OpenSprinkler host", host_buf, sizeof(host_buf));
+    WiFiManagerParameter os_pass("os_pass", "OpenSprinkler device password",
+                                 "", 65, "type='password' autocomplete='off'");
+    WiFiManagerParameter ota_pass("ota_pass", "OTA password (optional)",
+                                  ota_buf, sizeof(ota_buf),
+                                  "type='password' autocomplete='off'");
+
+    wm.setAPCallback([](WiFiManager* portal) {
+        draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
+                          "Open the captive portal");
+    });
+    wm.addParameter(&os_host);
+    wm.addParameter(&os_pass);
+    wm.addParameter(&ota_pass);
+
+    if (!wm.startConfigPortal(PROVISION_AP_SSID)) {
+        Serial.println("Provisioning portal exited without WiFi connection");
+        return false;
+    }
+
+    const String saved_ssid = WiFi.SSID();
+    const String saved_pass = WiFi.psk();
+    String saved_host = osp::normalize_os_host(os_host.getValue()).c_str();
+    if (saved_host.isEmpty()) saved_host = normalized_host;
+    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
+
+    const String plain_os_pass = osp::trim_ascii(os_pass.getValue()).c_str();
+    String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
+    if (!plain_os_pass.isEmpty()) {
+        saved_pw_md5 = osp::normalize_md5_hex(md5_hex(plain_os_pass).c_str()).c_str();
+    } else if (!osp::is_valid_md5_hex(saved_pw_md5.c_str())) {
+        saved_pw_md5 = DEFAULT_PW_MD5;
+    }
+
+    const String saved_ota_pass = osp::trim_ascii(ota_pass.getValue()).c_str();
+    save_config_to_nvs(saved_ssid, saved_pass, saved_host, saved_pw_md5, saved_ota_pass);
+    Serial.printf("Provisioning saved for host %s (pw_md5 %s, ota_pass %s)\n",
+                  saved_host.c_str(),
+                  osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
+                  saved_ota_pass.isEmpty() ? "empty" : "set");
+    return true;
+}
+
+static bool ensure_network_config() {
+    String ssid;
+    String pass;
+    String ota_pass;
+    int ignored_run_time = osp::PanelState::kDefaultRunTime;
+    load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, &ota_pass, &ignored_run_time);
+
+    g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
+    g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
+
+    const bool force_reprovision = boot_hold_requests_reprovision();
+    if (force_reprovision) {
+        Serial.println("BOOT held: clearing provisioning config");
+        clear_provisioning_config();
+        WiFi.disconnect(true, true);
+        g_os_host = "";
+        g_pw_md5 = "";
+        ssid = "";
+        pass = "";
+        ota_pass = "";
+    }
+
+    bool connected = false;
+    const bool has_config = osp::has_provisioning_config(ssid.c_str(),
+                                                         g_os_host.c_str(),
+                                                         g_pw_md5.c_str());
+    if (has_config && !force_reprovision) {
+        connected = connect_wifi(ssid, pass);
+    }
+    if (!has_config || !connected || force_reprovision) {
+        Serial.println("Starting provisioning portal");
+        start_provisioning_portal(g_os_host, g_pw_md5, ota_pass);
+        load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
+        g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
+        g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
+        connected = (WiFi.status() == WL_CONNECTED) ||
+                    connect_wifi(ssid, pass);
+    }
+    return connected;
+}
 
 // ---------------------------------------------------------------------------
 // LVGL callbacks
@@ -209,12 +433,16 @@ static void ev_stop(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->stop();
 }
 static void ev_rt_minus(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps)
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
         g_ps->set_run_time(g_ps->view().run_time_s - osp::PanelState::kRunTimeStep);
+        save_run_time_to_nvs(g_ps->view().run_time_s);
+    }
 }
 static void ev_rt_plus(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps)
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
         g_ps->set_run_time(g_ps->view().run_time_s + osp::PanelState::kRunTimeStep);
+        save_run_time_to_nvs(g_ps->view().run_time_s);
+    }
 }
 static void ev_auto_adv(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED && g_ps)
@@ -518,7 +746,8 @@ static void ui_update() {
         const char* dot = v.connected
             ? "\xe2\x97\x89"   // ◉ UTF-8
             : "\xe2\x97\x8e";  // ◎ UTF-8
-        snprintf(buf, sizeof(buf), "%s %s", dot, g_os_host.c_str());
+        const char* host_display = g_os_host.isEmpty() ? "unconfigured" : g_os_host.c_str();
+        snprintf(buf, sizeof(buf), "%s %s", dot, host_display);
         lv_label_set_text(lbl_host, buf);
         lv_obj_set_style_text_color(lbl_host,
                                      hex_color(v.connected ? CLR_TEAL : CLR_RED), 0);
@@ -651,6 +880,16 @@ void setup() {
     tft.setRotation(1);  // landscape — tune rotation/offset on-device (docs/03)
     tft.fillScreen(TFT_BLACK);
 
+    // ---- Load NVS config ------------------------------------------------
+    int saved_rt = osp::PanelState::kDefaultRunTime;
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+
+    // ---- Provision / connect (M4 seam) ----------------------------------
+    ensure_network_config();
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+
+    // ---- Touch calibration seam -----------------------------------------
+
     // ---- LVGL init ------------------------------------------------------
     lv_init();
     lv_display_t* disp = lv_display_create(SCREEN_W, SCREEN_H);
@@ -664,38 +903,9 @@ void setup() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touchpad_read_cb);
 
-    // ---- Load NVS config ------------------------------------------------
-    Preferences prefs;
-    prefs.begin(NVS_NS, true);
-    const String ssid   = prefs.getString(NVS_SSID,  "");
-    const String pass   = prefs.getString(NVS_PASS,  "");
-    g_os_host           = prefs.getString(NVS_HOST,  "192.168.1.100");
-    g_pw_md5            = prefs.getString(NVS_PWMD5, DEFAULT_PW_MD5);
-    const int saved_rt  = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
-    prefs.end();
-
     // ---- Build base UI --------------------------------------------------
     build_ui();
     lv_timer_handler();
-
-    // ---- Connect WiFi ---------------------------------------------------
-    if (!ssid.isEmpty()) {
-        Serial.printf("Connecting to %s\n", ssid.c_str());
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(ssid.c_str(), pass.c_str());
-        const unsigned long t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && (millis() - t0) < 15000) {
-            delay(200);
-            lv_timer_handler();
-        }
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.printf("WiFi OK: %s\n", WiFi.localIP().toString().c_str());
-        } else {
-            Serial.println("WiFi connect timeout");
-        }
-    } else {
-        Serial.println("No WiFi creds in NVS (run M4 provisioning first)");
-    }
 
     // ---- Init OsClient --------------------------------------------------
     const String host_url = "http://" + g_os_host;
