@@ -11,7 +11,7 @@ on:
 env:
   PYTHON_VERSION: "3.11"
   PLATFORMIO_VERSION: "6.1.19"
-  ESPTOOL_VERSION: "4.11.0"
+  ESPTOOL_VERSION: "5.3.1"
   # Artifact base names; the short commit SHA is appended per run so multiple
   # builds are distinguishable when downloading/flashing (tools/flash.sh matches
   # these by prefix). Keep in sync with tools/flash.sh.

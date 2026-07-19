@@ -202,4 +202,4 @@ for _ in $(seq 1 50); do
 done
 
 printf 'Flashing run %s from %s to %s\n' "$run_id" "$repo" "$port"
-python3 -m esptool --chip esp32 --port "$port" write_flash 0x0 "$merged_firmware"
+python3 -m esptool --chip esp32 --port "$port" write-flash 0x0 "$merged_firmware"

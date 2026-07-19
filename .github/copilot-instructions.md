@@ -27,7 +27,7 @@ issues. Resolve them through PlatformIO and pre-warm them as above.
 `platformio.ini` is the single source of truth for the ESP32 platform version.
 Keep the pinned tool versions identical across `platformio.ini`,
 `.github/workflows/ci.yml`, and `.github/workflows/copilot-setup-steps.yml`
-(currently Python 3.11, PlatformIO 6.1.19, esptool 4.11.0).
+(currently Python 3.11, PlatformIO 6.1.19, esptool 5.3.1).
 
 ## Architecture & testing
 
