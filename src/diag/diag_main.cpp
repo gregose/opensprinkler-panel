@@ -78,7 +78,10 @@ static constexpr int HTTP_TIMEOUT_MS = 2000;
 static TFT_eSPI tft;
 
 // LVGL draw buffer — same sizing as main.cpp (no PSRAM on this board).
-static lv_color_t draw_buf[SCREEN_W * DRAW_BUF_LINES];
+// RGB565 render target = 2 bytes/px. Must satisfy LVGL 9's draw-buffer
+// alignment requirement: lv_display_set_buffers() asserts that buf1 is aligned
+// to LV_DRAW_BUF_ALIGN, so a bare (1-byte-aligned) array silently hangs.
+alignas(64) static uint8_t draw_buf[SCREEN_W * DRAW_BUF_LINES * 2];
 
 // Display state for toggle commands.
 static uint8_t g_rotation = 1;  // landscape (matches main.cpp setup())

@@ -81,7 +81,10 @@ static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
 static TFT_eSPI tft;
 
 // LVGL draw buffer (static, internal SRAM — no PSRAM on this board).
-static lv_color_t draw_buf[SCREEN_W * DRAW_BUF_LINES];
+// RGB565 render target = 2 bytes/px. Must be aligned to LVGL 9's
+// LV_DRAW_BUF_ALIGN; lv_display_set_buffers() asserts on a misaligned buffer
+// (a bare 1-byte-aligned array silently hangs during init).
+alignas(64) static uint8_t draw_buf[SCREEN_W * DRAW_BUF_LINES * 2];
 
 // ---------------------------------------------------------------------------
 // Application state
