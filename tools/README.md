@@ -107,3 +107,22 @@ Options:
 
 After seeding, flash the production `cyd-35r` firmware. It reads the same NVS
 namespace (`osp-panel`) and connects automatically.
+
+## Verify connectivity on the diag firmware (`w` / `o`)
+
+Once creds are seeded, the diagnostic firmware can validate the whole network
+path independently of the production UI — useful for isolating a fault to a
+single layer (link → Wi-Fi → DNS → HTTP → auth → JSON parse). Over the serial
+monitor (`./tools/monitor.sh`), send a single character:
+
+- `w` — Wi-Fi connect test: associates using the NVS creds and prints IP,
+  RSSI, gateway, subnet, and DNS.
+- `o` — OpenSprinkler API test (**read-only**): connects Wi-Fi if needed, then
+  fetches `/jn` and `/jc` through `lib/os_client` (the same builders/parsers the
+  production firmware uses) and prints the station list, disabled flags,
+  controller time/RSSI, and any currently running stations. It never actuates a
+  station.
+
+If `o` reports PASS, the M5 API client and the controller credentials are good,
+so a blank production grid points at the UI rather than the network.
+
