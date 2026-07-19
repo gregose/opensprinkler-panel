@@ -41,7 +41,17 @@
 #define LV_DEF_REFR_PERIOD 33
 
 /* ---- Logging ----------------------------------------------------------- */
-#define LV_USE_LOG 0   /* disable to save flash; enable for debugging */
+/* Diagnostic firmware (-D OSP_DIAG_BUILD) enables LVGL logging at WARN level
+ * routed to printf -> Serial (UART0). This makes a failing LVGL assert print
+ * its message instead of hanging silently (LVGL asserts log at ERROR, which is
+ * >= WARN). Production keeps logging OFF to save flash / avoid overhead. */
+#if defined(OSP_DIAG_BUILD)
+  #define LV_USE_LOG 1
+  #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
+  #define LV_LOG_PRINTF 1
+#else
+  #define LV_USE_LOG 0   /* disable to save flash; enable for debugging */
+#endif
 
 /* ---- Tick -------------------------------------------------------------- */
 /** lv_tick_set_cb() lets LVGL call millis() directly (set in setup()).     */
