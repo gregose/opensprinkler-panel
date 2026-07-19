@@ -30,8 +30,19 @@ enum class OsResult {
 struct JnData {
   std::vector<std::string> snames;   // station display names
   std::vector<uint8_t> stn_dis;      // disabled bitmask (per-board bytes)
-  std::vector<uint8_t> masop;        // master-1 association bitmask
-  std::vector<uint8_t> masop2;       // master-2 association bitmask
+  std::vector<uint8_t> masop;        // master-1 association mask (which stations
+                                     // open master valve 1 — NOT master identity)
+  std::vector<uint8_t> masop2;       // master-2 association mask (see masop)
+};
+
+// ---------------------------------------------------------------------------
+// Data from GET /jo (controller options). The master station indices live here
+// (not in /jn or /jc). Convention: 0 = no master, otherwise the master's
+// 1-based station number. masop/masop2 in /jn are only *association* masks.
+// ---------------------------------------------------------------------------
+struct JoData {
+  int mas = 0;   // primary master station (1-based; 0 = none)
+  int mas2 = 0;  // secondary master station (1-based; 0 = none)
 };
 
 // ---------------------------------------------------------------------------
@@ -59,6 +70,7 @@ struct JcData {
 // ---------------------------------------------------------------------------
 std::string build_jn_url(const std::string& host, const std::string& pw);
 std::string build_jc_url(const std::string& host, const std::string& pw);
+std::string build_jo_url(const std::string& host, const std::string& pw);
 
 // /cm: run (en=1) or stop (en=0) a single station.
 // sid is 0-based. t_sec is only used when en=true.
@@ -73,6 +85,7 @@ std::string build_cv_url(const std::string& host, const std::string& pw);
 // ---------------------------------------------------------------------------
 bool parse_jn(const std::string& body, JnData& out);
 bool parse_jc(const std::string& body, JcData& out);
+bool parse_jo(const std::string& body, JoData& out);
 
 // Extracts the `result` field. Returns OsResult::NetworkError on parse failure.
 OsResult parse_result(const std::string& body);
@@ -102,6 +115,10 @@ class OsClient {
 
   // Fetch controller status (/jc).  Returns false on error.
   bool fetch_jc(JcData& out);
+
+  // Fetch controller options (/jo) — used for the master station indices
+  // (mas/mas2), which are not present in /jn or /jc.  Returns false on error.
+  bool fetch_jo(JoData& out);
 
   // Run a station (en=1 /cm).
   bool run_station(int sid, int t_sec);

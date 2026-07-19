@@ -664,6 +664,12 @@ void setup() {
     ledcWrite(LEDC_CHANNEL, 255);
 
     tft.init();
+    // LVGL 9 renders RGB565 little-endian; tft.pushPixels() sends 16-bit words
+    // MSB-first, so LVGL draw buffers must be byte-swapped or colours are wrong
+    // (near-black bg renders red-ish, anti-aliased text edges become speckle).
+    // Affects buffer pushes only, not fillScreen/drawString — so the raw M0–M2
+    // colour/text tests are unaffected. Must precede any LVGL flush (M3 `l`).
+    tft.setSwapBytes(true);
     tft.setRotation(g_rotation);
     tft.fillScreen(TFT_BLACK);
     load_touch_cal();

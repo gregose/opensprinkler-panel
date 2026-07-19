@@ -26,8 +26,7 @@ int rssi_to_bars(int rssi_dbm) {
 
 void StationModel::load(const std::vector<std::string>& names,
                         const std::vector<uint8_t>& stn_dis,
-                        const std::vector<uint8_t>& masop,
-                        const std::vector<uint8_t>& masop2) {
+                        int mas, int mas2) {
   stations_.clear();
   runnable_.clear();
   stations_.reserve(names.size());
@@ -37,7 +36,9 @@ void StationModel::load(const std::vector<std::string>& names,
     s.sid = sid;
     s.name = names[sid];
     s.disabled = board_bit_set(stn_dis, sid);
-    s.master = board_bit_set(masop, sid) || board_bit_set(masop2, sid);
+    // Master stations are identified by the mas/mas2 option indices (1-based;
+    // 0 = none) from /jo — NOT by the masop association bitmasks.
+    s.master = (mas != 0 && sid == mas - 1) || (mas2 != 0 && sid == mas2 - 1);
     stations_.push_back(s);
     if (s.runnable()) runnable_.push_back(sid);
   }

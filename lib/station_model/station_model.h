@@ -45,13 +45,17 @@ int rssi_to_bars(int rssi_dbm);
 
 class StationModel {
  public:
-  // Build the model from the /jn-derived station configuration. `stn_dis`,
-  // `masop`, and `masop2` are the raw per-board bitmask byte arrays; any may be
-  // empty. Master stations are those set in `masop` OR `masop2`.
+  // Build the model from the station configuration. `stn_dis` is the raw
+  // per-board disabled bitmask (any length; empty = none disabled). `mas` and
+  // `mas2` are the master station indices from /jo (1-based; 0 = none) — the
+  // only stations treated as masters and omitted from the grid.
+  //
+  // NOTE: do NOT pass the /jn `masop`/`masop2` bitmasks here. Those are master
+  // *association* masks (which stations open the master valve when they run);
+  // using them as master identity wrongly filters out every pump-fed zone.
   void load(const std::vector<std::string>& names,
             const std::vector<uint8_t>& stn_dis,
-            const std::vector<uint8_t>& masop,
-            const std::vector<uint8_t>& masop2);
+            int mas, int mas2);
 
   const std::vector<Station>& stations() const { return stations_; }
 

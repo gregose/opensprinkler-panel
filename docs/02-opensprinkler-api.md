@@ -31,16 +31,27 @@ Relevant fields:
 {
   "snames": ["Front Lawn", "Driveway Strip", "North Beds", ...],
   "stn_dis": [ <byte per board> ],     // disabled bitmask, LSB = lowest station on that board
-  "masop":   [ <byte per board> ],     // master-1 association bitmask
-  "masop2":  [ <byte per board> ],     // master-2 association bitmask
+  "masop":   [ <byte per board> ],     // master-1 ASSOCIATION mask (which stations open master valve 1 — NOT master identity)
+  "masop2":  [ <byte per board> ],     // master-2 association mask
   "maxlen": 32
 }
 ```
 - **Station count** = `snames.length`.
 - **Station `sid` is disabled** iff `(stn_dis[sid >> 3] >> (sid & 7)) & 1`.
-- **Master/pump stations** are those with a bit set in `masop`/`masop2`. Omit disabled **and** master stations from the grid (the controller rejects running a master via `/cm`).
+- **Master (pump) stations** are identified by the `mas`/`mas2` option indices from **`/jo`** (see below), **not** by `masop`/`masop2`. `masop`/`masop2` are *association* masks — which stations open the master valve when they run — so most normal zones have their bit set; using them as master identity wrongly filters out every pump-fed zone (this was bug #39). Omit disabled stations **and** the `mas`/`mas2` master station(s) from the grid (the controller rejects running a master via `/cm`).
 
 **Timing / caching.** `/jn` is **configuration**, not live state. Fetch it once at startup (and after the first-run config flow), then **cache** the result (names + enabled set + count) for the session. Do **not** poll it. The grid layout and Prev/Advance navigation are built from this cached list — never hardcoded — so any station count, disabled set, or rename is reflected automatically on the next launch. Station config only changes when the controller itself is reconfigured (adding an extender requires power-cycling the OS), so a fresh startup always has current config; no runtime re-fetch is needed.
+
+### `GET /jo` — controller options (config; fetched once at startup with `/jn`)
+Only the master station indices are needed:
+```json
+{
+  "mas": 0,    // primary master station: 0 = none, else 1-based station number
+  "mas2": 0    // secondary master station: 0 = none, else 1-based station number
+}
+```
+- **The master station(s)** are `mas` and `mas2` (when non-zero): station `sid == mas-1` / `sid == mas2-1`. These are the stations to omit from the grid — associated (`masop`) zones stay runnable.
+- Fetched once at startup alongside `/jn`; not polled. On fetch failure, treat as no master (`0`) — the worst case is a master appears in the grid and running it returns `not permitted` (32).
 
 ### `GET /jc` — controller status (the poll, ~every 2 s while running)
 Relevant fields:
@@ -97,8 +108,9 @@ blow-out use case the compressor tank absorbs it; do not attempt overlap).
 
 ## The client's job (put together)
 
-**Boot / after config:** `GET /jn` → build the station list (names, filter
-disabled + master). Then start polling.
+**Boot / after config:** `GET /jn` (names + `stn_dis`) and `GET /jo` (master
+indices `mas`/`mas2`) → build the station list (filter disabled + the master
+station(s)). Then start polling.
 
 **Poll loop (~2 s while running; slower when idle is fine):** `GET /jc` →
 - find the on-station from `sbits`; set it as the highlighted/running station,

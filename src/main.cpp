@@ -870,6 +870,13 @@ void setup() {
 
     // ---- TFT init -------------------------------------------------------
     tft.init();
+    // LVGL 9 renders RGB565 in the ESP32's native little-endian byte order, but
+    // tft.pushPixels() sends 16-bit words MSB-first — so LVGL buffers must be
+    // byte-swapped or colours come out wrong (near-black bg renders red-ish,
+    // anti-aliased text edges turn to rainbow speckle). setSwapBytes only affects
+    // buffer pushes (pushPixels/pushImage), NOT fillScreen/drawString, so raw
+    // graphics are unaffected. Must be set before any LVGL flush.
+    tft.setSwapBytes(true);
     tft.setRotation(1);  // landscape — tune rotation/offset on-device (docs/03)
     tft.fillScreen(TFT_BLACK);
 
@@ -909,10 +916,15 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
         osp::JnData jn;
         if (g_client->fetch_jn(jn)) {
-            g_model.load(jn.snames, jn.stn_dis, jn.masop, jn.masop2);
-            Serial.printf("Stations: %d total, %d runnable\n",
+            // Master station indices live in /jo (not /jn or /jc). Best-effort:
+            // on failure mas/mas2 default to 0 (no master), so no station is
+            // wrongly filtered. masop/masop2 are association masks, not masters.
+            osp::JoData jo;
+            g_client->fetch_jo(jo);
+            g_model.load(jn.snames, jn.stn_dis, jo.mas, jo.mas2);
+            Serial.printf("Stations: %d total, %d runnable (mas=%d mas2=%d)\n",
                           static_cast<int>(jn.snames.size()),
-                          g_model.runnable_count());
+                          g_model.runnable_count(), jo.mas, jo.mas2);
         } else {
             Serial.println("/jn failed — no station list yet");
         }
