@@ -315,8 +315,8 @@ static bool start_provisioning_portal(const String& current_ssid,
                                         "type='password' autocomplete='off'");
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
-                                           "", 2,
-                                           "type='checkbox' value='1'");
+                                           "1", 2,
+                                           "type='checkbox'");
 
     wm.setAPCallback([](WiFiManager* portal) {
         draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
@@ -382,8 +382,8 @@ static bool start_sta_web_portal(const String& current_ssid,
                                         "type='password' autocomplete='off'");
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
-                                           "", 2,
-                                           "type='checkbox' value='1'");
+                                           "1", 2,
+                                           "type='checkbox'");
 
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
