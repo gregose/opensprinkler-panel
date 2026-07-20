@@ -67,8 +67,8 @@ and read back the running station + `rem` from `/jc`.
 
 **M6 — Wire the UX / state machine.** Build the single screen per `01`
 (idle/running visibility, name-headline + eyebrow + countdown, one consistent
-Prev/Advance/Stop row, run-time stepper, Auto-advance toggle, scaling grid),
-driven by the M5 client. Implement: select=run, Advance/Prev wrap + skip
+Advance/Stop row, run-time stepper, Auto-advance toggle, scaling grid),
+driven by the M5 client. Implement: select=run, Advance wrap + skip
 disabled, jump, run-time-change-restarts-current (extend), auto-advance
 (stop-after-last), the `/jc` reconcile, signal-loss state, and 5-min idle sleep.
 *Done when:* the on-device behavior matches `00-mockup-reference.html` tapped

@@ -850,7 +850,6 @@ static lv_obj_t* lbl_stn_name   = nullptr;
 static lv_obj_t* lbl_countdown  = nullptr;
 
 // Bottom action row (running only)
-static lv_obj_t* btn_prev       = nullptr;
 static lv_obj_t* btn_advance    = nullptr;
 static lv_obj_t* btn_stop       = nullptr;
 
@@ -911,11 +910,6 @@ static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
-static void ev_prev(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    StateLock lock;
-    if (lock && g_ps) g_ps->prev();
-}
 static void ev_advance(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
@@ -1067,25 +1061,19 @@ static void build_ui() {
     lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
 
-    // ---- Action row (Prev / Advance / Stop) -----------------------------
+    // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_GAP = 4;
-    const int action_btn_w = (LEFT_W - ACTION_GAP * 2) / 3;
+    const int action_btn_w = (LEFT_W - ACTION_GAP) / 2;
 
-    btn_prev = make_btn(scr, LV_SYMBOL_PREV " Prev", CLR_LINE, CLR_TEXT);
-    lv_obj_set_size(btn_prev, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_prev, 0, ACTION_Y);
-    lv_obj_add_flag(btn_prev, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(btn_prev, ev_prev, LV_EVENT_CLICKED, nullptr);
-
-    btn_advance = make_btn(scr, LV_SYMBOL_NEXT " Next", CLR_TEAL, CLR_BG);
+    btn_advance = make_btn(scr, LV_SYMBOL_NEXT " Advance", CLR_TEAL, CLR_BG);
     lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_advance, action_btn_w + ACTION_GAP, ACTION_Y);
+    lv_obj_set_pos(btn_advance, 0, ACTION_Y);
     lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
 
     btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop", CLR_RED, CLR_BG);
     lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_stop, (action_btn_w + ACTION_GAP) * 2, ACTION_Y);
+    lv_obj_set_pos(btn_stop, action_btn_w + ACTION_GAP, ACTION_Y);
     lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
@@ -1283,7 +1271,6 @@ static void ui_update() {
     // Phase visibility
     obj_set_hidden(pnl_idle,    running);
     obj_set_hidden(pnl_running, !running);
-    obj_set_hidden(btn_prev,    !running);
     obj_set_hidden(btn_advance, !running);
     obj_set_hidden(btn_stop,    !running);
 

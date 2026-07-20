@@ -138,7 +138,7 @@
 <div class="wrap">
   <p class="eyebrow">OpenSprinkler · Local Station Control</p>
   <h1>Station control panel <span class="thin">— UX design doc</span></h1>
-  <p class="lede">One screen. When nothing's running it asks you to pick a station; tap one and it runs. From there you step with Prev / Advance or jump to any station, and a single Auto-advance switch decides whether the run time ending means stop or roll to the next. Adjust the run time mid-run to extend the station you're on. Tap through the live model — including your real 14 stations, and the 24 your extender allows.</p>
+  <p class="lede">One screen. When nothing's running it asks you to pick a station; tap one and it runs. From there you can Advance, Stop, or jump to any station, and a single Auto-advance switch decides whether the run time ending means stop or roll to the next. Adjust the run time mid-run to extend the station you're on. Tap through the live model — including your real 14 stations, and the 24 your extender allows.</p>
   <div class="meta">
     <span><b>Device</b> Waveshare ESP32-S3-Touch-LCD-3.5</span>
     <span><b>Screen</b> 320×480 IPS · landscape · FT6336 touch</span>
@@ -148,7 +148,7 @@
 
   <section>
     <h2><span class="num">01</span> Live model</h2>
-    <p class="sub">The real screen at true proportions (1&nbsp;px here = 1&nbsp;px on the panel). It boots idle. Tap a station to run it; Prev/Advance and Stop appear only while running. Change the run time mid-run to extend, flip Auto-advance, toggle to 24 stations, or preview the idle sleep.</p>
+    <p class="sub">The real screen at true proportions (1&nbsp;px here = 1&nbsp;px on the panel). It boots idle. Tap a station to run it; Advance and Stop appear only while running. Change the run time mid-run to extend, flip Auto-advance, toggle to 24 stations, or preview the idle sleep.</p>
     <div class="stage">
       <div class="deviceCol">
         <div class="bezel"><div class="frame" id="frame"><div class="screen" id="screen"></div></div></div>
@@ -171,8 +171,8 @@
     <h2><span class="num">02</span> The interaction</h2>
     <p class="sub">Idle and running are two clean states — the panel only ever shows the controls that make sense right now.</p>
     <div class="grid2">
-      <div class="card"><span class="tag">Idle</span><h4>Pick a station</h4><p>Nothing highlighted, no number, no Prev/Advance — just a prompt and the grid. A tap on any station starts it for the set run time. One touch, no confirm.</p></div>
-      <div class="card"><span class="tag">Running</span><h4>Step, jump, or stop</h4><p>The station <em>name</em> headlines, with its number above and a single amber countdown below — no redundant bar or labels. Prev/Advance jump immediately, the grid jumps anywhere, and Stop closes everything and returns to idle.</p></div>
+      <div class="card"><span class="tag">Idle</span><h4>Pick a station</h4><p>Nothing highlighted, no number, no Advance/Stop nav — just a prompt and the grid. A tap on any station starts it for the set run time. One touch, no confirm.</p></div>
+      <div class="card"><span class="tag">Running</span><h4>Step, jump, or stop</h4><p>The station <em>name</em> headlines, with its number above and a single amber countdown below — no redundant bar or labels. Advance jumps immediately, the grid jumps anywhere, and Stop closes everything and returns to idle.</p></div>
       <div class="card"><span class="tag">The one setting</span><h4>Auto-advance</h4><p>Off (default): a station runs its time and stops. On: when the time ends it rolls into the next station and keeps going — start at station 1, walk the yard, and it stops on its own after the last.</p></div>
       <div class="card"><span class="tag">Run time = the timeout</span><h4>One value, also the safety cap</h4><p>Every station opens with that time as its hard limit, so the controller auto-closes it even if the panel drops off. Nudge it up while a station's running and that station restarts at the new time — an easy extend. No separate cap, no pause.</p></div>
     </div>
@@ -195,7 +195,7 @@
         <tr><td class="act">Load stations</td><td><code>GET /jn</code></td><td>Names + disabled bits build the grid — nothing per-install.</td></tr>
         <tr><td class="act">Poll status</td><td><code>GET /jc</code></td><td>Every ~2s while running. <code>sn</code> = on, <code>ps</code> = remaining. Truth for the countdown + highlight.</td></tr>
         <tr><td class="act">Run / jump to station <em>n</em></td><td><code>GET /cm?sid=n-1&amp;en=1&amp;t=RT</code></td><td>Timed on; <code>t</code> is what makes it fail-safe.</td></tr>
-        <tr><td class="act">Advance / Prev</td><td><code>…&amp;sid=cur&amp;en=0</code> → <code>…&amp;sid=next&amp;en=1&amp;t=RT</code></td><td>Off-then-on, back-to-back.</td></tr>
+        <tr><td class="act">Advance / Jump</td><td><code>…&amp;sid=cur&amp;en=0</code> → <code>…&amp;sid=next&amp;en=1&amp;t=RT</code></td><td>Off-then-on, back-to-back.</td></tr>
         <tr><td class="act">Extend (run time ±)</td><td><code>…&amp;sid=cur&amp;en=0</code> → <code>…&amp;sid=cur&amp;en=1&amp;t=RT'</code></td><td>Restart the current station with the new time (the controller ignores a bare re-on).</td></tr>
         <tr><td class="act">Stop</td><td><code>GET /cv?rsn=1</code></td><td>All off, back to idle.</td></tr>
       </tbody>

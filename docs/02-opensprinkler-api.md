@@ -40,7 +40,7 @@ Relevant fields:
 - **Station `sid` is disabled** iff `(stn_dis[sid >> 3] >> (sid & 7)) & 1`.
 - **Master (pump) stations** are identified by the `mas`/`mas2` option indices from **`/jo`** (see below), **not** by `masop`/`masop2`. `masop`/`masop2` are *association* masks — which stations open the master valve when they run — so most normal zones have their bit set; using them as master identity wrongly filters out every pump-fed zone (this was bug #39). Omit disabled stations **and** the `mas`/`mas2` master station(s) from the grid (the controller rejects running a master via `/cm`).
 
-**Timing / caching.** `/jn` is **configuration**, not live state. Fetch it once at startup (and after the first-run config flow), then **cache** the result (names + enabled set + count) for the session. Do **not** poll it. The grid layout and Prev/Advance navigation are built from this cached list — never hardcoded — so any station count, disabled set, or rename is reflected automatically on the next launch. Station config only changes when the controller itself is reconfigured (adding an extender requires power-cycling the OS), so a fresh startup always has current config; no runtime re-fetch is needed.
+**Timing / caching.** `/jn` is **configuration**, not live state. Fetch it once at startup (and after the first-run config flow), then **cache** the result (names + enabled set + count) for the session. Do **not** poll it. The grid layout and running-state navigation are built from this cached list — never hardcoded — so any station count, disabled set, or rename is reflected automatically on the next launch. Station config only changes when the controller itself is reconfigured (adding an extender requires power-cycling the OS), so a fresh startup always has current config; no runtime re-fetch is needed.
 
 ### `GET /jo` — controller options (config; fetched once at startup with `/jn`)
 Only the master station indices are needed:
@@ -91,7 +91,7 @@ Params: `sid` (**0-based**), `en` (`1` on / `0` off), `t` (seconds, required whe
 timer. Therefore any operation that changes the running station's duration or
 moves to a new station must **turn off first, then on**:
 
-- **Advance / Prev / jump:** `sid=<current>&en=0` → then `sid=<target>&en=1&t=<RT>`
+- **Advance / jump:** `sid=<current>&en=0` → then `sid=<target>&en=1&t=<RT>`
 - **Extend (run time changed while running):** `sid=<current>&en=0` → then `sid=<current>&en=1&t=<RT'>`
 
 Send the two calls back-to-back. Because default stations are **sequential**,
@@ -142,6 +142,6 @@ optimistically update the UI; the next poll confirms.
 | Poll status | `GET /jc?pw=…` |
 | Run station n | `GET /cm?pw=…&sid=n-1&en=1&t=RT` |
 | Turn off station n | `GET /cm?pw=…&sid=n-1&en=0` |
-| Advance/Prev/Jump | off current → on target (`t=RT`) |
+| Advance/Jump | off current → on target (`t=RT`) |
 | Extend current | off current → on current (`t=RT'`) |
 | Stop all | `GET /cv?pw=…&rsn=1` |
