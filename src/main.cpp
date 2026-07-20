@@ -67,6 +67,8 @@ static constexpr uint32_t JC_POLL_INTERVAL_MS = 2000;
 static constexpr uint32_t JN_RETRY_INITIAL_MS = 1000;
 static constexpr uint32_t JN_RETRY_MAX_MS = 10000;
 static constexpr int LINK_RETRY_LIMIT = 3;
+static constexpr const char* HEARTBEAT_LOG_FORMAT =
+    "[HB] ms=%lu ui=%lu net=%lu phase=%s heap=%u ui_hwm=%u net_hwm=%u\n";
 
 // Boot-hold mode: determined at startup by measuring how long BOOT is held.
 enum class BootMode { kNormal, kEditConfig, kFactoryClear };
@@ -159,9 +161,13 @@ static void cache_phase_snapshot_unlocked() {
 }
 
 static const char* phase_snapshot_name(uint32_t phase) {
-    return phase == static_cast<uint32_t>(osp::Phase::Running)
-               ? "Running"
-               : "Idle";
+    switch (static_cast<osp::Phase>(phase)) {
+        case osp::Phase::Idle:
+            return "Idle";
+        case osp::Phase::Running:
+            return "Running";
+    }
+    return "Unknown";
 }
 
 // ---------------------------------------------------------------------------
@@ -1714,7 +1720,7 @@ void loop() {
             g_ui_task_handle ? uxTaskGetStackHighWaterMark(g_ui_task_handle) : 0;
         const UBaseType_t net_hwm =
             g_net_task_handle ? uxTaskGetStackHighWaterMark(g_net_task_handle) : 0;
-        Serial.printf("[HB] ms=%lu ui=%lu net=%lu phase=%s heap=%u ui_hwm=%u net_hwm=%u\n",
+        Serial.printf(HEARTBEAT_LOG_FORMAT,
                       static_cast<unsigned long>(millis()),
                       static_cast<unsigned long>(ui_beat),
                       static_cast<unsigned long>(net_beat),
