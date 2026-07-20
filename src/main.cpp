@@ -435,11 +435,13 @@ static bool start_provisioning_portal(const String& current_ssid,
                                        "Enable remote debug log (port 2323)",
                                        "1", 2,
                                        current_dev_log ? "type='checkbox' checked"
-                                                       : "type='checkbox'");
+                                                       : "type='checkbox'",
+                                       WFM_LABEL_AFTER);
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
                                            "1", 2,
-                                           "type='checkbox'");
+                                           "type='checkbox'",
+                                           WFM_LABEL_AFTER);
 
     wm.setAPCallback([](WiFiManager* portal) {
         draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
@@ -509,11 +511,13 @@ static bool start_sta_web_portal(const String& current_ssid,
                                        "Enable remote debug log (port 2323)",
                                        "1", 2,
                                        current_dev_log ? "type='checkbox' checked"
-                                                       : "type='checkbox'");
+                                                       : "type='checkbox'",
+                                       WFM_LABEL_AFTER);
     WiFiManagerParameter reset_touch_param("reset_touch",
-                                               "Reset touch calibration",
-                                               "1", 2,
-                                               "type='checkbox'");
+                                                   "Reset touch calibration",
+                                                   "1", 2,
+                                                   "type='checkbox'",
+                                                   WFM_LABEL_AFTER);
 
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);

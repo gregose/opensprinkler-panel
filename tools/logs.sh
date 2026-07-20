@@ -10,8 +10,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 #
 # The firmware opens a single-client TCP server on port 2323 when the NVS
 # dev_log flag is true.  This script connects to that port, tees every line
-# to logs/serial.log, and auto-reconnects after OTA reboots — the same
-# ergonomics as tools/monitor.sh but over Wi-Fi instead of USB.
+# to logs/serial.log, and reconnects after OTA reboots or network drops.
+# SO_KEEPALIVE lets the OS detect hard resets; a silence window (~16 s) also
+# triggers a reconnect so a stale half-open socket never blocks the firmware's
+# single-client slot.
 
 host="ospanel.local"
 port="2323"
@@ -21,7 +23,8 @@ usage() {
   cat <<'EOF'
 Usage: tools/logs.sh [--host <ip-or-hostname>] [--port <port>] [--log <path>]
 
-Stream the TCP log port to stdout and a log file. Auto-reconnects after OTA reboots.
+Stream the TCP log port to stdout and a log file. Reconnects after OTA reboots,
+hard device resets, or any period of silence longer than ~16 s.
 The log server is active only when dev_log is enabled in the config portal.
 
 Options:
@@ -44,7 +47,7 @@ done
 log_dir="$(dirname "$log")"
 [[ "$log_dir" == "." || -z "$log_dir" ]] || mkdir -p "$log_dir"
 
-printf 'Streaming %s:%s -> %s (auto-reconnects on OTA reboot)\n' "$host" "$port" "$log" >&2
+printf 'Streaming %s:%s -> %s (reconnects on silence or disconnect)\n' "$host" "$port" "$log" >&2
 
 HOST="$host" PORT="$port" LOG="$log" exec python3 - <<'PY'
 import os
@@ -58,6 +61,8 @@ log_path = os.environ["LOG"]
 
 CONNECT_TIMEOUT = 5    # seconds to wait for initial TCP connection
 RECV_BUFFER_SIZE = 256  # bytes per recv() call
+RECV_TIMEOUT = 2.0      # seconds per recv() call
+SILENCE_LIMIT = 8       # consecutive timeouts (~16 s) before reconnecting
 
 log = open(log_path, "a", buffering=1)
 print(f"--- logs start {time.strftime('%Y-%m-%dT%H:%M:%S')} {host}:{port} ---",
@@ -77,16 +82,34 @@ try:
         print(note)
         print(note, file=log, flush=True)
 
-        sock.settimeout(2.0)
+        # Enable SO_KEEPALIVE so the OS detects half-open sockets after a
+        # hard device reboot (ESP.restart() sends no FIN/RST).
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        try:
+            if hasattr(socket, 'TCP_KEEPALIVE'):    # macOS
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 10)
+            if hasattr(socket, 'TCP_KEEPIDLE'):     # Linux
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+            if hasattr(socket, 'TCP_KEEPINTVL'):    # Linux
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+        except OSError:
+            pass
+
+        sock.settimeout(RECV_TIMEOUT)
         buf = b""
+        silence_count = 0
         try:
             while True:
                 try:
                     chunk = sock.recv(RECV_BUFFER_SIZE)
                 except socket.timeout:
+                    silence_count += 1
+                    if silence_count >= SILENCE_LIMIT:
+                        break  # ~16 s of silence; treat as disconnect
                     continue
                 if not chunk:
                     break
+                silence_count = 0
                 buf += chunk
                 # Flush complete lines to stdout + log.
                 while b"\n" in buf:
@@ -104,7 +127,7 @@ try:
             except OSError:
                 pass
 
-        disc = f"--- disconnected {time.strftime('%Y-%m-%dT%H:%M:%S')} — reconnecting ---"
+        disc = f"--- disconnected {time.strftime('%Y-%m-%dT%H:%M:%S')}, reconnecting ---"
         print(disc, file=sys.stderr)
         print(disc, file=log, flush=True)
         time.sleep(1.0)
