@@ -109,6 +109,7 @@ class OsClient {
 
   // True after the last request succeeded.
   bool connected() const { return connected_; }
+  OsResult last_result() const { return last_result_; }
 
   // Fetch station configuration (/jn).  Returns false on error.
   bool fetch_jn(JnData& out);
@@ -142,6 +143,7 @@ class OsClient {
   std::string pw_hex_;   // MD5 hex of the device password (supplied, from NVS)
   Transport transport_;
   bool connected_ = false;
+  OsResult last_result_ = OsResult::NetworkError;
 };
 
 }  // namespace osp
