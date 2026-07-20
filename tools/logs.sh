@@ -11,9 +11,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 # The firmware opens a single-client TCP server on port 2323 when the NVS
 # dev_log flag is true.  This script connects to that port, tees every line
 # to logs/serial.log, and reconnects after OTA reboots or network drops.
-# SO_KEEPALIVE lets the OS detect hard resets; a silence window (~16 s) also
-# triggers a reconnect so a stale half-open socket never blocks the firmware's
-# single-client slot.
+# SO_KEEPALIVE lets the OS detect a hard reset: after a reboot the device RSTs
+# the first keepalive probe to the stale half-open socket, which surfaces as a
+# recv() error and triggers a reconnect (so the firmware's single-client slot
+# never stays wedged). There is deliberately NO app-level silence timer — the
+# firmware emits no heartbeat, so an idle-but-healthy board looks identical to a
+# dead one and any finite silence window would churn needless reconnects.
 
 host="ospanel.local"
 port="2323"
@@ -24,8 +27,9 @@ usage() {
 Usage: tools/logs.sh [--host <ip-or-hostname>] [--port <port>] [--log <path>]
 
 Stream the TCP log port to stdout and a log file. Reconnects after OTA reboots,
-hard device resets, or any period of silence longer than ~16 s.
-The log server is active only when dev_log is enabled in the config portal.
+hard device resets, and network drops (via SO_KEEPALIVE); stays quietly connected
+while an idle board sends nothing. The log server is active only when dev_log is
+enabled in the config portal.
 
 Options:
   --host <host>   Device hostname or IP (default: ospanel.local).
@@ -47,7 +51,7 @@ done
 log_dir="$(dirname "$log")"
 [[ "$log_dir" == "." || -z "$log_dir" ]] || mkdir -p "$log_dir"
 
-printf 'Streaming %s:%s -> %s (reconnects on silence or disconnect)\n' "$host" "$port" "$log" >&2
+printf 'Streaming %s:%s -> %s (reconnects on reboot/disconnect)\n' "$host" "$port" "$log" >&2
 
 HOST="$host" PORT="$port" LOG="$log" exec python3 - <<'PY'
 import os
@@ -61,8 +65,7 @@ log_path = os.environ["LOG"]
 
 CONNECT_TIMEOUT = 5    # seconds to wait for initial TCP connection
 RECV_BUFFER_SIZE = 256  # bytes per recv() call
-RECV_TIMEOUT = 2.0      # seconds per recv() call
-SILENCE_LIMIT = 8       # consecutive timeouts (~16 s) before reconnecting
+RECV_TIMEOUT = 2.0      # seconds per recv() call (keeps Ctrl-C responsive)
 
 log = open(log_path, "a", buffering=1)
 print(f"--- logs start {time.strftime('%Y-%m-%dT%H:%M:%S')} {host}:{port} ---",
@@ -82,34 +85,36 @@ try:
         print(note)
         print(note, file=log, flush=True)
 
-        # Enable SO_KEEPALIVE so the OS detects half-open sockets after a
-        # hard device reboot (ESP.restart() sends no FIN/RST).
+        # Enable SO_KEEPALIVE so the OS detects a half-open socket after a hard
+        # device reboot (ESP.restart() sends no FIN/RST): the rebooted device
+        # RSTs the first keepalive probe, surfacing as a recv() error below.
+        # This is the sole reconnect trigger — see the note at the top of the
+        # file for why there is no app-level silence timer.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         try:
-            if hasattr(socket, 'TCP_KEEPALIVE'):    # macOS
+            if hasattr(socket, 'TCP_KEEPALIVE'):    # macOS: idle before probing
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 10)
-            if hasattr(socket, 'TCP_KEEPIDLE'):     # Linux
+            if hasattr(socket, 'TCP_KEEPIDLE'):     # Linux: idle before probing
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
-            if hasattr(socket, 'TCP_KEEPINTVL'):    # Linux
+            if hasattr(socket, 'TCP_KEEPINTVL'):    # macOS + Linux: probe spacing
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+            if hasattr(socket, 'TCP_KEEPCNT'):      # macOS + Linux: probes before drop
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 4)
         except OSError:
             pass
 
         sock.settimeout(RECV_TIMEOUT)
         buf = b""
-        silence_count = 0
         try:
             while True:
                 try:
                     chunk = sock.recv(RECV_BUFFER_SIZE)
                 except socket.timeout:
-                    silence_count += 1
-                    if silence_count >= SILENCE_LIMIT:
-                        break  # ~16 s of silence; treat as disconnect
+                    # Idle: healthy board with nothing to say. Keep waiting;
+                    # SO_KEEPALIVE (not silence) is what detects a dead peer.
                     continue
                 if not chunk:
                     break
-                silence_count = 0
                 buf += chunk
                 # Flush complete lines to stdout + log.
                 while b"\n" in buf:
