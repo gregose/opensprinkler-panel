@@ -25,6 +25,9 @@
 #include <WiFiManager.h>
 #include <memory>
 
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
@@ -64,6 +67,7 @@ static constexpr const char* NVS_PASS      = "wifi_pass";
 static constexpr const char* NVS_HOST      = "os_host";
 static constexpr const char* NVS_PWMD5     = "os_pw_md5";
 static constexpr const char* NVS_OTA       = "ota_pass";
+static constexpr const char* NVS_DEV_LOG   = "dev_log";
 static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
@@ -113,6 +117,112 @@ static String g_os_host;
 static String g_pw_md5;
 
 // ---------------------------------------------------------------------------
+// OTA responder + TCP log mirror — always compiled into production firmware.
+//
+// ArduinoOTA is LAN-only and password-gated: begin() is called only when the
+// NVS `ota_pass` key is non-empty, so an unprovisioned device never exposes
+// an unauthenticated OTA endpoint.  The TCP log server (port 2323) starts only
+// when the NVS `dev_log` bool is true (default false).  When dev_log is false,
+// TeeSerial forwards only to UART0 — negligible overhead.
+// ---------------------------------------------------------------------------
+
+// Save a pointer to the real UART0 Serial before the #define redirect below,
+// so TeeSerial methods and OTA callbacks can reach UART0 without the macro.
+static HardwareSerial* const g_hw_serial = &Serial;
+
+static constexpr uint16_t LOG_PORT = 2323;
+static WiFiServer g_log_server(LOG_PORT);
+static WiFiClient g_log_client;
+static bool g_ota_started = false;
+static bool g_log_server_started = false;
+
+// TeeSerial: Print subclass that writes to UART0 and, when a TCP log client is
+// connected, also to that client.  Keeps the per-character path tiny to avoid
+// budget pressure on the no-PSRAM ESP32.
+class TeeSerial : public Print {
+public:
+    void begin(unsigned long baud) { g_hw_serial->begin(baud); }
+    int  availableForWrite()       { return g_hw_serial->availableForWrite(); }
+
+    size_t write(uint8_t c) override {
+        g_hw_serial->write(c);
+        if (g_log_client && g_log_client.connected()) { g_log_client.write(c); }
+        return 1;
+    }
+    size_t write(const uint8_t* buf, size_t n) override {
+        g_hw_serial->write(buf, n);
+        if (g_log_client && g_log_client.connected()) { g_log_client.write(buf, n); }
+        return n;
+    }
+};
+static TeeSerial g_tee_serial;
+
+// Redirect all Serial.xxx calls in this translation unit to g_tee_serial.
+// Framework libraries (WiFiManager, HTTP, etc.) are compiled separately and
+// continue to write to UART0 directly, so USB still shows everything.
+#define Serial g_tee_serial
+
+static void dev_loop_init(const String& ota_pass, bool dev_log) {
+    // mDNS — stable hostname so espota.py can find the device without an IP.
+    MDNS.begin("ospanel");
+
+    // ArduinoOTA responder: only start when a password is provisioned.
+    // Never expose an unauthenticated OTA endpoint on the LAN.
+    if (!ota_pass.isEmpty()) {
+        ArduinoOTA.setHostname("ospanel");
+        ArduinoOTA.setPassword(ota_pass.c_str());
+        ArduinoOTA.onStart([]() {
+            // Print directly to UART0 — don't try to use the TCP client mid-OTA.
+            g_hw_serial->println("[OTA] Start");
+        });
+        ArduinoOTA.onEnd([]() {
+            g_hw_serial->println("[OTA] End — rebooting");
+        });
+        ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+            g_hw_serial->printf("[OTA] %u%%\r", progress * 100 / total);
+        });
+        ArduinoOTA.onError([](ota_error_t error) {
+            g_hw_serial->printf("[OTA] Error[%u]\n", error);
+        });
+        ArduinoOTA.begin();
+        g_ota_started = true;
+        g_hw_serial->println("[OTA] enabled — ospanel.local");
+    } else {
+        g_hw_serial->println("[OTA] disabled — set ota_pass in config portal to enable");
+    }
+
+    // TCP log server — single-client, last-connected-wins.
+    // Only started when dev_log NVS flag is true (default false).
+    if (dev_log) {
+        g_log_server.begin();
+        g_log_server_started = true;
+        g_hw_serial->printf("[LOG] TCP log server on port %u\n", LOG_PORT);
+    } else {
+        g_hw_serial->println("[LOG] TCP log disabled (set dev_log in config portal to enable)");
+    }
+}
+
+static void dev_loop_handle() {
+    if (g_ota_started) {
+        ArduinoOTA.handle();
+    }
+
+    if (g_log_server_started) {
+        // Accept new TCP log client (single-slot: drops any stale connection).
+        if (g_log_server.hasClient()) {
+            if (g_log_client) g_log_client.stop();
+            g_log_client = g_log_server.accept();
+            g_hw_serial->println("[LOG] client connected");
+            g_log_client.println("[LOG] OSPanel log stream");
+        }
+        // Silently drop dead connections so write() doesn't block.
+        if (g_log_client && !g_log_client.connected()) {
+            g_log_client.stop();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Provisioning + NVS helpers
 // ---------------------------------------------------------------------------
 static String md5_hex(const String& plaintext) {
@@ -150,7 +260,8 @@ static void load_config_from_nvs(String* ssid,
                                  String* os_host,
                                  String* pw_md5,
                                  String* ota_pass,
-                                 int* run_time_s) {
+                                 int* run_time_s,
+                                 bool* dev_log = nullptr) {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
     if (ssid) *ssid = prefs.getString(NVS_SSID, "");
@@ -159,6 +270,7 @@ static void load_config_from_nvs(String* ssid,
     if (pw_md5) *pw_md5 = prefs.getString(NVS_PWMD5, "");
     if (ota_pass) *ota_pass = prefs.getString(NVS_OTA, "");
     if (run_time_s) *run_time_s = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
+    if (dev_log) *dev_log = prefs.getBool(NVS_DEV_LOG, false);
     prefs.end();
 }
 
@@ -166,7 +278,8 @@ static void save_config_to_nvs(const String& ssid,
                                const String& pass,
                                const String& os_host,
                                const String& pw_md5,
-                               const String& ota_pass) {
+                               const String& ota_pass,
+                               bool dev_log) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putString(NVS_SSID, ssid);
@@ -175,6 +288,7 @@ static void save_config_to_nvs(const String& ssid,
     prefs.putString(NVS_PWMD5, pw_md5);
     if (ota_pass.isEmpty()) prefs.remove(NVS_OTA);
     else                    prefs.putString(NVS_OTA, ota_pass);
+    prefs.putBool(NVS_DEV_LOG, dev_log);
     prefs.end();
 }
 
@@ -236,7 +350,7 @@ static bool connect_wifi(const String& ssid, const String& pass) {
     return false;
 }
 
-// Shared helper: build NVS-merged OS/OTA fields from portal parameter values.
+// Shared helper: build NVS-merged OS/OTA/log fields from portal parameter values.
 // Saves a complete record to NVS.  WiFi creds (ssid/pass) are passed in as-is
 // (AP portal supplies new ones; STA portal keeps the existing ones).
 static void save_portal_params_to_nvs(const String& ssid,
@@ -245,7 +359,8 @@ static void save_portal_params_to_nvs(const String& ssid,
                                       const String& current_pw_md5,
                                       const WiFiManagerParameter& os_host_param,
                                       const WiFiManagerParameter& os_pass_param,
-                                      const WiFiManagerParameter& ota_pass_param) {
+                                      const WiFiManagerParameter& ota_pass_param,
+                                      const WiFiManagerParameter& dev_log_param) {
     const String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
 
     String saved_host = osp::normalize_os_host(os_host_param.getValue()).c_str();
@@ -261,11 +376,13 @@ static void save_portal_params_to_nvs(const String& ssid,
     }
 
     const String saved_ota_pass = osp::trim_ascii(ota_pass_param.getValue()).c_str();
-    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass);
-    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s)\n",
+    const bool saved_dev_log = (strcmp(dev_log_param.getValue(), "1") == 0);
+    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass, saved_dev_log);
+    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s, dev_log %s)\n",
                   saved_host.c_str(),
                   osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
-                  saved_ota_pass.isEmpty() ? "empty" : "set");
+                  saved_ota_pass.isEmpty() ? "empty" : "set",
+                  saved_dev_log ? "true" : "false");
 }
 
 // Start the WiFiManager captive-portal (AP mode).
@@ -286,6 +403,7 @@ static bool start_provisioning_portal(const String& current_ssid,
                                       const String& current_host,
                                       const String& current_pw_md5,
                                       const String& current_ota_pass,
+                                      bool current_dev_log,
                                       bool non_destructive,
                                       bool* touch_cal_reset_out) {
     draw_boot_message(non_destructive ? "Edit config" : "Setup mode",
@@ -310,13 +428,20 @@ static bool start_provisioning_portal(const String& current_ssid,
     WiFiManagerParameter os_pass_param("os_pass", "OpenSprinkler device password",
                                        "", 65,
                                        "type='password' autocomplete='off'");
-    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (optional)",
+    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (leave blank to disable OTA)",
                                         ota_buf, sizeof(ota_buf),
                                         "type='password' autocomplete='off'");
+    WiFiManagerParameter dev_log_param("dev_log",
+                                       "Enable remote debug log (port 2323)",
+                                       "1", 2,
+                                       current_dev_log ? "type='checkbox' checked"
+                                                       : "type='checkbox'",
+                                       WFM_LABEL_AFTER);
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
                                            "1", 2,
-                                           "type='checkbox'");
+                                           "type='checkbox'",
+                                           WFM_LABEL_AFTER);
 
     wm.setAPCallback([](WiFiManager* portal) {
         draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
@@ -325,6 +450,7 @@ static bool start_provisioning_portal(const String& current_ssid,
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
+    wm.addParameter(&dev_log_param);
     if (non_destructive) {
         wm.addParameter(&reset_touch_param);
     }
@@ -341,7 +467,7 @@ static bool start_provisioning_portal(const String& current_ssid,
     const String saved_pass = !WiFi.psk().isEmpty()  ? WiFi.psk()  : current_pass;
 
     save_portal_params_to_nvs(saved_ssid, saved_pass, current_host, current_pw_md5,
-                               os_host_param, os_pass_param, ota_pass_param);
+                               os_host_param, os_pass_param, ota_pass_param, dev_log_param);
 
     if (non_destructive && touch_cal_reset_out) {
         *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
@@ -362,6 +488,7 @@ static bool start_sta_web_portal(const String& current_ssid,
                                  const String& current_host,
                                  const String& current_pw_md5,
                                  const String& current_ota_pass,
+                                 bool current_dev_log,
                                  bool* touch_cal_reset_out) {
     char host_buf[65] = {};
     char ota_buf[65] = {};
@@ -377,17 +504,25 @@ static bool start_sta_web_portal(const String& current_ssid,
     WiFiManagerParameter os_pass_param("os_pass", "OpenSprinkler device password",
                                        "", 65,
                                        "type='password' autocomplete='off'");
-    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (optional)",
+    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (leave blank to disable OTA)",
                                         ota_buf, sizeof(ota_buf),
                                         "type='password' autocomplete='off'");
+    WiFiManagerParameter dev_log_param("dev_log",
+                                       "Enable remote debug log (port 2323)",
+                                       "1", 2,
+                                       current_dev_log ? "type='checkbox' checked"
+                                                       : "type='checkbox'",
+                                       WFM_LABEL_AFTER);
     WiFiManagerParameter reset_touch_param("reset_touch",
-                                           "Reset touch calibration",
-                                           "1", 2,
-                                           "type='checkbox'");
+                                                   "Reset touch calibration",
+                                                   "1", 2,
+                                                   "type='checkbox'",
+                                                   WFM_LABEL_AFTER);
 
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
+    wm.addParameter(&dev_log_param);
     wm.addParameter(&reset_touch_param);
 
     bool params_saved = false;
@@ -418,7 +553,7 @@ static bool start_sta_web_portal(const String& current_ssid,
 
     // WiFi creds unchanged — keep the existing NVS ssid/pass.
     save_portal_params_to_nvs(current_ssid, current_pass, current_host, current_pw_md5,
-                               os_host_param, os_pass_param, ota_pass_param);
+                               os_host_param, os_pass_param, ota_pass_param, dev_log_param);
 
     if (touch_cal_reset_out) {
         *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
@@ -430,8 +565,9 @@ static bool ensure_network_config() {
     String ssid;
     String pass;
     String ota_pass;
+    bool dev_log = false;
     int ignored_run_time = osp::PanelState::kDefaultRunTime;
-    load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, &ota_pass, &ignored_run_time);
+    load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, &ota_pass, &ignored_run_time, &dev_log);
 
     g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
     g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -459,9 +595,10 @@ static bool ensure_network_config() {
         ssid = "";
         pass = "";
         ota_pass = "";
+        dev_log = false;
         Serial.println("Factory clear complete; starting provisioning portal");
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   false, nullptr);
+                                   dev_log, false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -483,7 +620,7 @@ static bool ensure_network_config() {
             // STA connected — serve config over existing WiFi, no AP needed.
             const bool saved = start_sta_web_portal(ssid, pass, g_os_host,
                                                      g_pw_md5, ota_pass,
-                                                     &touch_cal_reset);
+                                                     dev_log, &touch_cal_reset);
             if (saved && touch_cal_reset) {
                 Serial.println("Touch cal reset: removing NVS key");
                 Preferences prefs;
@@ -503,7 +640,7 @@ static bool ensure_network_config() {
         Serial.println("STA connect failed; falling back to AP captive portal");
         const bool saved = start_provisioning_portal(ssid, pass, g_os_host,
                                                       g_pw_md5, ota_pass,
-                                                      true, &touch_cal_reset);
+                                                      dev_log, true, &touch_cal_reset);
         if (saved) {
             if (touch_cal_reset) {
                 Serial.println("Touch cal reset: removing NVS key");
@@ -531,7 +668,7 @@ static bool ensure_network_config() {
     if (!has_config || !connected) {
         Serial.println("Starting provisioning portal");
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   false, nullptr);
+                                   dev_log, false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -1163,6 +1300,16 @@ void setup() {
     ensure_network_config();
     load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
 
+    // ---- OTA responder + TCP log server (requires Wi-Fi) ----------------
+    // ArduinoOTA.begin() only called when NVS ota_pass is non-empty.
+    // WiFiServer.begin() only called when NVS dev_log is true.
+    if (WiFi.status() == WL_CONNECTED) {
+        String ota_pass_dl;
+        bool dev_log_dl = false;
+        load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, &ota_pass_dl, nullptr, &dev_log_dl);
+        dev_loop_init(ota_pass_dl, dev_log_dl);
+    }
+
     // ---- Touch calibration -----------------------------------------------
     // Must run AFTER WiFi/provisioning (portal is phone-based, no panel touch
     // needed) and BEFORE lv_init() (calibrateTouch draws directly via TFT_eSPI).
@@ -1220,6 +1367,9 @@ void setup() {
 void loop() {
     static uint32_t last_lv_tick_ms = 0;
     const uint32_t now = millis();
+
+    // OTA + TCP log client housekeeping (skips silently if not provisioned).
+    dev_loop_handle();
 
     // LVGL internal tick (drives animations and timers).
     if (now - last_lv_tick_ms >= 5u) {

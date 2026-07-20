@@ -114,25 +114,29 @@ optional/nice-to-have.
 
 ---
 
-## Wireless dev loop (OTA + network logs)
+## Wireless updates (OTA + network logs)
 
-Mirrors the ESPHome iterate-without-USB loop. **Why it works:** OTA rewrites
-only the **app partition** — the bootloader, partition table, and **NVS**
-(Wi-Fi creds + `os_host` + `os_pw_md5`) are left intact, so connectivity and
-config survive every app iteration. Contrast the USB `flash.sh` path, which
-writes `merged-firmware.bin` at `0x0` (**full flash → wipes NVS**); use USB only
-for bootstrap/recovery, then OTA for iteration.
+OTA is a first-class production feature, always compiled into `cyd-35r`. **Why
+it works:** OTA rewrites only the **app partition** — the bootloader, partition
+table, and **NVS** (Wi-Fi creds + `os_host` + `os_pw_md5` + `ota_pass` +
+`dev_log`) are left intact, so connectivity and config survive every OTA.
+Contrast the USB `flash.sh` path, which writes `merged-firmware.bin` at `0x0`
+(**full flash → wipes NVS**); use USB only for bootstrap/recovery, then OTA for
+iteration.
 
-- **OTA responder:** `ArduinoOTA` (framework built-in) with a password from NVS
-  (`ota_pass`) + a stable mDNS hostname (e.g. `ospanel.local`). Guard behind a
-  `DEV_LOOP` build flag so release builds can omit it.
-- **Log sink:** a small `WiFiServer` TCP log server (e.g. port 2323) that echoes
-  what goes to `Serial` to any connected client — LAN-only, lightweight (no
-  ESPAsyncWebServer/WebSerial, to protect the no-PSRAM RAM budget).
+- **OTA responder:** `ArduinoOTA` (framework built-in) compiled unconditionally.
+  `ArduinoOTA.begin()` is called at runtime **only when the NVS `ota_pass` key
+  is non-empty** — a panel with no provisioned password never opens an
+  unauthenticated update endpoint on the LAN. mDNS hostname: `ospanel.local`.
+- **Log sink:** `TeeSerial` (a `Print` subclass) always redirects
+  `Serial.xxx` calls in `main.cpp` through itself. A `WiFiServer` TCP log
+  server on port 2323 is started **only when the NVS `dev_log` bool is true**
+  (default false, toggled via the config portal). When `dev_log` is false,
+  `TeeSerial` forwards to UART0 only — no open port, negligible overhead.
 - **Local push (no compiler):** `tools/ota.sh` downloads the **app-only
   `firmware.bin`** from the CI artifact (not the merged bin) and pushes it with
   the standalone **`espota.py`** (Python only — mirrors how `flash.sh` shells out
-  to `esptool`). CI should drop `espota.py` into the firmware artifact so the
+  to `esptool`). CI bundles `espota.py` into the production artifact so the
   local bridge stays PlatformIO-free.
 - **Local logs:** `tools/logs.sh` connects to the TCP log port, tees to
   `logs/serial.log`, and auto-reconnects across OTA reboots (same ergonomics as

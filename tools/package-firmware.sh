@@ -34,6 +34,16 @@ cp "$build_dir/partitions.bin" "$out_dir/partitions.bin"
 cp "$build_dir/firmware.bin"   "$out_dir/firmware.bin"
 cp "$boot_app0_bin"            "$out_dir/boot_app0.bin"
 
+# Include espota.py (from the arduino-esp32 framework tools) so that
+# tools/ota.sh can push OTA updates without needing PlatformIO installed locally.
+espota_src="$framework_dir/tools/espota.py"
+if [[ -f "$espota_src" ]]; then
+  cp "$espota_src" "$out_dir/espota.py"
+else
+  printf 'Warning: espota.py not found at %s — OTA push will not work from this artifact.\n' \
+    "$espota_src" >&2
+fi
+
 python3 -m esptool --chip esp32 merge-bin \
   -o "$out_dir/merged-firmware.bin" \
   --flash-mode dio \
