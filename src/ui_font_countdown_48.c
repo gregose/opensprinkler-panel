@@ -1,14 +1,17 @@
 /*******************************************************************************
  * Size: 48 px
  * Bpp: 4
- * Opts: --bpp 4 --size 48 --font /tmp/scp/TTF/SourceCodePro-Semibold.ttf --range 0x20,0x30-0x3a --format lvgl --no-compress --lv-font-name ui_font_countdown_48 -o /home/runner/work/opensprinkler-panel/opensprinkler-panel/src/ui_font_countdown_48.c
+ * Opts: --bpp 4 --size 48 --font SourceCodePro-Semibold.ttf --range 0x20,0x30-0x3a --format lvgl --no-compress --lv-font-name ui_font_countdown_48 -o src/ui_font_countdown_48.c
+ *
+ * Font source: Source Code Pro Semibold (OFL), Adobe Fonts
+ * Download: https://github.com/adobe-fonts/source-code-pro/releases
+ *   (TTF-source-code-pro-*.zip → TTF/SourceCodePro-Semibold.ttf)
+ * Regenerate: npm install -g lv_font_conv && lv_font_conv --bpp 4 --size 48
+ *   --font SourceCodePro-Semibold.ttf --range 0x20,0x30-0x3a --format lvgl
+ *   --no-compress --lv-font-name ui_font_countdown_48 -o src/ui_font_countdown_48.c
  ******************************************************************************/
 
-#ifdef LV_LVGL_H_INCLUDE_SIMPLE
-#include "lvgl.h"
-#else
-#include "lvgl/lvgl.h"
-#endif
+#include <lvgl.h>
 
 #ifndef UI_FONT_COUNTDOWN_48
 #define UI_FONT_COUNTDOWN_48 1

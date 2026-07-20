@@ -837,8 +837,13 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 // ---------------------------------------------------------------------------
 // Top bar
 static lv_obj_t* lbl_host   = nullptr;
-static lv_obj_t* lbl_panel  = nullptr;
-static lv_obj_t* lbl_ctrl   = nullptr;
+
+// Signal-meter widget: 4 ascending bar rectangles (Part 3).
+struct SigMeter {
+    lv_obj_t* bars[4] = {};
+};
+static SigMeter sig_panel;
+static SigMeter sig_ctrl;
 
 // Left panel states
 static lv_obj_t* pnl_idle       = nullptr;
@@ -877,12 +882,6 @@ static lv_obj_t* lbl_toast      = nullptr;
 static void fmt_countdown(char* buf, int secs) {
     if (secs < 0) secs = 0;
     snprintf(buf, 16, "%d:%02d", secs / 60, secs % 60);
-}
-
-static void fmt_rssi_bars(char* buf, int bars) {
-    // 0-4 bars using block characters; - is the "empty bar" placeholder
-    const char* strs[] = {"----", "|---", "||--", "|||-", "||||"};
-    snprintf(buf, 16, "%s", strs[(bars < 0) ? 0 : (bars > 4 ? 4 : bars)]);
 }
 
 // Store/retrieve a station sid (int) as lv_obj user_data (void*).
@@ -964,7 +963,7 @@ static void ev_touch_any(lv_event_t* e) {
 
 // Layout constants (all in pixels, 480×320 landscape).
 static constexpr int TOP_H    = 26;
-static constexpr int GRID_H   = 108;
+static constexpr int GRID_H   = 112;  // 108→112: container=92px fits 2×pill_h(40)+gap(6)+pad(4)=90px
 static constexpr int ACTION_H = 52;
 static constexpr int RIGHT_W  = 190;
 static constexpr int LEFT_W   = SCREEN_W - RIGHT_W;  // 290 px
@@ -975,6 +974,71 @@ static constexpr int CONTENT_H = SCREEN_H - CONTENT_Y - GRID_H;
 static constexpr int PANEL_H   = CONTENT_H - ACTION_H;
 static constexpr int ACTION_Y  = CONTENT_Y + PANEL_H;
 static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
+
+// ---------------------------------------------------------------------------
+// Signal-meter helpers (Part 3)
+// ---------------------------------------------------------------------------
+
+// Build a compact drawn RSSI meter in parent.
+// Layout: "PANEL"/"CTRL" label followed by 4 ascending bar rectangles.
+// The outer flex-row container is aligned via (align, x_ofs, 0).
+static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt,
+                                lv_align_t align, int x_ofs) {
+    SigMeter m;
+
+    // Flex-row outer container — transparent, no border, no padding.
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, TOP_H);
+    lv_obj_set_style_pad_column(row, 3, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(row, align, x_ofs, 0);
+
+    // "PANEL" / "CTRL" text label.
+    lv_obj_t* lbl = lv_label_create(row);
+    lv_label_set_text(lbl, txt);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl, hex_color(CLR_MUTED), 0);
+
+    // 22×10 sub-container for the 4 ascending bar rects (absolute layout).
+    lv_obj_t* bc = lv_obj_create(row);
+    lv_obj_remove_style_all(bc);
+    lv_obj_set_style_bg_opa(bc, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(bc, 22, 10);   // width: 4 bars×4 px + 3 gaps×2 px = 22; height: tallest bar = 10
+    lv_obj_clear_flag(bc, LV_OBJ_FLAG_SCROLLABLE);
+
+    static const int bh[4] = {4, 6, 8, 10};
+    for (int i = 0; i < 4; ++i) {
+        m.bars[i] = lv_obj_create(bc);
+        lv_obj_set_size(m.bars[i], 4, bh[i]);
+        lv_obj_set_style_border_width(m.bars[i], 0, 0);
+        lv_obj_set_style_radius(m.bars[i], 1, 0);
+        lv_obj_set_pos(m.bars[i], i * 6, 10 - bh[i]);  // bottom-align bars
+        lv_obj_set_style_bg_color(m.bars[i], hex_color(CLR_LINE), 0);
+        lv_obj_set_style_bg_opa(m.bars[i], LV_OPA_COVER, 0);
+    }
+
+    return m;
+}
+
+// Update bar colours: first n bars filled (teal/amber/red), remainder dim.
+// Colour mapping mirrors docs/01 §top-bar RSSI spec: ≥3 bars=teal, 2=amber, ≤1=red.
+static void update_sig_meter(const SigMeter& m, int n) {
+    if (n < 0) n = 0;
+    if (n > 4) n = 4;
+    const uint32_t fill_clr = (n >= 3) ? CLR_TEAL
+                            : (n >= 2)  ? CLR_AMBER
+                                        : CLR_RED;
+    for (int i = 0; i < 4; ++i) {
+        lv_obj_set_style_bg_color(m.bars[i],
+            hex_color(i < n ? fill_clr : CLR_LINE), 0);
+    }
+}
 
 static void build_ui() {
     lv_obj_t* scr = lv_screen_active();
@@ -997,17 +1061,9 @@ static void build_ui() {
         lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
         lv_label_set_text(lbl_host, LV_SYMBOL_WIFI " Connected");
 
-        lbl_panel = lv_label_create(bar);
-        lv_obj_set_style_text_font(lbl_panel, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_panel, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_panel, LV_ALIGN_RIGHT_MID, -112, 0);
-        lv_label_set_text(lbl_panel, "PANEL ----");
-
-        lbl_ctrl = lv_label_create(bar);
-        lv_obj_set_style_text_font(lbl_ctrl, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_ctrl, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_ctrl, LV_ALIGN_RIGHT_MID, -4, 0);
-        lv_label_set_text(lbl_ctrl, "CTRL ----");
+        // Drawn signal meters replace the old ASCII-bar text labels.
+        sig_panel = build_sig_meter(bar, "PANEL", LV_ALIGN_RIGHT_MID, -112);
+        sig_ctrl  = build_sig_meter(bar, "CTRL",  LV_ALIGN_RIGHT_MID, -4);
     }
 
     // ---- Left panel: Idle ---------------------------------------------
@@ -1029,6 +1085,8 @@ static void build_ui() {
     lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
     lv_obj_set_style_text_font(lbl_idle_sub, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
+    lv_label_set_long_mode(lbl_idle_sub, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(lbl_idle_sub, LEFT_W - 28);  // honour pad_all=14 each side
     lv_obj_align(lbl_idle_sub, LV_ALIGN_TOP_LEFT, 0, 50);
 
     // ---- Left panel: Running ------------------------------------------
@@ -1120,7 +1178,7 @@ static void build_ui() {
 
         sw_auto_adv = lv_switch_create(pnl);
         lv_obj_set_size(sw_auto_adv, 52, 26);
-        lv_obj_align(sw_auto_adv, LV_ALIGN_TOP_RIGHT, 0, 60);
+        lv_obj_align(sw_auto_adv, LV_ALIGN_TOP_RIGHT, 0, 64);
         lv_obj_set_style_bg_color(sw_auto_adv,
                                    hex_color(CLR_TEAL),
                                    LV_PART_INDICATOR | LV_STATE_CHECKED);
@@ -1197,7 +1255,7 @@ static void build_grid() {
     // Pill size: fit layout.cols pills in (SCREEN_W-12) with 6 px gaps.
     const int inner_w = SCREEN_W - 12;
     const int pill_w  = (inner_w - (layout.cols - 1) * 6) / layout.cols;
-    const int pill_h  = 44;
+    const int pill_h  = 40;
 
     for (int i = 0; i < n && i < 24; ++i) {
         const int sid = runnable[i];
@@ -1251,22 +1309,25 @@ static void ui_update() {
         status_color = CLR_TEAL;
     }
 
-    snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s", status_text);
+    // Link-state-appropriate glyph for status bar and idle banner (Part 4).
+    const char* link_sym = LV_SYMBOL_WIFI;
+    if (!show_syncing) {
+        if (v.link == osp::LinkState::Reconnecting) link_sym = LV_SYMBOL_REFRESH;
+        else if (v.link == osp::LinkState::Offline ||
+                 v.link == osp::LinkState::AuthError) link_sym = LV_SYMBOL_WARNING;
+    }
+
+    snprintf(buf, sizeof(buf), "%s %s", link_sym, status_text);
     lv_label_set_text(lbl_host, buf);
     lv_obj_set_style_text_color(lbl_host, hex_color(status_color), 0);
 
-    char bars[16];
-    fmt_rssi_bars(bars, osp::rssi_to_bars(WiFi.RSSI()));
-    snprintf(buf, sizeof(buf), "PANEL %s", bars);
-    lv_label_set_text(lbl_panel, buf);
-
+    // Drawn RSSI bar meters (Part 3).
+    update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()));
     if (v.link == osp::LinkState::Connected) {
-        fmt_rssi_bars(bars, osp::rssi_to_bars(v.ctrl_rssi));
-        snprintf(buf, sizeof(buf), "CTRL %s", bars);
+        update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi));
     } else {
-        snprintf(buf, sizeof(buf), "CTRL ----");
+        update_sig_meter(sig_ctrl, 0);  // dim all bars when controller unreachable
     }
-    lv_label_set_text(lbl_ctrl, buf);
 
     // Phase visibility
     obj_set_hidden(pnl_idle,    running);
@@ -1276,23 +1337,27 @@ static void ui_update() {
 
     if (!running) {
         if (show_syncing) {
-            lv_label_set_text(lbl_idle_head, "Syncing...");
+            snprintf(buf, sizeof(buf), "%s Syncing...", LV_SYMBOL_REFRESH);
+            lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to confirm");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_AMBER), 0);
         } else if (v.link == osp::LinkState::AuthError) {
-            lv_label_set_text(lbl_idle_head, "Auth error");
+            snprintf(buf, sizeof(buf), "%s Auth error", LV_SYMBOL_WARNING);
+            lv_label_set_text(lbl_idle_head, buf);
             snprintf(buf, sizeof(buf), "Invalid credentials for controller at %s",
                      g_os_host.isEmpty() ? "controller" : g_os_host.c_str());
             lv_label_set_text(lbl_idle_sub, buf);
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_RED), 0);
         } else if (v.link == osp::LinkState::Offline) {
-            lv_label_set_text(lbl_idle_head, "Controller offline");
+            snprintf(buf, sizeof(buf), "%s Controller offline", LV_SYMBOL_WARNING);
+            lv_label_set_text(lbl_idle_head, buf);
             snprintf(buf, sizeof(buf), "Cannot reach controller at %s",
                      g_os_host.isEmpty() ? "controller" : g_os_host.c_str());
             lv_label_set_text(lbl_idle_sub, buf);
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_RED), 0);
         } else if (v.link == osp::LinkState::Reconnecting) {
-            lv_label_set_text(lbl_idle_head, "Reconnecting...");
+            snprintf(buf, sizeof(buf), "%s Reconnecting...", LV_SYMBOL_REFRESH);
+            lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_AMBER), 0);
         } else if (!v.station_list_loaded) {
@@ -1300,7 +1365,8 @@ static void ui_update() {
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_MUTED), 0);
         } else {
-            lv_label_set_text(lbl_idle_head, "Select a station");
+            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_WIFI);
+            lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
         }
