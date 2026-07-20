@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 48 px
  * Bpp: 4
- * Opts: --bpp 4 --size 48 --font /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf --range 0x20,0x30-0x3a --format lvgl --no-compress --lv-font-name ui_font_countdown_48 -o /tmp/osp-fontfix/ui_font_countdown_48.c
+ * Opts: --bpp 4 --size 48 --font /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf --range 0x20,0x30-0x3a --format lvgl --no-compress --lv-font-name ui_font_countdown_48 -o /home/runner/work/opensprinkler-panel/opensprinkler-panel/src/ui_font_countdown_48.c
  ******************************************************************************/
 
 #include <lvgl.h>
@@ -683,4 +683,3 @@ lv_font_t ui_font_countdown_48 = {
 
 
 #endif /*#if UI_FONT_COUNTDOWN_48*/
-
