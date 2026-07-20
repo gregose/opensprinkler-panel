@@ -40,13 +40,96 @@ Options:
 - `--run-id 1234567890` flashes a specific workflow run.
 - `--repo gregose/opensprinkler-panel` overrides the current repository remote.
 
-Each CI run publishes two artifacts, suffixed with the short commit SHA so
-multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production) and
-`cyd-35r-diag-firmware-<sha>` (diagnostic). `flash.sh` resolves the right one
+Each CI run publishes three artifacts, suffixed with the short commit SHA so
+multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production),
+`cyd-35r-diag-firmware-<sha>` (diagnostic), and `cyd-35r-dev-firmware-<sha>`
+(development, with OTA + TCP log enabled). `flash.sh` resolves the right one
 for a run by prefix, downloads it with `gh run download`, finds
 `merged-firmware.bin`, then writes it at `0x0`.
 
-## Open a serial monitor
+## OTA dev loop (iterate without USB)
+
+After the one-time USB bootstrap you can push new firmware over Wi-Fi — NVS
+(Wi-Fi creds, OpenSprinkler config, OTA password) survives every OTA because
+OTA rewrites only the app partition. See `docs/03-architecture.md` §"Wireless
+dev loop" for the full design.
+
+### Bootstrap (once per device)
+
+Flash the dev firmware with `merged-firmware.bin` at `0x0`:
+
+```bash
+./tools/flash.sh --dev
+```
+
+The dev firmware (`cyd-35r-dev-firmware-<sha>`) has ArduinoOTA and the TCP
+log server compiled in (behind the `DEV_LOOP` build flag). It announces itself
+via mDNS as `ospanel.local`.
+
+On first boot with an empty NVS, the panel starts the Wi-Fi provisioning
+captive portal (AP `OSPanel-Setup`). Set the Wi-Fi network, OpenSprinkler host,
+device password, and OTA password there. The OTA password is stored in NVS
+under the `ota_pass` key.
+
+### Push a firmware update over Wi-Fi
+
+```bash
+./tools/ota.sh
+```
+
+`ota.sh` downloads the latest successful `cyd-35r-dev-firmware-<sha>` artifact
+for the current branch, extracts `firmware.bin` (app partition only) and the
+bundled `espota.py`, then calls:
+
+```
+python3 espota.py -i ospanel.local -a <ota_pass> -f firmware.bin
+```
+
+Options:
+
+- `--host <ip-or-hostname>` overrides the default `ospanel.local` mDNS name.
+- `--ota-pass <password>` provides the OTA password (required if one was set
+  during provisioning).
+- `--branch <name>`, `--pr <number>`, `--run-id <id>` select the CI run
+  (same semantics as `flash.sh`).
+
+### Stream logs over Wi-Fi
+
+```bash
+./tools/logs.sh
+```
+
+`logs.sh` connects to the DEV_LOOP TCP log port (2323) on `ospanel.local`,
+tees every line to `logs/serial.log`, and auto-reconnects after OTA reboots.
+
+```bash
+./tools/logs.sh &                          # background; logs to logs/serial.log
+grep "WiFi OK" logs/serial.log | tail -5
+```
+
+Options:
+
+- `--host <ip-or-hostname>` overrides `ospanel.local`.
+- `--port <port>` overrides port 2323.
+- `--log <path>` changes the log file (default `logs/serial.log`).
+
+### Full OTA iteration cycle
+
+1. Push a branch. CI builds `cyd-35r-dev-firmware-<sha>`.
+2. Run `./tools/logs.sh` (once) to stream runtime logs.
+3. Run `./tools/ota.sh` to push the new firmware — the panel reboots, `logs.sh`
+   reconnects automatically.
+4. Observe the boot + runtime logs in the terminal (or grep `logs/serial.log`).
+5. Repeat from step 1.
+
+### Dependency notes
+
+`ota.sh` needs no PlatformIO toolchain locally — it uses the `espota.py`
+bundled in the CI artifact and the Python venv created by `setup.sh`. The
+only Python dependency is the standard library (`socket`), which `logs.sh` also
+uses exclusively.
+
+
 
 ```bash
 ./tools/monitor.sh

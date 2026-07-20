@@ -6,24 +6,44 @@ set -euo pipefail
 # shellcheck source=tools/_venv.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 
-artifact_prefix="cyd-35r-firmware"
+# tools/ota.sh — push DEV_LOOP firmware over Wi-Fi via ArduinoOTA.
+#
+# Resolves the CI run the same way flash.sh does (--pr / --branch / --run-id),
+# downloads the cyd-35r-dev-firmware artifact, then pushes the app-only
+# firmware.bin via espota.py (bundled in the artifact by CI).  The board must
+# be running a DEV_LOOP build that has ArduinoOTA active.
+#
+# NVS (Wi-Fi creds + os_host + os_pw_md5) is preserved across OTA because OTA
+# rewrites only the app partition.  See docs/03 §"Wireless dev loop".
+
+artifact_prefix="cyd-35r-dev-firmware"
 branch=""
-port=""
+host="ospanel.local"
+ota_pass=""
 pr=""
 repo=""
 run_id=""
-state_dir="${MON_STATE_DIR:-.serial-monitor}"
 
 usage() {
   cat <<'EOF'
-Usage: tools/flash.sh [--diag | --dev] [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
+Usage: tools/ota.sh [--branch <name> | --pr <number> | --run-id <id>]
+                    [--host <ip-or-hostname>] [--ota-pass <password>]
+                    [--repo <owner/name>]
 
-Download the merged firmware artifact from GitHub Actions and flash it at 0x0.
-By default the production firmware (cyd-35r-firmware-<sha>) is flashed; pass
---diag to flash the diagnostic bring-up firmware (cyd-35r-diag-firmware-<sha>),
-or --dev to flash the development firmware with OTA enabled (cyd-35r-dev-firmware-<sha>).
-If tools/monitor.sh is running, it releases the port for the flash and resumes
-afterward automatically.
+Push the cyd-35r-dev firmware artifact over Wi-Fi using ArduinoOTA.
+
+The board must be running a DEV_LOOP build (ArduinoOTA active).  One-time
+bootstrap: flash merged-firmware.bin via tools/flash.sh first.
+
+Options:
+  --branch <name>      Use the most recent successful CI run on this branch.
+                       Defaults to the current git branch.
+  --pr <number>        Use the most recent successful CI run for this PR.
+  --run-id <id>        Use a specific workflow run ID.
+  --host <host>        Device hostname or IP (default: ospanel.local).
+  --ota-pass <pw>      OTA password stored in device NVS (ota_pass key).
+                       Omit if the device was provisioned without a password.
+  --repo <owner/name>  Override the GitHub repository (default: from git remote).
 EOF
 }
 
@@ -39,32 +59,6 @@ resolve_repo() {
   origin="${origin#https://github.com/}"
   origin="${origin%.git}"
   printf '%s\n' "$origin"
-}
-
-detect_port() {
-  python3 - <<'PY'
-import re
-import sys
-from serial.tools import list_ports
-
-ports = list(list_ports.comports())
-if not ports:
-    sys.exit("No serial ports found. Pass --port explicitly.")
-
-preferred = []
-fallback = []
-pattern = re.compile(r"(usb|uart|serial|acm|cp210|ch340|ftdi|silicon labs|wch)", re.I)
-for port in ports:
-    haystack = " ".join(
-        value for value in [port.device, port.description, port.manufacturer, port.hwid] if value
-    )
-    if pattern.search(haystack):
-        preferred.append(port.device)
-    fallback.append(port.device)
-
-devices = sorted(preferred or fallback)
-print(devices[0])
-PY
 }
 
 resolve_candidate_run_ids() {
@@ -104,20 +98,16 @@ resolve_candidate_run_ids() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --diag)
-      artifact_prefix="cyd-35r-diag-firmware"
-      shift
-      ;;
-    --dev)
-      artifact_prefix="cyd-35r-dev-firmware"
-      shift
-      ;;
     --branch)
       branch="${2:-}"
       shift 2
       ;;
-    --port)
-      port="${2:-}"
+    --host)
+      host="${2:-}"
+      shift 2
+      ;;
+    --ota-pass)
+      ota_pass="${2:-}"
       shift 2
       ;;
     --pr)
@@ -126,10 +116,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --repo)
       repo="${2:-}"
-      shift 2
-      ;;
-    --state-dir)
-      state_dir="${2:-}"
       shift 2
       ;;
     --run-id)
@@ -155,23 +141,20 @@ fi
 
 repo="$(resolve_repo)"
 
-if [[ -z "$port" ]]; then
-  port="$(detect_port)"
-fi
-
 download_dir="$(mktemp -d)"
 trap 'rm -rf "$download_dir"' EXIT
 
 selected_run_id=""
-merged_firmware=""
+firmware_bin=""
+espota_py=""
+
 while IFS= read -r candidate_run_id; do
   [[ -n "$candidate_run_id" && "$candidate_run_id" != "null" ]] || continue
 
   candidate_dir="$download_dir/$candidate_run_id"
   mkdir -p "$candidate_dir"
 
-  # Artifact names are suffixed with the commit SHA, so resolve the actual name
-  # for this run by matching the prefix (production vs --diag).
+  # Artifact names are suffixed with the commit SHA; match by prefix.
   artifact_name="$(gh api "repos/$repo/actions/runs/$candidate_run_id/artifacts" \
     --jq '.artifacts[].name' 2>/dev/null | grep -m1 "^${artifact_prefix}-" || true)"
   [[ -n "$artifact_name" ]] || continue
@@ -180,31 +163,25 @@ while IFS= read -r candidate_run_id; do
     continue
   fi
 
-  merged_firmware="$(find "$candidate_dir" -name merged-firmware.bin -print -quit)"
-  if [[ -n "$merged_firmware" ]]; then
+  firmware_bin="$(find "$candidate_dir" -name firmware.bin -print -quit)"
+  espota_py="$(find "$candidate_dir" -name espota.py -print -quit)"
+
+  if [[ -n "$firmware_bin" && -n "$espota_py" ]]; then
     selected_run_id="$candidate_run_id"
     break
   fi
 done < <(resolve_candidate_run_ids "$repo")
 
-if [[ -z "$selected_run_id" || -z "$merged_firmware" ]]; then
-  printf '%s\n' "No successful ci.yml run with a ${artifact_prefix}-<sha> artifact was found." >&2
+if [[ -z "$selected_run_id" || -z "$firmware_bin" || -z "$espota_py" ]]; then
+  printf '%s\n' "No successful ci.yml run with a ${artifact_prefix}-<sha> artifact (including firmware.bin + espota.py) was found." >&2
   exit 1
 fi
 
-run_id="$selected_run_id"
+printf 'OTA: run %s  artifact %s  host %s\n' "$selected_run_id" "$artifact_prefix" "$host"
 
-# Coordinate with a running tools/monitor.sh: ask it to release the port, wait
-# for it to let go, flash, then clear the pause so it reconnects and re-captures
-# the boot banner. If no monitor is running this is a brief, harmless no-op.
-mkdir -p "$state_dir"
-resume_monitor() { rm -f "$state_dir/pause"; }
-trap resume_monitor EXIT
-: > "$state_dir/pause"
-for _ in $(seq 1 50); do
-  [[ -e "$state_dir/active" ]] || break
-  sleep 0.1
-done
+espota_args=(-i "$host" -f "$firmware_bin")
+if [[ -n "$ota_pass" ]]; then
+  espota_args+=(-a "$ota_pass")
+fi
 
-printf 'Flashing run %s from %s to %s\n' "$run_id" "$repo" "$port"
-python3 -m esptool --chip esp32 --port "$port" write-flash 0x0 "$merged_firmware"
+python3 "$espota_py" "${espota_args[@]}"

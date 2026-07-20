@@ -25,6 +25,11 @@
 #include <WiFiManager.h>
 #include <memory>
 
+#ifdef DEV_LOOP
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#endif
+
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
@@ -111,6 +116,101 @@ static std::unique_ptr<osp::PanelState> g_ps;
 // NVS config cache.
 static String g_os_host;
 static String g_pw_md5;
+
+// ---------------------------------------------------------------------------
+// DEV_LOOP — ArduinoOTA responder + TCP log mirror (compiled only with -D DEV_LOOP).
+//
+// Serial output from this file is mirrored to a single connected TCP client on
+// LOG_PORT.  ArduinoOTA lets the panel accept new firmware over Wi-Fi so USB
+// is only needed for the one-time bootstrap flash.  Both features are LAN-only
+// and password-gated; they compile out entirely in production builds.
+// ---------------------------------------------------------------------------
+#ifdef DEV_LOOP
+
+// Save a pointer to the real UART0 Serial before the #define redirect below,
+// so TeeSerial methods can reach UART0 without triggering the macro.
+static HardwareSerial* const g_hw_serial = &Serial;
+
+static constexpr uint16_t LOG_PORT = 2323;
+static WiFiServer g_log_server(LOG_PORT);
+static WiFiClient g_log_client;
+
+// TeeSerial: Print subclass that writes to UART0 and, when a TCP log client is
+// connected, also to that client.  Keeps the per-character path tiny to avoid
+// budget pressure on the no-PSRAM ESP32.
+class TeeSerial : public Print {
+public:
+    void begin(unsigned long baud) { g_hw_serial->begin(baud); }
+    int  availableForWrite()       { return g_hw_serial->availableForWrite(); }
+
+    size_t write(uint8_t c) override {
+        g_hw_serial->write(c);
+        if (g_log_client && g_log_client.connected()) g_log_client.write(c);
+        return 1;
+    }
+    size_t write(const uint8_t* buf, size_t n) override {
+        g_hw_serial->write(buf, n);
+        if (g_log_client && g_log_client.connected()) g_log_client.write(buf, n);
+        return n;
+    }
+};
+static TeeSerial g_tee_serial;
+
+// Redirect all Serial.xxx calls in this translation unit to g_tee_serial.
+// Framework libraries (WiFiManager, HTTP, etc.) are compiled separately and
+// continue to write to UART0 directly, so USB still shows everything.
+#define Serial g_tee_serial
+
+static void dev_loop_init(const String& ota_pass) {
+    // mDNS — stable hostname so espota.py can find the device without an IP.
+    MDNS.begin("ospanel");
+
+    // ArduinoOTA responder.
+    ArduinoOTA.setHostname("ospanel");
+    if (!ota_pass.isEmpty()) {
+        ArduinoOTA.setPassword(ota_pass.c_str());
+    }
+    ArduinoOTA.onStart([]() {
+        // Print directly to UART0 — don't try to use the TCP client mid-OTA.
+        g_hw_serial->println("[OTA] Start");
+    });
+    ArduinoOTA.onEnd([]() {
+        g_hw_serial->println("[OTA] End — rebooting");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        g_hw_serial->printf("[OTA] %u%%\r", progress * 100 / total);
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        g_hw_serial->printf("[OTA] Error[%u]\n", error);
+    });
+    ArduinoOTA.begin();
+
+    // TCP log server — single-client, last-connected-wins.
+    g_log_server.begin();
+
+    g_hw_serial->printf("[DEV] OTA hostname: ospanel.local  Log port: %u\n", LOG_PORT);
+}
+
+static void dev_loop_handle() {
+    ArduinoOTA.handle();
+
+    // Accept new TCP log client (single-slot: drops any stale connection).
+    if (g_log_server.hasClient()) {
+        if (g_log_client) g_log_client.stop();
+        g_log_client = g_log_server.accept();
+        g_hw_serial->println("[DEV] Log client connected");
+        g_log_client.println("[DEV] OSPanel log stream");
+    }
+    // Silently drop dead connections so write() doesn't block.
+    if (g_log_client && !g_log_client.connected()) {
+        g_log_client.stop();
+    }
+}
+
+#else  // !DEV_LOOP
+static inline void dev_loop_init(const String&) {}
+static inline void dev_loop_handle() {}
+#endif // DEV_LOOP
 
 // ---------------------------------------------------------------------------
 // Provisioning + NVS helpers
@@ -1163,6 +1263,14 @@ void setup() {
     ensure_network_config();
     load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
 
+    // ---- DEV_LOOP: OTA responder + TCP log server (requires Wi-Fi) ------
+    // dev_loop_init is a no-op in non-DEV_LOOP builds.
+    if (WiFi.status() == WL_CONNECTED) {
+        String ota_pass_dl;
+        load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, &ota_pass_dl, nullptr);
+        dev_loop_init(ota_pass_dl);
+    }
+
     // ---- Touch calibration -----------------------------------------------
     // Must run AFTER WiFi/provisioning (portal is phone-based, no panel touch
     // needed) and BEFORE lv_init() (calibrateTouch draws directly via TFT_eSPI).
@@ -1220,6 +1328,9 @@ void setup() {
 void loop() {
     static uint32_t last_lv_tick_ms = 0;
     const uint32_t now = millis();
+
+    // OTA + TCP log client housekeeping (no-op in non-DEV_LOOP builds).
+    dev_loop_handle();
 
     // LVGL internal tick (drives animations and timers).
     if (now - last_lv_tick_ms >= 5u) {
