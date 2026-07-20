@@ -1565,7 +1565,9 @@ static void network_task(void* /*arg*/) {
                 pending_sync = g_ps->pending_sync();
             }
             if (!desired_delivered && pending_sync) {
-                deliver_desired(now, &link_failures);
+                if (deliver_desired(now, &link_failures)) {
+                    last_jc_poll_ms = 0;
+                }
             }
         }
 

@@ -148,11 +148,7 @@ bool OsClient::fetch_jn(JnData& out) {
   }
   last_result_ = parse_result(body);
   connected_ = false;
-  if (last_result_ == OsResult::Unauthorized) {
-    return false;
-  }
-  connected_ = false;
-  return connected_;
+  return false;
 }
 
 bool OsClient::fetch_jc(JcData& out) {
@@ -169,11 +165,7 @@ bool OsClient::fetch_jc(JcData& out) {
   }
   last_result_ = parse_result(body);
   connected_ = false;
-  if (last_result_ == OsResult::Unauthorized) {
-    return false;
-  }
-  connected_ = false;
-  return connected_;
+  return false;
 }
 
 bool OsClient::fetch_jo(JoData& out) {
@@ -190,11 +182,7 @@ bool OsClient::fetch_jo(JoData& out) {
   }
   last_result_ = parse_result(body);
   connected_ = false;
-  if (last_result_ == OsResult::Unauthorized) {
-    return false;
-  }
-  connected_ = false;
-  return connected_;
+  return false;
 }
 
 bool OsClient::run_station(int sid, int t_sec) {
