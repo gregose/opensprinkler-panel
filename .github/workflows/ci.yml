@@ -1,7 +1,11 @@
 name: CI
 
 on:
+  # Build/test PRs (produces flashable artifacts via tools/flash.sh --pr) and
+  # post-merge commits on main. Scoping push to main avoids a duplicate run on
+  # every PR-branch push (the pull_request event already covers those).
   push:
+    branches: [main]
   pull_request:
 
 # Toolchain versions are kept identical to .github/workflows/copilot-setup-steps.yml
