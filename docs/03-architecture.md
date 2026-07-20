@@ -199,8 +199,8 @@ Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
 
 1. Boots from NVS config; first-run captive portal collects Wi-Fi + OS host + password; re-provision via BOOT hold.
 2. Loads stations from `/jn`; grid shows only enabled, non-master stations; scales 1-row (≤12) / 2-row (13–24) without shrinking.
-3. Idle shows the prompt; tapping a station runs it. Running shows Station N eyebrow + name headline + amber countdown + Prev/Advance/Stop in one consistent row.
-4. Advance/Prev wrap and skip disabled; grid jump works; Stop is immediate.
+3. Idle shows the prompt; tapping a station runs it. Running shows Station N eyebrow + name headline + amber countdown + Advance/Stop in one consistent row.
+4. Advance wraps and skips disabled; grid jump works; Stop is immediate.
 5. Run time 0:15–10:00/15 s; changing it while running restarts the current station (extend), via off-then-on.
 6. Auto-advance off = stop at end; on = next station, stopping after the last.
 7. Every action issues the correct `/cm`/`/cv` calls (off-then-on where required); the ~2 s `/jc` poll reconciles highlight + countdown from controller truth.

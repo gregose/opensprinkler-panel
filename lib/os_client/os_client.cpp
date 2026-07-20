@@ -136,30 +136,65 @@ OsClient::OsClient(const std::string& host, const std::string& pw_md5,
 
 bool OsClient::fetch_jn(JnData& out) {
   const std::string body = transport_(build_jn_url(host_, pw_hex_));
-  if (body.empty()) { connected_ = false; return false; }
-  connected_ = parse_jn(body, out);
-  return connected_;
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  if (parse_jn(body, out)) {
+    connected_ = true;
+    last_result_ = OsResult::Ok;
+    return true;
+  }
+  last_result_ = parse_result(body);
+  connected_ = false;
+  return false;
 }
 
 bool OsClient::fetch_jc(JcData& out) {
   const std::string body = transport_(build_jc_url(host_, pw_hex_));
-  if (body.empty()) { connected_ = false; return false; }
-  connected_ = parse_jc(body, out);
-  return connected_;
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  if (parse_jc(body, out)) {
+    connected_ = true;
+    last_result_ = OsResult::Ok;
+    return true;
+  }
+  last_result_ = parse_result(body);
+  connected_ = false;
+  return false;
 }
 
 bool OsClient::fetch_jo(JoData& out) {
   const std::string body = transport_(build_jo_url(host_, pw_hex_));
-  if (body.empty()) { connected_ = false; return false; }
-  connected_ = parse_jo(body, out);
-  return connected_;
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  if (parse_jo(body, out)) {
+    connected_ = true;
+    last_result_ = OsResult::Ok;
+    return true;
+  }
+  last_result_ = parse_result(body);
+  connected_ = false;
+  return false;
 }
 
 bool OsClient::run_station(int sid, int t_sec) {
   const std::string url = build_cm_url(host_, pw_hex_, sid, true, t_sec);
   const std::string body = transport_(url);
-  if (body.empty()) { connected_ = false; return false; }
-  const bool ok = (parse_result(body) == OsResult::Ok);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
   connected_ = ok;
   return ok;
 }
@@ -167,8 +202,13 @@ bool OsClient::run_station(int sid, int t_sec) {
 bool OsClient::stop_station(int sid) {
   const std::string url = build_cm_url(host_, pw_hex_, sid, false);
   const std::string body = transport_(url);
-  if (body.empty()) { connected_ = false; return false; }
-  const bool ok = (parse_result(body) == OsResult::Ok);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
   connected_ = ok;
   return ok;
 }
@@ -176,8 +216,13 @@ bool OsClient::stop_station(int sid) {
 bool OsClient::stop_all() {
   const std::string url = build_cv_url(host_, pw_hex_);
   const std::string body = transport_(url);
-  if (body.empty()) { connected_ = false; return false; }
-  const bool ok = (parse_result(body) == OsResult::Ok);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
   connected_ = ok;
   return ok;
 }

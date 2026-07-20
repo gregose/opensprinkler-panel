@@ -23,10 +23,14 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
+#include <algorithm>
 #include <memory>
 
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include <lvgl.h>
 #include <TFT_eSPI.h>
@@ -35,6 +39,7 @@
 #include "panel_config.h"
 #include "panel_state.h"
 #include "station_model.h"
+#include "ui_font_countdown_48.h"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,6 +61,14 @@ static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
 static constexpr int           PORTAL_EDIT_TIMEOUT_S = 180;
 static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
+static constexpr uint32_t UI_TICK_MS = 5;
+static constexpr uint32_t NETWORK_LOOP_MS = 50;
+static constexpr uint32_t JC_POLL_INTERVAL_MS = 2000;
+static constexpr uint32_t JN_RETRY_INITIAL_MS = 1000;
+static constexpr uint32_t JN_RETRY_MAX_MS = 10000;
+static constexpr int LINK_RETRY_LIMIT = 3;
+static constexpr const char* HEARTBEAT_LOG_FORMAT =
+    "[HB] ms=%lu ui=%lu net=%lu phase=%s heap=%u ui_hwm=%u net_hwm=%u\n";
 
 // Boot-hold mode: determined at startup by measuring how long BOOT is held.
 enum class BootMode { kNormal, kEditConfig, kFactoryClear };
@@ -111,10 +124,51 @@ alignas(64) static uint8_t draw_buf[SCREEN_W * DRAW_BUF_LINES * 2];
 static osp::StationModel g_model;
 static std::unique_ptr<osp::OsClient>   g_client;
 static std::unique_ptr<osp::PanelState> g_ps;
+static SemaphoreHandle_t g_state_mutex = nullptr;
+static volatile uint32_t g_model_version = 0;
+static volatile uint32_t g_ui_beat = 0;
+static volatile uint32_t g_net_beat = 0;
+static volatile uint32_t g_phase_snapshot = static_cast<uint32_t>(osp::Phase::Idle);
+static volatile bool g_dev_log_enabled = false;
+static bool g_consume_touch_until_release = false;
+static TaskHandle_t g_ui_task_handle = nullptr;
+static TaskHandle_t g_net_task_handle = nullptr;
 
 // NVS config cache.
 static String g_os_host;
 static String g_pw_md5;
+
+class StateLock {
+public:
+    explicit StateLock(TickType_t wait = portMAX_DELAY)
+        : locked_(g_state_mutex &&
+                  xSemaphoreTake(g_state_mutex, wait) == pdTRUE) {}
+
+    ~StateLock() {
+        if (locked_) xSemaphoreGive(g_state_mutex);
+    }
+
+    explicit operator bool() const { return locked_; }
+
+private:
+    bool locked_ = false;
+};
+
+static void cache_phase_snapshot_unlocked() {
+    if (g_ps) {
+        g_phase_snapshot = static_cast<uint32_t>(g_ps->view().phase);
+    }
+}
+
+static const char* phase_snapshot_name(uint32_t phase) {
+    switch (static_cast<osp::Phase>(phase)) {
+        case osp::Phase::Idle:
+            return "Idle";
+        case osp::Phase::Running:
+            return "Running";
+    }
+    return "Unknown";
+}
 
 // ---------------------------------------------------------------------------
 // OTA responder + TCP log mirror — always compiled into production firmware.
@@ -163,6 +217,8 @@ static TeeSerial g_tee_serial;
 #define Serial g_tee_serial
 
 static void dev_loop_init(const String& ota_pass, bool dev_log) {
+    g_dev_log_enabled = dev_log;
+
     // mDNS — stable hostname so espota.py can find the device without an IP.
     MDNS.begin("ospanel");
 
@@ -751,9 +807,29 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
 static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     uint16_t tx = 0, ty = 0;
     const bool pressed = tft.getTouch(&tx, &ty);
-    data->state   = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+
+    if (!pressed) {
+        g_consume_touch_until_release = false;
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    bool consume = g_consume_touch_until_release;
+    {
+        StateLock lock;
+        if (lock && g_ps) {
+            if (g_ps->view().sleeping) {
+                g_ps->on_touch(millis());
+                consume = true;
+                g_consume_touch_until_release = true;
+            }
+        }
+    }
+
     data->point.x = static_cast<int32_t>(tx);
     data->point.y = static_cast<int32_t>(ty);
+    data->state = consume ? LV_INDEV_STATE_RELEASED
+                          : LV_INDEV_STATE_PRESSED;
 }
 
 // ---------------------------------------------------------------------------
@@ -774,7 +850,6 @@ static lv_obj_t* lbl_stn_name   = nullptr;
 static lv_obj_t* lbl_countdown  = nullptr;
 
 // Bottom action row (running only)
-static lv_obj_t* btn_prev       = nullptr;
 static lv_obj_t* btn_advance    = nullptr;
 static lv_obj_t* btn_stop       = nullptr;
 
@@ -835,40 +910,52 @@ static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
-static void ev_prev(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->prev();
-}
 static void ev_advance(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->advance();
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->advance();
 }
 static void ev_stop(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) g_ps->stop();
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->stop();
 }
 static void ev_rt_minus(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        StateLock lock;
+        if (!(lock && g_ps)) return;
         g_ps->set_run_time(g_ps->view().run_time_s - osp::PanelState::kRunTimeStep);
         save_run_time_to_nvs(g_ps->view().run_time_s);
     }
 }
 static void ev_rt_plus(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        StateLock lock;
+        if (!(lock && g_ps)) return;
         g_ps->set_run_time(g_ps->view().run_time_s + osp::PanelState::kRunTimeStep);
         save_run_time_to_nvs(g_ps->view().run_time_s);
     }
 }
 static void ev_auto_adv(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED && g_ps)
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+        StateLock lock;
+        if (!(lock && g_ps)) return;
         g_ps->set_auto_advance(lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED));
+    }
 }
 static void ev_pill(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED && g_ps) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        StateLock lock;
+        if (!(lock && g_ps)) return;
         lv_obj_t* pill = static_cast<lv_obj_t*>(lv_event_get_target(e));
         g_ps->select_station(get_pill_sid(pill));
     }
 }
 static void ev_touch_any(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_PRESSED && g_ps)
-        g_ps->on_touch(millis());
+    if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+        StateLock lock;
+        if (lock && g_ps) g_ps->on_touch(millis());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -878,7 +965,7 @@ static void ev_touch_any(lv_event_t* e) {
 // Layout constants (all in pixels, 480×320 landscape).
 static constexpr int TOP_H    = 26;
 static constexpr int GRID_H   = 108;
-static constexpr int ACTION_H = 48;
+static constexpr int ACTION_H = 52;
 static constexpr int RIGHT_W  = 190;
 static constexpr int LEFT_W   = SCREEN_W - RIGHT_W;  // 290 px
 // Content area between top bar and grid.
@@ -908,7 +995,7 @@ static void build_ui() {
         lbl_host = lv_label_create(bar);
         lv_obj_set_style_text_font(lbl_host, &lv_font_montserrat_12, 0);
         lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
-        lv_label_set_text(lbl_host, "\xe2\x97\x8E connecting...");
+        lv_label_set_text(lbl_host, LV_SYMBOL_WIFI " Connected");
 
         lbl_panel = lv_label_create(bar);
         lv_obj_set_style_text_font(lbl_panel, &lv_font_montserrat_12, 0);
@@ -939,8 +1026,7 @@ static void build_ui() {
     lv_obj_align(lbl_idle_head, LV_ALIGN_TOP_LEFT, 0, 14);
 
     lbl_idle_sub = lv_label_create(pnl_idle);
-    // UTF-8 down-pointing small triangle (▾ U+25BE = 0xE2 0x96 0xBE)
-    lv_label_set_text(lbl_idle_sub, "\xe2\x96\xbe Tap a station below to start");
+    lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
     lv_obj_set_style_text_font(lbl_idle_sub, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
     lv_obj_align(lbl_idle_sub, LV_ALIGN_TOP_LEFT, 0, 50);
@@ -971,40 +1057,30 @@ static void build_ui() {
 
     lbl_countdown = lv_label_create(pnl_running);
     lv_label_set_text(lbl_countdown, "0:00");
-    lv_obj_set_style_text_font(lbl_countdown, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(lbl_countdown, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
 
-    // ---- Action row (Prev / Advance / Stop — same baseline) -----------
-    // One consistent row pinned between the panels and the grid.
-    // U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK (‹)
-    btn_prev = make_btn(scr, "\xe2\x80\xb9 Prev",
-                        CLR_LINE, CLR_TEXT);           // ghost style
-    lv_obj_set_size(btn_prev, LEFT_W / 2 - 4, ACTION_H);
-    lv_obj_set_pos(btn_prev, 0, ACTION_Y);
-    lv_obj_add_flag(btn_prev, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(btn_prev, ev_prev, LV_EVENT_CLICKED, nullptr);
+    // ---- Action row (Advance / Stop) -----------------------------------
+    static constexpr int ACTION_GAP = 4;
+    const int action_btn_w = (LEFT_W - ACTION_GAP) / 2;
 
-    // U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK (›)
-    btn_advance = make_btn(scr, "Advance \xe2\x80\xba",
-                           CLR_TEAL, CLR_BG);          // teal
-    lv_obj_set_size(btn_advance, LEFT_W / 2 - 4, ACTION_H);
-    lv_obj_set_pos(btn_advance, LEFT_W / 2 + 4, ACTION_Y);
+    btn_advance = make_btn(scr, LV_SYMBOL_NEXT " Advance", CLR_TEAL, CLR_BG);
+    lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
+    lv_obj_set_pos(btn_advance, 0, ACTION_Y);
     lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
 
-    // U+25A0 BLACK SQUARE (■)
-    btn_stop = make_btn(scr, "\xe2\x96\xa0 Stop",
-                        CLR_RED, CLR_BG);               // red
-    lv_obj_set_size(btn_stop, RIGHT_W - 8, ACTION_H);
-    lv_obj_set_pos(btn_stop, LEFT_W + 4, ACTION_Y);
+    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop", CLR_RED, CLR_BG);
+    lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
+    lv_obj_set_pos(btn_stop, action_btn_w + ACTION_GAP, ACTION_Y);
     lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
     // ---- Right panel ---------------------------------------------------
     {
         lv_obj_t* pnl = lv_obj_create(scr);
-        lv_obj_set_size(pnl, RIGHT_W, PANEL_H + ACTION_H);
+        lv_obj_set_size(pnl, RIGHT_W, PANEL_H);
         lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
         lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
         lv_obj_set_style_border_width(pnl, 0, 0);
@@ -1018,9 +1094,9 @@ static void build_ui() {
         lv_obj_set_style_text_color(rt_lbl, hex_color(CLR_MUTED), 0);
         lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
-        // Run-time stepper: [−]  MM:SS  [+]
-        btn_rt_minus = make_btn(pnl, "\xe2\x88\x92", CLR_LINE, CLR_TEXT);
-        lv_obj_set_size(btn_rt_minus, 36, 36);
+        // Run-time stepper: [-] MM:SS [+]
+        btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS, CLR_LINE, CLR_TEXT);
+        lv_obj_set_size(btn_rt_minus, 46, 44);
         lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, 18);
         lv_obj_add_event_cb(btn_rt_minus, ev_rt_minus, LV_EVENT_CLICKED, nullptr);
 
@@ -1030,8 +1106,8 @@ static void build_ui() {
         lv_obj_set_style_text_color(lbl_rt_value, hex_color(CLR_TEXT), 0);
         lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0, 26);
 
-        btn_rt_plus = make_btn(pnl, "+", CLR_LINE, CLR_TEXT);
-        lv_obj_set_size(btn_rt_plus, 36, 36);
+        btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS, CLR_LINE, CLR_TEXT);
+        lv_obj_set_size(btn_rt_plus, 46, 44);
         lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
@@ -1072,7 +1148,7 @@ static void build_ui() {
     lv_obj_set_style_bg_color(grid_cont, hex_color(CLR_BG), 0);
     lv_obj_set_style_border_width(grid_cont, 0, 0);
     lv_obj_set_style_pad_all(grid_cont, 2, 0);
-    lv_obj_set_style_pad_gap(grid_cont, 4, 0);
+    lv_obj_set_style_pad_gap(grid_cont, 6, 0);
     lv_obj_clear_flag(grid_cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(grid_cont, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(grid_cont, LV_FLEX_FLOW_ROW_WRAP);
@@ -1088,6 +1164,7 @@ static void build_ui() {
     lv_obj_set_style_bg_color(sleep_overlay, hex_color(0x000000), 0);
     lv_obj_set_style_bg_opa(sleep_overlay, LV_OPA_COVER, 0);
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     // ---- Toast label ---------------------------------------------------
     lbl_toast = lv_label_create(scr);
@@ -1098,7 +1175,7 @@ static void build_ui() {
     lv_obj_set_style_bg_opa(lbl_toast, LV_OPA_80, 0);
     lv_obj_set_style_pad_all(lbl_toast, 6, 0);
     lv_obj_set_style_radius(lbl_toast, 6, 0);
-    lv_obj_align(lbl_toast, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_align(lbl_toast, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_add_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1117,17 +1194,17 @@ static void build_grid() {
     if (n == 0) return;
 
     const osp::GridLayout layout = g_model.layout();
-    // Pill size: fit layout.cols pills in (SCREEN_W-12) with 4 px gaps.
+    // Pill size: fit layout.cols pills in (SCREEN_W-12) with 6 px gaps.
     const int inner_w = SCREEN_W - 12;
-    const int pill_w  = (inner_w - (layout.cols - 1) * 4) / layout.cols;
-    const int pill_h  = 36;
+    const int pill_w  = (inner_w - (layout.cols - 1) * 6) / layout.cols;
+    const int pill_h  = 44;
 
     for (int i = 0; i < n && i < 24; ++i) {
         const int sid = runnable[i];
         lv_obj_t* pill = lv_btn_create(grid_cont);
         lv_obj_set_size(pill, pill_w, pill_h);
         lv_obj_set_style_bg_color(pill, hex_color(CLR_LINE), 0);
-        lv_obj_set_style_radius(pill, 6, 0);
+        lv_obj_set_style_radius(pill, 8, 0);
         lv_obj_set_style_border_width(pill, 0, 0);
         set_pill_sid(pill, sid);
 
@@ -1153,40 +1230,81 @@ static void ui_update() {
     const osp::PanelView& v = g_ps->view();
     char buf[64];
 
-    // Top bar: host indicator
-    {
-        const char* dot = v.connected
-            ? "\xe2\x97\x89"   // ◉ UTF-8
-            : "\xe2\x97\x8e";  // ◎ UTF-8
-        const char* host_display = g_os_host.isEmpty() ? "unconfigured" : g_os_host.c_str();
-        snprintf(buf, sizeof(buf), "%s %s", dot, host_display);
-        lv_label_set_text(lbl_host, buf);
-        lv_obj_set_style_text_color(lbl_host,
-                                     hex_color(v.connected ? CLR_TEAL : CLR_RED), 0);
-
-        // PANEL bars
-        char bars[16];
-        fmt_rssi_bars(bars, osp::rssi_to_bars(WiFi.RSSI()));
-        snprintf(buf, sizeof(buf), "PANEL %s", bars);
-        lv_label_set_text(lbl_panel, buf);
-
-        // CTRL bars (or — — when unreachable)
-        if (v.connected) {
-            fmt_rssi_bars(bars, osp::rssi_to_bars(v.ctrl_rssi));
-            snprintf(buf, sizeof(buf), "CTRL %s", bars);
-        } else {
-            snprintf(buf, sizeof(buf), "CTRL \xe2\x80\x94\xe2\x80\x94");  // — —
-        }
-        lv_label_set_text(lbl_ctrl, buf);
+    bool show_syncing = g_ps->pending_sync() && !g_ps->sync_stale();
+    const bool running = (v.phase == osp::Phase::Running);
+    const char* status_text = "Connected";
+    uint32_t status_color = CLR_TEAL;
+    if (show_syncing) {
+        status_text = "Syncing...";
+        status_color = CLR_AMBER;
+    } else if (v.link == osp::LinkState::AuthError) {
+        status_text = "Auth error";
+        status_color = CLR_RED;
+    } else if (v.link == osp::LinkState::Offline) {
+        status_text = "Controller offline";
+        status_color = CLR_RED;
+    } else if (v.link == osp::LinkState::Reconnecting) {
+        status_text = "Reconnecting...";
+        status_color = CLR_AMBER;
+    } else if (running) {
+        status_text = "Running";
+        status_color = CLR_TEAL;
     }
 
+    snprintf(buf, sizeof(buf), LV_SYMBOL_WIFI " %s", status_text);
+    lv_label_set_text(lbl_host, buf);
+    lv_obj_set_style_text_color(lbl_host, hex_color(status_color), 0);
+
+    char bars[16];
+    fmt_rssi_bars(bars, osp::rssi_to_bars(WiFi.RSSI()));
+    snprintf(buf, sizeof(buf), "PANEL %s", bars);
+    lv_label_set_text(lbl_panel, buf);
+
+    if (v.link == osp::LinkState::Connected) {
+        fmt_rssi_bars(bars, osp::rssi_to_bars(v.ctrl_rssi));
+        snprintf(buf, sizeof(buf), "CTRL %s", bars);
+    } else {
+        snprintf(buf, sizeof(buf), "CTRL ----");
+    }
+    lv_label_set_text(lbl_ctrl, buf);
+
     // Phase visibility
-    const bool running = (v.phase == osp::Phase::Running);
     obj_set_hidden(pnl_idle,    running);
     obj_set_hidden(pnl_running, !running);
-    obj_set_hidden(btn_prev,    !running);
     obj_set_hidden(btn_advance, !running);
     obj_set_hidden(btn_stop,    !running);
+
+    if (!running) {
+        if (show_syncing) {
+            lv_label_set_text(lbl_idle_head, "Syncing...");
+            lv_label_set_text(lbl_idle_sub, "Waiting for the controller to confirm");
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_AMBER), 0);
+        } else if (v.link == osp::LinkState::AuthError) {
+            lv_label_set_text(lbl_idle_head, "Auth error");
+            snprintf(buf, sizeof(buf), "Invalid credentials for controller at %s",
+                     g_os_host.isEmpty() ? "controller" : g_os_host.c_str());
+            lv_label_set_text(lbl_idle_sub, buf);
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_RED), 0);
+        } else if (v.link == osp::LinkState::Offline) {
+            lv_label_set_text(lbl_idle_head, "Controller offline");
+            snprintf(buf, sizeof(buf), "Cannot reach controller at %s",
+                     g_os_host.isEmpty() ? "controller" : g_os_host.c_str());
+            lv_label_set_text(lbl_idle_sub, buf);
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_RED), 0);
+        } else if (v.link == osp::LinkState::Reconnecting) {
+            lv_label_set_text(lbl_idle_head, "Reconnecting...");
+            lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_AMBER), 0);
+        } else if (!v.station_list_loaded) {
+            lv_label_set_text(lbl_idle_head, "Loading stations...");
+            lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_MUTED), 0);
+        } else {
+            lv_label_set_text(lbl_idle_head, "Select a station");
+            lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
+            lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
+        }
+    }
 
     if (running) {
         // Eyebrow: "Station N"
@@ -1265,6 +1383,223 @@ static osp::Transport make_http_transport() {
     };
 }
 
+static void apply_link_error(uint32_t now_ms, int* failures) {
+    if (!g_ps) return;
+    ++(*failures);
+    StateLock lock;
+    if (!lock || !g_ps) return;
+    g_ps->mark_desired_needs_retry();
+    if (g_client && g_client->last_result() == osp::OsResult::Unauthorized) {
+        g_ps->on_auth_error(now_ms);
+    } else if (*failures >= LINK_RETRY_LIMIT) {
+        g_ps->on_link_offline(now_ms);
+    } else {
+        g_ps->on_link_reconnecting(now_ms);
+    }
+    cache_phase_snapshot_unlocked();
+}
+
+static bool refresh_station_list(uint32_t now_ms, int* failures) {
+    if (!g_client) return false;
+
+    osp::JnData jn;
+    if (!g_client->fetch_jn(jn)) {
+        apply_link_error(now_ms, failures);
+        StateLock lock;
+        if (lock && g_ps) g_ps->set_station_list_loaded(false);
+        return false;
+    }
+
+    osp::JoData jo;
+    g_client->fetch_jo(jo);
+
+    {
+        StateLock lock;
+        if (!(lock && g_ps)) return false;
+        g_model.load(jn.snames, jn.stn_dis, jo.mas, jo.mas2);
+        ++g_model_version;
+        g_ps->set_station_list_loaded(true);
+        g_ps->on_link_connected(now_ms);
+        cache_phase_snapshot_unlocked();
+    }
+
+    *failures = 0;
+    Serial.printf("Stations: %d total, %d runnable (mas=%d mas2=%d)\n",
+                  static_cast<int>(jn.snames.size()),
+                  g_model.runnable_count(), jo.mas, jo.mas2);
+    return true;
+}
+
+static bool deliver_desired(uint32_t now_ms, int* failures) {
+    if (!g_client) return false;
+
+    osp::DesiredIntent desired;
+    osp::Phase phase = osp::Phase::Idle;
+    int running_sid = -1;
+    bool can_deliver = false;
+    {
+        StateLock lock;
+        if (!(lock && g_ps)) return false;
+        desired = g_ps->desired();
+        phase = g_ps->view().phase;
+        running_sid = g_ps->view().running_sid;
+        can_deliver = g_ps->can_deliver_desired();
+    }
+    if (!can_deliver) return false;
+
+    bool ok = false;
+    if (desired.kind == osp::IntentKind::Stop) {
+        ok = g_client->stop_all();
+    } else if (desired.kind == osp::IntentKind::Run) {
+        if (phase == osp::Phase::Running && running_sid >= 0) {
+            if (running_sid == desired.sid) {
+                ok = g_client->extend(running_sid, desired.seconds);
+            } else {
+                ok = g_client->advance(running_sid, desired.sid, desired.seconds);
+            }
+        } else {
+            ok = g_client->run_station(desired.sid, desired.seconds);
+        }
+    }
+
+    if (!ok) {
+        apply_link_error(now_ms, failures);
+        return false;
+    }
+
+    {
+        StateLock lock;
+        if (lock && g_ps) {
+            g_ps->mark_desired_delivered();
+            g_ps->on_link_connected(now_ms);
+            cache_phase_snapshot_unlocked();
+        }
+    }
+    *failures = 0;
+    return true;
+}
+
+static bool poll_controller(uint32_t now_ms, int* failures) {
+    if (!g_client) return false;
+    osp::JcData jc;
+    if (!g_client->fetch_jc(jc)) {
+        apply_link_error(now_ms, failures);
+        return false;
+    }
+
+    {
+        StateLock lock;
+        if (lock && g_ps) {
+            g_ps->on_jc(jc, now_ms);
+            cache_phase_snapshot_unlocked();
+        }
+    }
+    *failures = 0;
+    return true;
+}
+
+static void ui_task(void* /*arg*/) {
+    uint32_t last_lv_tick_ms = millis();
+    uint32_t seen_model_version = UINT32_MAX;
+
+    for (;;) {
+        ++g_ui_beat;
+        const uint32_t now = millis();
+        const uint32_t delta = now - last_lv_tick_ms;
+        if (delta >= UI_TICK_MS) {
+            lv_tick_inc(delta);
+            last_lv_tick_ms = now;
+        }
+
+        {
+            StateLock lock;
+            if (lock && g_ps) {
+                g_ps->tick(now);
+                cache_phase_snapshot_unlocked();
+                if (seen_model_version != g_model_version) {
+                    build_grid();
+                    seen_model_version = g_model_version;
+                }
+                ui_update();
+            }
+        }
+
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
+    }
+}
+
+static void network_task(void* /*arg*/) {
+    uint32_t next_jn_attempt_ms = 0;
+    uint32_t jn_retry_ms = JN_RETRY_INITIAL_MS;
+    uint32_t last_jc_poll_ms = 0;
+    int link_failures = 0;
+    bool station_list_loaded = false;
+
+    for (;;) {
+        ++g_net_beat;
+        const uint32_t now = millis();
+
+        dev_loop_handle();
+
+        if (WiFi.status() != WL_CONNECTED || !g_client) {
+            StateLock lock;
+            if (lock && g_ps) {
+                g_ps->on_link_offline(now);
+                cache_phase_snapshot_unlocked();
+            }
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        if (!station_list_loaded && now >= next_jn_attempt_ms) {
+            if (refresh_station_list(now, &link_failures)) {
+                station_list_loaded = true;
+                jn_retry_ms = JN_RETRY_INITIAL_MS;
+            } else {
+                next_jn_attempt_ms = now + jn_retry_ms;
+                jn_retry_ms = std::min<uint32_t>(jn_retry_ms * 2, JN_RETRY_MAX_MS);
+            }
+        }
+
+        bool poll_now = false;
+        bool desired_delivered = false;
+        bool pending_sync = false;
+        {
+            StateLock lock;
+            if (lock && g_ps) {
+                desired_delivered = g_ps->desired_delivered();
+                pending_sync = g_ps->pending_sync();
+            }
+        }
+
+        if (deliver_desired(now, &link_failures)) {
+            poll_now = true;
+        }
+
+        if (pending_sync || desired_delivered ||
+            (now - last_jc_poll_ms) >= JC_POLL_INTERVAL_MS) {
+            poll_now = true;
+        }
+
+        if (poll_now && poll_controller(now, &link_failures)) {
+            last_jc_poll_ms = now;
+            bool redeliver = false;
+            {
+                StateLock lock;
+                if (lock && g_ps) {
+                    redeliver = !g_ps->desired_delivered() && g_ps->pending_sync();
+                }
+            }
+            if (redeliver && deliver_desired(now, &link_failures)) {
+                last_jc_poll_ms = 0;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(NETWORK_LOOP_MS));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // setup()
 // ---------------------------------------------------------------------------
@@ -1328,6 +1663,8 @@ void setup() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touchpad_read_cb);
 
+    g_state_mutex = xSemaphoreCreateMutex();
+
     // ---- Build base UI --------------------------------------------------
     build_ui();
     lv_timer_handler();
@@ -1337,58 +1674,47 @@ void setup() {
     g_client.reset(new osp::OsClient(
         host_url.c_str(), g_pw_md5.c_str(), make_http_transport()));
 
-    // ---- Load /jn (station config, cached for session) -----------------
-    if (WiFi.status() == WL_CONNECTED) {
-        osp::JnData jn;
-        if (g_client->fetch_jn(jn)) {
-            // Master station indices live in /jo (not /jn or /jc). Best-effort:
-            // on failure mas/mas2 default to 0 (no master), so no station is
-            // wrongly filtered. masop/masop2 are association masks, not masters.
-            osp::JoData jo;
-            g_client->fetch_jo(jo);
-            g_model.load(jn.snames, jn.stn_dis, jo.mas, jo.mas2);
-            Serial.printf("Stations: %d total, %d runnable (mas=%d mas2=%d)\n",
-                          static_cast<int>(jn.snames.size()),
-                          g_model.runnable_count(), jo.mas, jo.mas2);
-        } else {
-            Serial.println("/jn failed — no station list yet");
+    // ---- Init state machine + background tasks -------------------------
+    {
+        StateLock lock;
+        if (lock) {
+            g_ps.reset(new osp::PanelState(g_model, saved_rt));
+            cache_phase_snapshot_unlocked();
+        }
+    }
+    build_grid();
+    {
+        StateLock lock;
+        if (lock) {
+            cache_phase_snapshot_unlocked();
+            ui_update();
         }
     }
 
-    // ---- Init state machine + grid -------------------------------------
-    g_ps.reset(new osp::PanelState(g_model, *g_client, saved_rt));
-    build_grid();
-    ui_update();
+    xTaskCreatePinnedToCore(ui_task, "ui-task", 8192, nullptr, 2, &g_ui_task_handle, 1);
+    xTaskCreatePinnedToCore(network_task, "net-task", 12288, nullptr, 1, &g_net_task_handle, 0);
 }
 
 // ---------------------------------------------------------------------------
 // loop()
 // ---------------------------------------------------------------------------
 void loop() {
-    static uint32_t last_lv_tick_ms = 0;
-    const uint32_t now = millis();
-
-    // OTA + TCP log client housekeeping (skips silently if not provisioned).
-    dev_loop_handle();
-
-    // LVGL internal tick (drives animations and timers).
-    if (now - last_lv_tick_ms >= 5u) {
-        lv_tick_inc(now - last_lv_tick_ms);
-        last_lv_tick_ms = now;
+    if (g_dev_log_enabled) {
+        const uint32_t ui_beat = g_ui_beat;
+        const uint32_t net_beat = g_net_beat;
+        const uint32_t phase = g_phase_snapshot;
+        const UBaseType_t ui_hwm =
+            g_ui_task_handle ? uxTaskGetStackHighWaterMark(g_ui_task_handle) : 0;
+        const UBaseType_t net_hwm =
+            g_net_task_handle ? uxTaskGetStackHighWaterMark(g_net_task_handle) : 0;
+        Serial.printf(HEARTBEAT_LOG_FORMAT,
+                      static_cast<unsigned long>(millis()),
+                      static_cast<unsigned long>(ui_beat),
+                      static_cast<unsigned long>(net_beat),
+                      phase_snapshot_name(phase),
+                      static_cast<unsigned int>(ESP.getFreeHeap()),
+                      static_cast<unsigned int>(ui_hwm),
+                      static_cast<unsigned int>(net_hwm));
     }
-    lv_timer_handler();
-
-    if (!g_ps) return;
-
-    // Tick the state machine; issue a /jc poll when requested.
-    if (g_ps->tick(now) && WiFi.status() == WL_CONNECTED) {
-        osp::JcData jc;
-        if (g_client->fetch_jc(jc)) {
-            g_ps->on_jc(jc);
-        } else {
-            g_ps->on_jc_error();
-        }
-    }
-
-    ui_update();
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }

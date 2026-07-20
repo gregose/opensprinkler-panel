@@ -5,22 +5,12 @@
 
 namespace osp {
 
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
-
-PanelState::PanelState(StationModel& model, OsClient& client,
-                       int default_run_time_s)
-    : model_(model), client_(client) {
+PanelState::PanelState(StationModel& model, int default_run_time_s)
+    : model_(model) {
   view_.run_time_s = clamp_run_time(default_run_time_s);
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 int PanelState::clamp_run_time(int t_sec) const {
-  // Round down to nearest step, then clamp.
   t_sec = (t_sec / kRunTimeStep) * kRunTimeStep;
   if (t_sec < kMinRunTime) return kMinRunTime;
   if (t_sec > kMaxRunTime) return kMaxRunTime;
@@ -32,217 +22,285 @@ void PanelState::post_toast(const std::string& msg) {
   toast_set_ms_ = now_ms_;
 }
 
-void PanelState::go_idle(const std::string& toast) {
-  view_.phase = Phase::Idle;
-  view_.running_sid = -1;
-  view_.countdown_s = 0;
-  // Reset the idle timer so sleep doesn't fire immediately on transition.
-  last_touch_ms_ = now_ms_;
-  if (!toast.empty()) post_toast(toast);
+void PanelState::clear_desired() {
+  desired_ = DesiredIntent{};
+  desired_delivered_ = false;
+  desired_at_ms_ = 0;
 }
 
-void PanelState::go_running(int sid, int t_sec) {
+void PanelState::queue_desired_run(int sid) {
+  desired_.kind = IntentKind::Run;
+  desired_.sid = sid;
+  desired_.seconds = view_.run_time_s;
+  desired_delivered_ = false;
+  desired_at_ms_ = now_ms_;
+}
+
+void PanelState::queue_desired_stop() {
+  desired_.kind = IntentKind::Stop;
+  desired_.sid = -1;
+  desired_.seconds = 0;
+  desired_delivered_ = false;
+  desired_at_ms_ = now_ms_;
+}
+
+void PanelState::enter_running(int sid, int countdown_s) {
   view_.phase = Phase::Running;
   view_.running_sid = sid;
-  view_.countdown_s = t_sec;
+  view_.countdown_s = std::max(0, countdown_s);
   view_.sleeping = false;
   last_countdown_tick_ms_ = now_ms_;
 }
 
-void PanelState::on_station_expired() {
-  // Countdown reached zero via the panel's own timer — natural expiry.
-  const int from_sid = view_.running_sid;
-  if (view_.auto_advance) {
-    const int next = model_.auto_next_sid(from_sid);
-    if (next == -1) {
-      // Last station: stop, do not loop.
-      go_idle("Finished all stations.");
-    } else {
-      go_running(next, view_.run_time_s);
-      client_.advance(from_sid, next, view_.run_time_s);
-    }
-  } else {
-    go_idle("Station " + std::to_string(station_number(from_sid)) + " finished.");
+void PanelState::enter_idle() {
+  view_.phase = Phase::Idle;
+  view_.running_sid = -1;
+  view_.countdown_s = 0;
+  last_touch_ms_ = now_ms_;
+}
+
+void PanelState::begin_await_close(PendingFinish finish, int sid) {
+  await_close_ = true;
+  await_close_at_ms_ = now_ms_;
+  pending_finish_ = finish;
+  pending_finish_sid_ = sid;
+  if (view_.phase == Phase::Running) {
+    view_.countdown_s = 0;
   }
 }
 
-// ---------------------------------------------------------------------------
-// tick — called from the firmware loop (e.g. every 10–20 ms on Arduino)
-// ---------------------------------------------------------------------------
+void PanelState::finish_idle_transition() {
+  const PendingFinish finish = pending_finish_;
+  const int sid = pending_finish_sid_;
+  await_close_ = false;
+  await_close_at_ms_ = 0;
+  pending_finish_ = PendingFinish::None;
+  pending_finish_sid_ = -1;
+  enter_idle();
 
-bool PanelState::tick(uint32_t now_ms) {
+  switch (finish) {
+    case PendingFinish::Stopped:
+      post_toast("Stopped.");
+      break;
+    case PendingFinish::StationFinished:
+      post_toast("Station " + std::to_string(station_number(sid)) +
+                 " finished.");
+      break;
+    case PendingFinish::FinishedAllStations:
+      post_toast("Finished all stations.");
+      break;
+    case PendingFinish::None:
+      break;
+  }
+}
+
+bool PanelState::pending_sync() const {
+  return has_desired() || await_close_;
+}
+
+bool PanelState::sync_stale() const {
+  if (!pending_sync()) return false;
+  const uint32_t started_at = await_close_ ? await_close_at_ms_ : desired_at_ms_;
+  return (now_ms_ - started_at) > kSyncTimeoutMs;
+}
+
+bool PanelState::can_deliver_desired() const {
+  return has_desired() && !desired_delivered_ && !await_close_;
+}
+
+void PanelState::mark_desired_delivered() { desired_delivered_ = has_desired(); }
+
+void PanelState::mark_desired_needs_retry() {
+  if (has_desired()) desired_delivered_ = false;
+}
+
+void PanelState::on_link_connected(uint32_t now_ms) {
+  now_ms_ = now_ms;
+  view_.link = LinkState::Connected;
+}
+
+void PanelState::on_link_reconnecting(uint32_t now_ms) {
+  now_ms_ = now_ms;
+  if (view_.link != LinkState::AuthError) {
+    view_.link = LinkState::Reconnecting;
+  }
+}
+
+void PanelState::on_link_offline(uint32_t now_ms) {
+  now_ms_ = now_ms;
+  if (view_.link != LinkState::AuthError) {
+    view_.link = LinkState::Offline;
+  }
+}
+
+void PanelState::on_auth_error(uint32_t now_ms) {
+  now_ms_ = now_ms;
+  view_.link = LinkState::AuthError;
+  mark_desired_needs_retry();
+}
+
+void PanelState::set_station_list_loaded(bool loaded) {
+  view_.station_list_loaded = loaded;
+}
+
+void PanelState::tick(uint32_t now_ms) {
   if (!initialized_) {
     initialized_ = true;
     now_ms_ = now_ms;
-    last_countdown_tick_ms_ = now_ms;
     last_touch_ms_ = now_ms;
-    last_poll_trigger_ms_ = now_ms;
-    // Trigger an immediate poll on first tick so the UI reflects reality ASAP.
-    return true;
+    last_countdown_tick_ms_ = now_ms;
+    return;
   }
 
   now_ms_ = now_ms;
 
-  // Clear expired toast.
   if (!view_.toast.empty() && (now_ms - toast_set_ms_ >= kToastDurationMs)) {
     view_.toast.clear();
   }
 
-  // Countdown tick: decrement once per elapsed second while running.
   if (view_.phase == Phase::Running && view_.countdown_s > 0) {
     const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
     const uint32_t secs = elapsed / 1000u;
     if (secs > 0u) {
       last_countdown_tick_ms_ += secs * 1000u;
-      // countdown_s > 0 is guaranteed by the outer guard above.
       if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
+        const int finished_sid = view_.running_sid;
         view_.countdown_s = 0;
-        on_station_expired();
+        if (!await_close_) {
+          const int next_sid =
+              view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
+          if (next_sid != -1) {
+            queue_desired_run(next_sid);
+            begin_await_close(PendingFinish::None, finished_sid);
+          } else {
+            begin_await_close(view_.auto_advance
+                                  ? PendingFinish::FinishedAllStations
+                                  : PendingFinish::StationFinished,
+                              finished_sid);
+          }
+        }
       } else {
         view_.countdown_s -= static_cast<int>(secs);
       }
     }
   }
 
-  // Sleep timer: blank the screen after kSleepTimeoutMs of idle-and-untouched.
-  // Never sleep while a station is running.
   if (view_.phase == Phase::Idle && !view_.sleeping) {
     if ((now_ms - last_touch_ms_) >= kSleepTimeoutMs) {
       view_.sleeping = true;
     }
   }
-
-  // Poll scheduling: return true once per kPollIntervalMs.
-  if ((now_ms - last_poll_trigger_ms_) >= kPollIntervalMs) {
-    last_poll_trigger_ms_ = now_ms;
-    return true;
-  }
-  return false;
 }
 
-// ---------------------------------------------------------------------------
-// on_jc — /jc poll result (controller is source of truth)
-// ---------------------------------------------------------------------------
+void PanelState::reconcile_desired_after_jc() {
+  if (!has_desired()) return;
+  if (desired_matches_confirmed()) {
+    clear_desired();
+  } else {
+    desired_delivered_ = false;
+  }
+}
 
-void PanelState::on_jc(const JcData& jc) {
-  view_.connected = true;
+bool PanelState::desired_matches_confirmed() const {
+  if (!has_desired()) return false;
+
+  if (desired_.kind == IntentKind::Stop) {
+    return view_.phase == Phase::Idle && !await_close_;
+  }
+
+  if (view_.phase != Phase::Running) return false;
+  if (view_.running_sid != desired_.sid) return false;
+
+  const int min_confirmed =
+      std::max(0, desired_.seconds - kConfirmGraceSeconds);
+  return view_.countdown_s >= min_confirmed && view_.countdown_s <= desired_.seconds;
+}
+
+void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
+  now_ms_ = now_ms;
+  on_link_connected(now_ms);
   view_.ctrl_rssi = jc.rssi;
 
-  // Determine which station (if any) the controller says is active.
-  // A station is considered running if its sbits bit is set AND ps[sid].rem > 0.
-  // Skip non-runnable sids (disabled/master) so they are never mistaken for the
-  // active station even if the controller reports a stray sbit/rem.
   int jc_running_sid = -1;
+  int jc_running_rem = 0;
   for (int sid = 0; sid < static_cast<int>(jc.ps.size()); ++sid) {
     if (model_.runnable_index(sid) == -1) continue;
     if (board_bit_set(jc.sbits, sid) && jc.ps[sid].rem > 0) {
       jc_running_sid = sid;
+      jc_running_rem = jc.ps[sid].rem;
       break;
     }
   }
 
   if (jc_running_sid != -1) {
-    // Controller reports a station on — update/correct the panel state.
-    if (view_.phase != Phase::Running ||
-        view_.running_sid != jc_running_sid) {
-      // Different or unexpected station (e.g. externally started): adopt it.
-      view_.phase = Phase::Running;
-      view_.running_sid = jc_running_sid;
-      view_.sleeping = false;
-    }
-    // Reconcile countdown from the controller's authoritative `rem`.
-    view_.countdown_s = jc.ps[jc_running_sid].rem;
-    last_countdown_tick_ms_ = now_ms_;
+    await_close_ = false;
+    await_close_at_ms_ = 0;
+    pending_finish_ = PendingFinish::None;
+    pending_finish_sid_ = -1;
+    enter_running(jc_running_sid, jc_running_rem);
   } else {
-    // Controller shows nothing running.
-    if (view_.phase == Phase::Running) {
-      // Station disappeared from the controller without our stop command:
-      // it was stopped externally or finished while we were between polls.
-      // The panel's own timer drives auto-advance; the poll only reconciles.
-      go_idle("Station " + std::to_string(station_number(view_.running_sid)) +
-              " finished.");
+    if (await_close_) {
+      finish_idle_transition();
+    } else if (desired_.kind == IntentKind::Stop) {
+      enter_idle();
+      post_toast("Stopped.");
+      clear_desired();
+      return;
+    } else if (has_desired()) {
+      enter_idle();
+    } else if (view_.phase == Phase::Running) {
+      pending_finish_ = PendingFinish::StationFinished;
+      pending_finish_sid_ = view_.running_sid;
+      finish_idle_transition();
+    } else {
+      enter_idle();
     }
-    // else: already idle — no state change needed.
   }
+
+  reconcile_desired_after_jc();
 }
-
-// ---------------------------------------------------------------------------
-// on_jc_error — transport failure / timeout
-// ---------------------------------------------------------------------------
-
-void PanelState::on_jc_error() {
-  view_.connected = false;
-  // Do NOT change the running/idle state: the station on the controller will
-  // auto-stop at its RT. State reconciles when connectivity restores.
-}
-
-// ---------------------------------------------------------------------------
-// User actions
-// ---------------------------------------------------------------------------
 
 void PanelState::on_touch(uint32_t now_ms) {
+  now_ms_ = now_ms;
   last_touch_ms_ = now_ms;
   view_.sleeping = false;
 }
 
 void PanelState::select_station(int sid) {
   on_touch(now_ms_);
-  if (model_.runnable_index(sid) == -1) return;  // skip non-runnable
-
-  if (view_.phase == Phase::Running) {
-    // Jump: turn current off, target on (off-then-on via advance).
-    const int from = view_.running_sid;
-    if (from == sid) return;  // already on this station — no-op
-    go_running(sid, view_.run_time_s);
-    client_.advance(from, sid, view_.run_time_s);
-  } else {
-    // Idle → start this station.
-    go_running(sid, view_.run_time_s);
-    client_.run_station(sid, view_.run_time_s);
+  if (model_.runnable_index(sid) == -1) return;
+  if (view_.phase == Phase::Running && view_.running_sid == sid &&
+      !await_close_ && !has_desired()) {
+    return;
   }
+  queue_desired_run(sid);
 }
 
 void PanelState::advance() {
   if (view_.phase != Phase::Running) return;
   on_touch(now_ms_);
-
-  const int next = model_.next_sid(view_.running_sid);
-  if (next == -1) return;  // no runnable stations
-
-  const int from = view_.running_sid;
-  go_running(next, view_.run_time_s);
-  client_.advance(from, next, view_.run_time_s);
+  const int sid = model_.next_sid(view_.running_sid);
+  if (sid != -1) queue_desired_run(sid);
 }
 
 void PanelState::prev() {
   if (view_.phase != Phase::Running) return;
   on_touch(now_ms_);
-
-  const int prv = model_.prev_sid(view_.running_sid);
-  if (prv == -1) return;  // no runnable stations
-
-  const int from = view_.running_sid;
-  go_running(prv, view_.run_time_s);
-  client_.advance(from, prv, view_.run_time_s);
+  const int sid = model_.prev_sid(view_.running_sid);
+  if (sid != -1) queue_desired_run(sid);
 }
 
 void PanelState::stop() {
   if (view_.phase != Phase::Running) return;
   on_touch(now_ms_);
-
-  go_idle("Stopped.");
-  client_.stop_all();
+  queue_desired_stop();
 }
 
 void PanelState::set_run_time(int t_sec) {
   on_touch(now_ms_);
   view_.run_time_s = clamp_run_time(t_sec);
-
   if (view_.phase == Phase::Running) {
-    // Extend: restart the current station at the new run time (off-then-on).
-    view_.countdown_s = view_.run_time_s;
-    last_countdown_tick_ms_ = now_ms_;
-    client_.extend(view_.running_sid, view_.run_time_s);
+    queue_desired_run(view_.running_sid);
   }
 }
 
