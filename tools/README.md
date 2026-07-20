@@ -40,36 +40,38 @@ Options:
 - `--run-id 1234567890` flashes a specific workflow run.
 - `--repo gregose/opensprinkler-panel` overrides the current repository remote.
 
-Each CI run publishes three artifacts, suffixed with the short commit SHA so
-multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production),
-`cyd-35r-diag-firmware-<sha>` (diagnostic), and `cyd-35r-dev-firmware-<sha>`
-(development, with OTA + TCP log enabled). `flash.sh` resolves the right one
+Each CI run publishes two artifacts, suffixed with the short commit SHA so
+multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production) and
+`cyd-35r-diag-firmware-<sha>` (diagnostic). `flash.sh` resolves the right one
 for a run by prefix, downloads it with `gh run download`, finds
 `merged-firmware.bin`, then writes it at `0x0`.
 
-## OTA dev loop (iterate without USB)
+## OTA (wireless firmware updates)
 
-After the one-time USB bootstrap you can push new firmware over Wi-Fi — NVS
-(Wi-Fi creds, OpenSprinkler config, OTA password) survives every OTA because
-OTA rewrites only the app partition. See `docs/03-architecture.md` §"Wireless
-dev loop" for the full design.
+ArduinoOTA is compiled into the production `cyd-35r` firmware. It is activated
+at runtime only when the NVS `ota_pass` key is non-empty, so a panel with no
+OTA password never exposes an unauthenticated update endpoint on the LAN.
+
+After the one-time USB bootstrap you can push new firmware over Wi-Fi. NVS
+(Wi-Fi creds, OpenSprinkler config, OTA password, dev_log flag) survives every
+OTA because OTA rewrites only the app partition. See
+`docs/03-architecture.md` §"Wireless updates" for the full design.
 
 ### Bootstrap (once per device)
 
-Flash the dev firmware with `merged-firmware.bin` at `0x0`:
+Flash the production firmware with `merged-firmware.bin` at `0x0`:
 
 ```bash
-./tools/flash.sh --dev
+./tools/flash.sh
 ```
-
-The dev firmware (`cyd-35r-dev-firmware-<sha>`) has ArduinoOTA and the TCP
-log server compiled in (behind the `DEV_LOOP` build flag). It announces itself
-via mDNS as `ospanel.local`.
 
 On first boot with an empty NVS, the panel starts the Wi-Fi provisioning
 captive portal (AP `OSPanel-Setup`). Set the Wi-Fi network, OpenSprinkler host,
 device password, and OTA password there. The OTA password is stored in NVS
-under the `ota_pass` key.
+under the `ota_pass` key. OTA is disabled if you leave the OTA password blank.
+
+To also enable the TCP log server (port 2323), check "Enable remote debug log"
+in the config portal. The log server is off by default.
 
 ### Push a firmware update over Wi-Fi
 
@@ -77,7 +79,7 @@ under the `ota_pass` key.
 ./tools/ota.sh
 ```
 
-`ota.sh` downloads the latest successful `cyd-35r-dev-firmware-<sha>` artifact
+`ota.sh` downloads the latest successful `cyd-35r-firmware-<sha>` artifact
 for the current branch, extracts `firmware.bin` (app partition only) and the
 bundled `espota.py`, then calls:
 
@@ -88,8 +90,7 @@ python3 espota.py -i ospanel.local -a <ota_pass> -f firmware.bin
 Options:
 
 - `--host <ip-or-hostname>` overrides the default `ospanel.local` mDNS name.
-- `--ota-pass <password>` provides the OTA password (required if one was set
-  during provisioning).
+- `--ota-pass <password>` provides the OTA password (required).
 - `--branch <name>`, `--pr <number>`, `--run-id <id>` select the CI run
   (same semantics as `flash.sh`).
 
@@ -99,8 +100,10 @@ Options:
 ./tools/logs.sh
 ```
 
-`logs.sh` connects to the DEV_LOOP TCP log port (2323) on `ospanel.local`,
+`logs.sh` connects to the TCP log port (2323) on `ospanel.local`,
 tees every line to `logs/serial.log`, and auto-reconnects after OTA reboots.
+The TCP log server must first be enabled via the "Enable remote debug log"
+checkbox in the config portal.
 
 ```bash
 ./tools/logs.sh &                          # background; logs to logs/serial.log
@@ -115,7 +118,7 @@ Options:
 
 ### Full OTA iteration cycle
 
-1. Push a branch. CI builds `cyd-35r-dev-firmware-<sha>`.
+1. Push a branch. CI builds `cyd-35r-firmware-<sha>`.
 2. Run `./tools/logs.sh` (once) to stream runtime logs.
 3. Run `./tools/ota.sh` to push the new firmware — the panel reboots, `logs.sh`
    reconnects automatically.

@@ -6,17 +6,17 @@ set -euo pipefail
 # shellcheck source=tools/_venv.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 
-# tools/ota.sh — push DEV_LOOP firmware over Wi-Fi via ArduinoOTA.
+# tools/ota.sh — push production firmware over Wi-Fi via ArduinoOTA.
 #
 # Resolves the CI run the same way flash.sh does (--pr / --branch / --run-id),
-# downloads the cyd-35r-dev-firmware artifact, then pushes the app-only
+# downloads the cyd-35r-firmware artifact, then pushes the app-only
 # firmware.bin via espota.py (bundled in the artifact by CI).  The board must
-# be running a DEV_LOOP build that has ArduinoOTA active.
+# have ArduinoOTA active (set ota_pass in the config portal to enable it).
 #
 # NVS (Wi-Fi creds + os_host + os_pw_md5) is preserved across OTA because OTA
-# rewrites only the app partition.  See docs/03 §"Wireless dev loop".
+# rewrites only the app partition.  See docs/03 §"Wireless updates".
 
-artifact_prefix="cyd-35r-dev-firmware"
+artifact_prefix="cyd-35r-firmware"
 branch=""
 host="ospanel.local"
 ota_pass=""
@@ -30,10 +30,10 @@ Usage: tools/ota.sh [--branch <name> | --pr <number> | --run-id <id>]
                     [--host <ip-or-hostname>] [--ota-pass <password>]
                     [--repo <owner/name>]
 
-Push the cyd-35r-dev firmware artifact over Wi-Fi using ArduinoOTA.
+Push the production firmware artifact over Wi-Fi using ArduinoOTA.
 
-The board must be running a DEV_LOOP build (ArduinoOTA active).  One-time
-bootstrap: flash merged-firmware.bin via tools/flash.sh first.
+The board must have OTA enabled: set ota_pass in the config portal to activate
+ArduinoOTA.  One-time bootstrap: flash merged-firmware.bin via tools/flash.sh.
 
 Options:
   --branch <name>      Use the most recent successful CI run on this branch.
@@ -42,7 +42,6 @@ Options:
   --run-id <id>        Use a specific workflow run ID.
   --host <host>        Device hostname or IP (default: ospanel.local).
   --ota-pass <pw>      OTA password stored in device NVS (ota_pass key).
-                       Omit if the device was provisioned without a password.
   --repo <owner/name>  Override the GitHub repository (default: from git remote).
 EOF
 }

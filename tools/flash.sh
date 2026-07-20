@@ -16,12 +16,11 @@ state_dir="${MON_STATE_DIR:-.serial-monitor}"
 
 usage() {
   cat <<'EOF'
-Usage: tools/flash.sh [--diag | --dev] [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
+Usage: tools/flash.sh [--diag] [--branch <name> | --pr <number> | --run-id <id>] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
 
 Download the merged firmware artifact from GitHub Actions and flash it at 0x0.
 By default the production firmware (cyd-35r-firmware-<sha>) is flashed; pass
---diag to flash the diagnostic bring-up firmware (cyd-35r-diag-firmware-<sha>),
-or --dev to flash the development firmware with OTA enabled (cyd-35r-dev-firmware-<sha>).
+--diag to flash the diagnostic bring-up firmware (cyd-35r-diag-firmware-<sha>).
 If tools/monitor.sh is running, it releases the port for the flash and resumes
 afterward automatically.
 EOF
@@ -106,10 +105,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --diag)
       artifact_prefix="cyd-35r-diag-firmware"
-      shift
-      ;;
-    --dev)
-      artifact_prefix="cyd-35r-dev-firmware"
       shift
       ;;
     --branch)

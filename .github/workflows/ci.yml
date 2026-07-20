@@ -17,7 +17,6 @@ env:
   # these by prefix). Keep in sync with tools/flash.sh.
   PROD_ARTIFACT_BASE: "cyd-35r-firmware"
   DIAG_ARTIFACT_BASE: "cyd-35r-diag-firmware"
-  DEV_ARTIFACT_BASE: "cyd-35r-dev-firmware"
 
 jobs:
   native-tests:
@@ -85,16 +84,3 @@ jobs:
         with:
           name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
           path: firmware-artifact/diag/
-
-      # Development firmware (DEV_LOOP=1): ArduinoOTA + TCP log mirror enabled.
-      # This is what tools/ota.sh flashes for the wireless dev loop. Built last
-      # since it shares the same .pio/build/<env> output path as cyd-35r.
-      - name: Build dev firmware (cyd-35r-dev)
-        run: pio run -e cyd-35r-dev
-      - name: Package dev firmware
-        run: tools/package-firmware.sh cyd-35r-dev firmware-artifact/dev --web
-      - name: Upload dev firmware artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ env.DEV_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
-          path: firmware-artifact/dev/

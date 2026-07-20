@@ -6,10 +6,10 @@ set -euo pipefail
 # shellcheck source=tools/_venv.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 
-# tools/logs.sh — stream the DEV_LOOP TCP log port to stdout + a log file.
+# tools/logs.sh — stream the TCP log port to stdout + a log file.
 #
-# The DEV_LOOP firmware opens a single-client TCP server on port 2323 that
-# mirrors Serial output.  This script connects to that port, tees every line
+# The firmware opens a single-client TCP server on port 2323 when the NVS
+# dev_log flag is true.  This script connects to that port, tees every line
 # to logs/serial.log, and auto-reconnects after OTA reboots — the same
 # ergonomics as tools/monitor.sh but over Wi-Fi instead of USB.
 
@@ -21,8 +21,8 @@ usage() {
   cat <<'EOF'
 Usage: tools/logs.sh [--host <ip-or-hostname>] [--port <port>] [--log <path>]
 
-Stream the DEV_LOOP TCP log port to stdout and a log file.
-Auto-reconnects after OTA reboots.
+Stream the TCP log port to stdout and a log file. Auto-reconnects after OTA reboots.
+The log server is active only when dev_log is enabled in the config portal.
 
 Options:
   --host <host>   Device hostname or IP (default: ospanel.local).
