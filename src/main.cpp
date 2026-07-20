@@ -145,12 +145,12 @@ public:
 
     size_t write(uint8_t c) override {
         g_hw_serial->write(c);
-        if (g_log_client && g_log_client.connected()) g_log_client.write(c);
+        if (g_log_client && g_log_client.connected()) { g_log_client.write(c); }
         return 1;
     }
     size_t write(const uint8_t* buf, size_t n) override {
         g_hw_serial->write(buf, n);
-        if (g_log_client && g_log_client.connected()) g_log_client.write(buf, n);
+        if (g_log_client && g_log_client.connected()) { g_log_client.write(buf, n); }
         return n;
     }
 };

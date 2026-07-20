@@ -39,6 +39,9 @@ cp "$boot_app0_bin"            "$out_dir/boot_app0.bin"
 espota_src="$framework_dir/tools/espota.py"
 if [[ -f "$espota_src" ]]; then
   cp "$espota_src" "$out_dir/espota.py"
+else
+  printf 'Warning: espota.py not found at %s — OTA push will not work from this artifact.\n' \
+    "$espota_src" >&2
 fi
 
 python3 -m esptool --chip esp32 merge-bin \

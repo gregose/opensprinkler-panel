@@ -156,8 +156,14 @@ while IFS= read -r candidate_run_id; do
 
   # Artifact names are suffixed with the commit SHA; match by prefix.
   artifact_name="$(gh api "repos/$repo/actions/runs/$candidate_run_id/artifacts" \
-    --jq '.artifacts[].name' 2>/dev/null | grep -m1 "^${artifact_prefix}-" || true)"
-  [[ -n "$artifact_name" ]] || continue
+    --jq '.artifacts[].name' 2>/tmp/ota_gh_api_err | grep -m1 "^${artifact_prefix}-" || true)"
+  if [[ -z "$artifact_name" ]]; then
+    if [[ -s /tmp/ota_gh_api_err ]]; then
+      printf '[ota] GitHub API call failed for run %s: %s\n' \
+        "$candidate_run_id" "$(cat /tmp/ota_gh_api_err)" >&2
+    fi
+    continue
+  fi
 
   if ! gh run download "$candidate_run_id" -R "$repo" -n "$artifact_name" -D "$candidate_dir" >/dev/null 2>&1; then
     continue

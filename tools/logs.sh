@@ -56,6 +56,9 @@ host = os.environ["HOST"]
 port = int(os.environ["PORT"])
 log_path = os.environ["LOG"]
 
+CONNECT_TIMEOUT = 5    # seconds to wait for initial TCP connection
+RECV_BUFFER_SIZE = 256  # bytes per recv() call
+
 log = open(log_path, "a", buffering=1)
 print(f"--- logs start {time.strftime('%Y-%m-%dT%H:%M:%S')} {host}:{port} ---",
       file=log, flush=True)
@@ -63,7 +66,7 @@ print(f"--- logs start {time.strftime('%Y-%m-%dT%H:%M:%S')} {host}:{port} ---",
 try:
     while True:
         try:
-            sock = socket.create_connection((host, port), timeout=5)
+            sock = socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
         except (OSError, socket.timeout) as exc:
             print(f"[logs] cannot connect to {host}:{port}: {exc}; retrying...",
                   file=sys.stderr)
@@ -79,7 +82,7 @@ try:
         try:
             while True:
                 try:
-                    chunk = sock.recv(256)
+                    chunk = sock.recv(RECV_BUFFER_SIZE)
                 except socket.timeout:
                     continue
                 if not chunk:
