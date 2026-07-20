@@ -58,7 +58,7 @@ UI (`n`), 0-based in the API (`sid = n-1`).
 |---|---|---|
 | **Station pill** | grid | Runs that station for `RT`. From idle → Running. While running → jump to it (turn current off, this one on). |
 | **Advance ›** | running | Move to the next station and run it for `RT`. **Wraps**: after the last station, goes back to station 1. Skips disabled stations. |
-| **Run time − / +** | always | Adjust `RT` (0:15–10:00, 15 s steps, default 1:00). **If a station is running, adjusting restarts the current station at the new `RT`** — this is how a tech extends the station they're on. |
+| **Run time − / +** | always | Adjust `RT` (0:15–10:00, 15 s steps, default 1:00). The new value applies to the **next** run or advance; the currently running station is not restarted. |
 | **Auto-advance** (toggle) | always | **Off (default):** when `RT` elapses, the station stops → Idle. **On:** when `RT` elapses, automatically run the **next** station. A full auto pass **stops after the last station** (no loop). Helper text: On → "Runs the next station"; Off → "Stops when time ends". |
 | **■ Stop** | running | Immediately stop everything → Idle. No confirmation. |
 

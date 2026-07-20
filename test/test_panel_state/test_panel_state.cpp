@@ -104,7 +104,7 @@ void test_running_station_dead_reckons_between_polls() {
   TEST_ASSERT_EQUAL_INT(43, f.ps.view().countdown_s);
 }
 
-void test_run_time_change_while_running_queues_restart_but_keeps_confirmed_view() {
+void test_run_time_change_while_running_updates_value_without_requeue() {
   Fixture f;
 
   f.ps.on_jc(make_jc_running(1, 50), 1000);
@@ -114,8 +114,19 @@ void test_run_time_change_while_running_queues_restart_but_keeps_confirmed_view(
   TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
   TEST_ASSERT_EQUAL_INT(50, f.ps.view().countdown_s);
+  // Future-runs-only: editing run time must NOT queue a restart of the running station.
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::None, (int)f.ps.desired().kind);
+}
+
+void test_run_time_change_while_running_used_on_advance() {
+  Fixture f;
+
+  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  f.ps.set_run_time(180);
+  f.ps.advance();
+
   TEST_ASSERT_EQUAL_INT((int)IntentKind::Run, (int)f.ps.desired().kind);
-  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+  TEST_ASSERT_EQUAL_INT(2, f.ps.desired().sid);
   TEST_ASSERT_EQUAL_INT(180, f.ps.desired().seconds);
 }
 
@@ -288,7 +299,8 @@ int main(int, char**) {
   RUN_TEST(test_latest_intent_wins_while_unconfirmed);
   RUN_TEST(test_confirmed_poll_clears_run_intent_and_enters_running);
   RUN_TEST(test_running_station_dead_reckons_between_polls);
-  RUN_TEST(test_run_time_change_while_running_queues_restart_but_keeps_confirmed_view);
+  RUN_TEST(test_run_time_change_while_running_updates_value_without_requeue);
+  RUN_TEST(test_run_time_change_while_running_used_on_advance);
   RUN_TEST(test_advance_queues_next_station_without_changing_confirmed_running_sid);
   RUN_TEST(test_prev_wraps_and_queues_previous_station);
   RUN_TEST(test_stop_queues_stop_until_idle_confirmed);

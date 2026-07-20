@@ -92,7 +92,9 @@ timer. Therefore any operation that changes the running station's duration or
 moves to a new station must **turn off first, then on**:
 
 - **Advance / jump:** `sid=<current>&en=0` → then `sid=<target>&en=1&t=<RT>`
-- **Extend (run time changed while running):** `sid=<current>&en=0` → then `sid=<current>&en=1&t=<RT'>`
+- **Deliberate restart at a new time:** `sid=<current>&en=0` → then `sid=<current>&en=1&t=<RT'>`
+
+Note: run-time edits from the UI stepper do **not** trigger an off-then-on; the new value applies to the next run or advance only.
 
 Send the two calls back-to-back. Because default stations are **sequential**,
 there may be a sub-second gap where nothing is on — that is acceptable (for the
@@ -143,5 +145,5 @@ optimistically update the UI; the next poll confirms.
 | Run station n | `GET /cm?pw=…&sid=n-1&en=1&t=RT` |
 | Turn off station n | `GET /cm?pw=…&sid=n-1&en=0` |
 | Advance/Jump | off current → on target (`t=RT`) |
-| Extend current | off current → on current (`t=RT'`) |
+| Restart at new time | off current → on current (`t=RT'`) |
 | Stop all | `GET /cv?pw=…&rsn=1` |

@@ -55,7 +55,7 @@ static constexpr uint8_t BACKLIGHT_OFF = 0;
 static constexpr int SCREEN_W = 480;
 static constexpr int SCREEN_H = 320;
 // Draw buffer: 480×4 pixels — keeps BSS small on the no-PSRAM ESP32.
-static constexpr int DRAW_BUF_LINES = 4;
+static constexpr int DRAW_BUF_LINES = 40;
 static constexpr unsigned long BOOT_HOLD_EDIT_MS    = 3000;
 static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
 static constexpr int           PORTAL_EDIT_TIMEOUT_S = 180;
