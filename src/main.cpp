@@ -48,8 +48,14 @@ static constexpr int SCREEN_W = 480;
 static constexpr int SCREEN_H = 320;
 // Draw buffer: 480×4 pixels — keeps BSS small on the no-PSRAM ESP32.
 static constexpr int DRAW_BUF_LINES = 4;
-static constexpr unsigned long BOOT_HOLD_CLEAR_MS = 3000;
+static constexpr unsigned long BOOT_HOLD_EDIT_MS    = 3000;
+static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
+static constexpr int           PORTAL_EDIT_TIMEOUT_S = 180;
 static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
+static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
+
+// Boot-hold mode: determined at startup by measuring how long BOOT is held.
+enum class BootMode { kNormal, kEditConfig, kFactoryClear };
 
 // NVS keys (matches M4 provisioning schema).
 static constexpr const char* NVS_NS        = "osp-panel";
@@ -179,28 +185,36 @@ static void save_run_time_to_nvs(int run_time_s) {
     prefs.end();
 }
 
-static void clear_provisioning_config() {
-    Preferences prefs;
-    prefs.begin(NVS_NS, false);
-    // Preserve touch_cal so BOOT-hold reprovision does not force recalibration.
-    prefs.remove(NVS_SSID);
-    prefs.remove(NVS_PASS);
-    prefs.remove(NVS_HOST);
-    prefs.remove(NVS_PWMD5);
-    prefs.remove(NVS_OTA);
-    prefs.remove(NVS_RT);
-    prefs.end();
-}
+// Measure how long the BOOT button is held at startup and return the
+// corresponding mode.  On-screen prompts are shown at each threshold.
+//   < BOOT_HOLD_EDIT_MS    → kNormal  (button released early or not pressed)
+//   < BOOT_HOLD_FACTORY_MS → kEditConfig  (non-destructive config edit)
+//   ≥ BOOT_HOLD_FACTORY_MS → kFactoryClear (full factory wipe)
+static BootMode measure_boot_hold() {
+    if (digitalRead(PIN_BOOT_BTN) != LOW) return BootMode::kNormal;
 
-static bool boot_hold_requests_reprovision() {
-    if (digitalRead(PIN_BOOT_BTN) != LOW) return false;
-    draw_boot_message("Hold BOOT to clear config", "Keep holding for 3 seconds");
+    draw_boot_message("Hold BOOT to reconfigure",
+                      "3 s = edit config",
+                      "10 s = factory reset");
+
     const unsigned long t0 = millis();
+    BootMode mode = BootMode::kNormal;
+
     while (digitalRead(PIN_BOOT_BTN) == LOW) {
-        if ((millis() - t0) >= BOOT_HOLD_CLEAR_MS) return true;
+        const unsigned long held = millis() - t0;
+        if (mode == BootMode::kNormal && held >= BOOT_HOLD_EDIT_MS) {
+            mode = BootMode::kEditConfig;
+            draw_boot_message("Release to edit config",
+                              "Keep holding 10 s to erase all");
+        }
+        if (mode == BootMode::kEditConfig && held >= BOOT_HOLD_FACTORY_MS) {
+            mode = BootMode::kFactoryClear;
+            draw_boot_message("Erasing all config...");
+            break;
+        }
         delay(10);
     }
-    return false;
+    return mode;
 }
 
 static bool connect_wifi(const String& ssid, const String& pass) {
@@ -222,10 +236,60 @@ static bool connect_wifi(const String& ssid, const String& pass) {
     return false;
 }
 
-static bool start_provisioning_portal(const String& current_host,
+// Shared helper: build NVS-merged OS/OTA fields from portal parameter values.
+// Saves a complete record to NVS.  WiFi creds (ssid/pass) are passed in as-is
+// (AP portal supplies new ones; STA portal keeps the existing ones).
+static void save_portal_params_to_nvs(const String& ssid,
+                                      const String& pass,
+                                      const String& current_host,
                                       const String& current_pw_md5,
-                                      const String& current_ota_pass) {
-    draw_boot_message("Setup mode", "Join Wi-Fi OSPanel-Setup",
+                                      const WiFiManagerParameter& os_host_param,
+                                      const WiFiManagerParameter& os_pass_param,
+                                      const WiFiManagerParameter& ota_pass_param) {
+    const String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
+
+    String saved_host = osp::normalize_os_host(os_host_param.getValue()).c_str();
+    if (saved_host.isEmpty()) saved_host = normalized_host;
+    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
+
+    const String plain_os_pass = osp::trim_ascii(os_pass_param.getValue()).c_str();
+    String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
+    if (!plain_os_pass.isEmpty()) {
+        saved_pw_md5 = osp::normalize_md5_hex(md5_hex(plain_os_pass).c_str()).c_str();
+    } else if (!osp::is_valid_md5_hex(saved_pw_md5.c_str())) {
+        saved_pw_md5 = DEFAULT_PW_MD5;
+    }
+
+    const String saved_ota_pass = osp::trim_ascii(ota_pass_param.getValue()).c_str();
+    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass);
+    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s)\n",
+                  saved_host.c_str(),
+                  osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
+                  saved_ota_pass.isEmpty() ? "empty" : "set");
+}
+
+// Start the WiFiManager captive-portal (AP mode).
+//
+// current_ssid / current_pass are the NVS-stored WiFi credentials.  They are
+// used as a fallback if WiFi.SSID()/psk() are empty after the portal connects
+// (Bug B: WiFiManager can connect via its own store while leaving WiFi.SSID()
+// unset, which would produce an incomplete NVS record and a reprovision loop).
+//
+// non_destructive: true  → set portal timeout (PORTAL_EDIT_TIMEOUT_S) and add
+//                           "Reset touch calibration" checkbox.
+//                  false → no timeout, no touch-cal checkbox.
+//
+// touch_cal_reset_out: if non-null and non_destructive, set to true when the
+//                      user checked the reset-touch-cal checkbox on save.
+static bool start_provisioning_portal(const String& current_ssid,
+                                      const String& current_pass,
+                                      const String& current_host,
+                                      const String& current_pw_md5,
+                                      const String& current_ota_pass,
+                                      bool non_destructive,
+                                      bool* touch_cal_reset_out) {
+    draw_boot_message(non_destructive ? "Edit config" : "Setup mode",
+                      "Join Wi-Fi OSPanel-Setup",
                       "Open the captive portal");
 
     char host_buf[65] = {};
@@ -237,46 +301,128 @@ static bool start_provisioning_portal(const String& current_host,
 
     WiFiManager wm;
 
-    WiFiManagerParameter os_host("os_host", "OpenSprinkler host", host_buf, sizeof(host_buf));
-    WiFiManagerParameter os_pass("os_pass", "OpenSprinkler device password",
-                                 "", 65, "type='password' autocomplete='off'");
-    WiFiManagerParameter ota_pass("ota_pass", "OTA password (optional)",
-                                  ota_buf, sizeof(ota_buf),
-                                  "type='password' autocomplete='off'");
+    if (non_destructive) {
+        wm.setConfigPortalTimeout(PORTAL_EDIT_TIMEOUT_S);
+    }
+
+    WiFiManagerParameter os_host_param("os_host", "OpenSprinkler host",
+                                       host_buf, sizeof(host_buf));
+    WiFiManagerParameter os_pass_param("os_pass", "OpenSprinkler device password",
+                                       "", 65,
+                                       "type='password' autocomplete='off'");
+    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (optional)",
+                                        ota_buf, sizeof(ota_buf),
+                                        "type='password' autocomplete='off'");
+    WiFiManagerParameter reset_touch_param("reset_touch",
+                                           "Reset touch calibration",
+                                           "1", 2,
+                                           "type='checkbox'");
 
     wm.setAPCallback([](WiFiManager* portal) {
         draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
                           "Open the captive portal");
     });
-    wm.addParameter(&os_host);
-    wm.addParameter(&os_pass);
-    wm.addParameter(&ota_pass);
+    wm.addParameter(&os_host_param);
+    wm.addParameter(&os_pass_param);
+    wm.addParameter(&ota_pass_param);
+    if (non_destructive) {
+        wm.addParameter(&reset_touch_param);
+    }
 
     if (!wm.startConfigPortal(PROVISION_AP_SSID)) {
         Serial.println("Provisioning portal exited without WiFi connection");
         return false;
     }
 
-    const String saved_ssid = WiFi.SSID();
-    const String saved_pass = WiFi.psk();
-    String saved_host = osp::normalize_os_host(os_host.getValue()).c_str();
-    if (saved_host.isEmpty()) saved_host = normalized_host;
-    if (saved_host.isEmpty()) saved_host = DEFAULT_OS_HOST;
+    // Bug B fix: WiFiManager may connect via its own stored creds and leave
+    // WiFi.SSID()/psk() empty.  Fall back to the NVS-stored values so the
+    // saved record is always complete and has_provisioning_config() stays true.
+    const String saved_ssid = !WiFi.SSID().isEmpty() ? WiFi.SSID() : current_ssid;
+    const String saved_pass = !WiFi.psk().isEmpty()  ? WiFi.psk()  : current_pass;
 
-    const String plain_os_pass = osp::trim_ascii(os_pass.getValue()).c_str();
-    String saved_pw_md5 = osp::normalize_md5_hex(current_pw_md5.c_str()).c_str();
-    if (!plain_os_pass.isEmpty()) {
-        saved_pw_md5 = osp::normalize_md5_hex(md5_hex(plain_os_pass).c_str()).c_str();
-    } else if (!osp::is_valid_md5_hex(saved_pw_md5.c_str())) {
-        saved_pw_md5 = DEFAULT_PW_MD5;
+    save_portal_params_to_nvs(saved_ssid, saved_pass, current_host, current_pw_md5,
+                               os_host_param, os_pass_param, ota_pass_param);
+
+    if (non_destructive && touch_cal_reset_out) {
+        *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
+    }
+    return true;
+}
+
+// Serve the edit-config portal over the existing STA connection (non-blocking).
+// The device stays on home WiFi; the user browses to the LAN IP.  Runs a
+// wm.process() loop for up to PORTAL_EDIT_TIMEOUT_S seconds.
+//
+// Returns true if the user saved params (NVS record written).
+// Returns false if the loop timed out without a save.
+//
+// touch_cal_reset_out: set to true if the user checked "Reset touch calibration".
+static bool start_sta_web_portal(const String& current_ssid,
+                                 const String& current_pass,
+                                 const String& current_host,
+                                 const String& current_pw_md5,
+                                 const String& current_ota_pass,
+                                 bool* touch_cal_reset_out) {
+    char host_buf[65] = {};
+    char ota_buf[65] = {};
+    String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
+    String trimmed_ota = osp::trim_ascii(current_ota_pass.c_str()).c_str();
+    normalized_host.toCharArray(host_buf, sizeof(host_buf));
+    trimmed_ota.toCharArray(ota_buf, sizeof(ota_buf));
+
+    WiFiManager wm;
+
+    WiFiManagerParameter os_host_param("os_host", "OpenSprinkler host",
+                                       host_buf, sizeof(host_buf));
+    WiFiManagerParameter os_pass_param("os_pass", "OpenSprinkler device password",
+                                       "", 65,
+                                       "type='password' autocomplete='off'");
+    WiFiManagerParameter ota_pass_param("ota_pass", "OTA password (optional)",
+                                        ota_buf, sizeof(ota_buf),
+                                        "type='password' autocomplete='off'");
+    WiFiManagerParameter reset_touch_param("reset_touch",
+                                           "Reset touch calibration",
+                                           "1", 2,
+                                           "type='checkbox'");
+
+    wm.addParameter(&os_host_param);
+    wm.addParameter(&os_pass_param);
+    wm.addParameter(&ota_pass_param);
+    wm.addParameter(&reset_touch_param);
+
+    bool params_saved = false;
+    wm.setSaveParamsCallback([&params_saved]() { params_saved = true; });
+
+    wm.startWebPortal();
+
+    String ip_url = "http://";
+    ip_url += WiFi.localIP().toString();
+    ip_url += "/";
+    Serial.printf("STA web portal started at %s\n", ip_url.c_str());
+    draw_boot_message("Edit config at:", ip_url.c_str(),
+                      "Save to apply, wait to skip");
+
+    const unsigned long t0 = millis();
+    const unsigned long timeout_ms = (unsigned long)PORTAL_EDIT_TIMEOUT_S * 1000UL;
+    while ((millis() - t0) < timeout_ms) {
+        wm.process();
+        if (params_saved) break;
+        delay(10);
+    }
+    wm.stopWebPortal();
+
+    if (!params_saved) {
+        Serial.println("STA edit portal timed out without save");
+        return false;
     }
 
-    const String saved_ota_pass = osp::trim_ascii(ota_pass.getValue()).c_str();
-    save_config_to_nvs(saved_ssid, saved_pass, saved_host, saved_pw_md5, saved_ota_pass);
-    Serial.printf("Provisioning saved for host %s (pw_md5 %s, ota_pass %s)\n",
-                  saved_host.c_str(),
-                  osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
-                  saved_ota_pass.isEmpty() ? "empty" : "set");
+    // WiFi creds unchanged — keep the existing NVS ssid/pass.
+    save_portal_params_to_nvs(current_ssid, current_pass, current_host, current_pw_md5,
+                               os_host_param, os_pass_param, ota_pass_param);
+
+    if (touch_cal_reset_out) {
+        *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
+    }
     return true;
 }
 
@@ -290,28 +436,102 @@ static bool ensure_network_config() {
     g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
     g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
 
-    const bool force_reprovision = boot_hold_requests_reprovision();
-    if (force_reprovision) {
-        Serial.println("BOOT held: clearing provisioning config");
-        clear_provisioning_config();
+    const BootMode mode = measure_boot_hold();
+
+    // --- Factory clear (≥ 10 s hold) ------------------------------------
+    // Wipe the entire app NVS namespace (including touch_cal), reset
+    // WiFiManager's own WiFi store (Bug A fix), then open a blank portal.
+    if (mode == BootMode::kFactoryClear) {
+        Serial.println("BOOT held 10 s: factory clear");
+        {
+            WiFiManager wm;
+            wm.resetSettings();  // Bug A fix: clear WiFiManager's own WiFi store
+        }
         WiFi.disconnect(true, true);
+        {
+            Preferences prefs;
+            prefs.begin(NVS_NS, false);
+            prefs.clear();  // Wipes everything, including touch_cal
+            prefs.end();
+        }
         g_os_host = "";
         g_pw_md5 = "";
         ssid = "";
         pass = "";
         ota_pass = "";
+        Serial.println("Factory clear complete; starting provisioning portal");
+        start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
+                                   false, nullptr);
+        load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
+        g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
+        g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
+        return WiFi.status() == WL_CONNECTED;
     }
 
+    // --- Non-destructive config edit (3–10 s hold) ----------------------
+    // Try to reconnect in STA mode and serve config over the existing WiFi
+    // so the user can browse to the device IP on their LAN.  If STA connect
+    // fails (creds changed / AP gone), fall back to the AP captive portal.
+    // On save or timeout in STA mode: reboot into the UX.
+    // On timeout via the AP portal fallback: continue with existing config.
+    if (mode == BootMode::kEditConfig) {
+        Serial.println("BOOT held 3 s: non-destructive config edit");
+        bool touch_cal_reset = false;
+
+        const bool sta_ok = connect_wifi(ssid, pass);
+        if (sta_ok) {
+            // STA connected — serve config over existing WiFi, no AP needed.
+            const bool saved = start_sta_web_portal(ssid, pass, g_os_host,
+                                                     g_pw_md5, ota_pass,
+                                                     &touch_cal_reset);
+            if (saved && touch_cal_reset) {
+                Serial.println("Touch cal reset: removing NVS key");
+                Preferences prefs;
+                prefs.begin(NVS_NS, false);
+                prefs.remove(NVS_TOUCHCAL);
+                prefs.end();
+            }
+            // Reboot whether or not the user saved — closes the web server
+            // cleanly and ensures any config changes take effect.
+            Serial.println(saved ? "Config saved; rebooting into UX"
+                                 : "STA edit portal timed out; rebooting");
+            ESP.restart();
+        }
+
+        // STA connect failed — fall back to AP captive portal so the user
+        // can still fix the WiFi credentials.
+        Serial.println("STA connect failed; falling back to AP captive portal");
+        const bool saved = start_provisioning_portal(ssid, pass, g_os_host,
+                                                      g_pw_md5, ota_pass,
+                                                      true, &touch_cal_reset);
+        if (saved) {
+            if (touch_cal_reset) {
+                Serial.println("Touch cal reset: removing NVS key");
+                Preferences prefs;
+                prefs.begin(NVS_NS, false);
+                prefs.remove(NVS_TOUCHCAL);
+                prefs.end();
+            }
+            Serial.println("Config saved; rebooting into UX");
+            ESP.restart();
+        }
+        // AP portal timed out without save — continue with existing config.
+        Serial.println("Edit portal timed out; resuming with existing config");
+        return connect_wifi(ssid, pass);
+    }
+
+    // --- Normal boot ----------------------------------------------------
     bool connected = false;
     const bool has_config = osp::has_provisioning_config(ssid.c_str(),
-                                                         g_os_host.c_str(),
-                                                         g_pw_md5.c_str());
-    if (has_config && !force_reprovision) {
+                                                          g_os_host.c_str(),
+                                                          g_pw_md5.c_str());
+    if (has_config) {
         connected = connect_wifi(ssid, pass);
     }
-    if (!has_config || !connected || force_reprovision) {
+    if (!has_config || !connected) {
         Serial.println("Starting provisioning portal");
-        start_provisioning_portal(g_os_host, g_pw_md5, ota_pass);
+        start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
+                                   false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -319,6 +539,61 @@ static bool ensure_network_config() {
                     connect_wifi(ssid, pass);
     }
     return connected;
+}
+
+// ---------------------------------------------------------------------------
+// Touch calibration
+// ---------------------------------------------------------------------------
+// Load a saved calData[5] blob from NVS and apply it via setTouch().
+// Returns true if a valid 10-byte calibration was found and applied.
+// NVS namespace/key matches the diag firmware so a diag-seeded calibration
+// is honored by production and vice-versa.
+static bool load_touch_cal() {
+    uint16_t calData[5] = {0};
+    Preferences prefs;
+    prefs.begin(NVS_NS, true);
+    const size_t got = prefs.getBytes(NVS_TOUCHCAL, calData, sizeof(calData));
+    prefs.end();
+    if (got == sizeof(calData)) {
+        tft.setTouch(calData);
+        Serial.println("Touch: loaded calibration from NVS.");
+        return true;
+    }
+    Serial.println("Touch: no saved calibration.");
+    return false;
+}
+
+// Run TFT_eSPI's interactive calibration, persist the result, and apply it.
+// Must be called with the display active and BEFORE lv_init() — calibrateTouch()
+// draws directly via TFT_eSPI and must not fight an active LVGL display.
+static void run_touch_calibration() {
+    uint16_t calData[5] = {0};
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.println("Touch calibration");
+    tft.setTextSize(1);
+    tft.println("");
+    tft.println(" Tap each highlighted corner arrow.");
+    Serial.println("Touch: tap the corner arrows as they appear...");
+    tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 20);
+    tft.setTouch(calData);
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putBytes(NVS_TOUCHCAL, calData, sizeof(calData));
+    prefs.end();
+    Serial.println("Touch: calibration complete and saved to NVS.");
+    draw_boot_message("Calibration saved");
+    delay(CALIBRATION_COMPLETE_DELAY_MS);
+}
+
+// Ensure touch is calibrated: load from NVS if present, otherwise run the
+// interactive calibration routine and persist the result.
+static void ensure_touch_calibration() {
+    if (!load_touch_cal()) {
+        run_touch_calibration();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +1163,10 @@ void setup() {
     ensure_network_config();
     load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
 
-    // ---- Touch calibration seam -----------------------------------------
+    // ---- Touch calibration -----------------------------------------------
+    // Must run AFTER WiFi/provisioning (portal is phone-based, no panel touch
+    // needed) and BEFORE lv_init() (calibrateTouch draws directly via TFT_eSPI).
+    ensure_touch_calibration();
 
     // ---- LVGL init ------------------------------------------------------
     lv_init();
