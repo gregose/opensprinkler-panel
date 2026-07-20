@@ -124,7 +124,13 @@ static std::unique_ptr<osp::OsClient>   g_client;
 static std::unique_ptr<osp::PanelState> g_ps;
 static SemaphoreHandle_t g_state_mutex = nullptr;
 static volatile uint32_t g_model_version = 0;
+static volatile uint32_t g_ui_beat = 0;
+static volatile uint32_t g_net_beat = 0;
+static volatile uint32_t g_phase_snapshot = static_cast<uint32_t>(osp::Phase::Idle);
+static volatile bool g_dev_log_enabled = false;
 static bool g_consume_touch_until_release = false;
+static TaskHandle_t g_ui_task_handle = nullptr;
+static TaskHandle_t g_net_task_handle = nullptr;
 
 // NVS config cache.
 static String g_os_host;
@@ -145,6 +151,18 @@ public:
 private:
     bool locked_ = false;
 };
+
+static void cache_phase_snapshot_unlocked() {
+    if (g_ps) {
+        g_phase_snapshot = static_cast<uint32_t>(g_ps->view().phase);
+    }
+}
+
+static const char* phase_snapshot_name(uint32_t phase) {
+    return phase == static_cast<uint32_t>(osp::Phase::Running)
+               ? "Running"
+               : "Idle";
+}
 
 // ---------------------------------------------------------------------------
 // OTA responder + TCP log mirror — always compiled into production firmware.
@@ -193,6 +211,8 @@ static TeeSerial g_tee_serial;
 #define Serial g_tee_serial
 
 static void dev_loop_init(const String& ota_pass, bool dev_log) {
+    g_dev_log_enabled = dev_log;
+
     // mDNS — stable hostname so espota.py can find the device without an IP.
     MDNS.begin("ospanel");
 
@@ -1383,6 +1403,7 @@ static void apply_link_error(uint32_t now_ms, int* failures) {
     } else {
         g_ps->on_link_reconnecting(now_ms);
     }
+    cache_phase_snapshot_unlocked();
 }
 
 static bool refresh_station_list(uint32_t now_ms, int* failures) {
@@ -1406,6 +1427,7 @@ static bool refresh_station_list(uint32_t now_ms, int* failures) {
         ++g_model_version;
         g_ps->set_station_list_loaded(true);
         g_ps->on_link_connected(now_ms);
+        cache_phase_snapshot_unlocked();
     }
 
     *failures = 0;
@@ -1457,6 +1479,7 @@ static bool deliver_desired(uint32_t now_ms, int* failures) {
         if (lock && g_ps) {
             g_ps->mark_desired_delivered();
             g_ps->on_link_connected(now_ms);
+            cache_phase_snapshot_unlocked();
         }
     }
     *failures = 0;
@@ -1473,7 +1496,10 @@ static bool poll_controller(uint32_t now_ms, int* failures) {
 
     {
         StateLock lock;
-        if (lock && g_ps) g_ps->on_jc(jc, now_ms);
+        if (lock && g_ps) {
+            g_ps->on_jc(jc, now_ms);
+            cache_phase_snapshot_unlocked();
+        }
     }
     *failures = 0;
     return true;
@@ -1484,6 +1510,7 @@ static void ui_task(void* /*arg*/) {
     uint32_t seen_model_version = UINT32_MAX;
 
     for (;;) {
+        ++g_ui_beat;
         const uint32_t now = millis();
         const uint32_t delta = now - last_lv_tick_ms;
         if (delta >= UI_TICK_MS) {
@@ -1495,6 +1522,7 @@ static void ui_task(void* /*arg*/) {
             StateLock lock;
             if (lock && g_ps) {
                 g_ps->tick(now);
+                cache_phase_snapshot_unlocked();
                 if (seen_model_version != g_model_version) {
                     build_grid();
                     seen_model_version = g_model_version;
@@ -1516,13 +1544,17 @@ static void network_task(void* /*arg*/) {
     bool station_list_loaded = false;
 
     for (;;) {
+        ++g_net_beat;
         const uint32_t now = millis();
 
         dev_loop_handle();
 
         if (WiFi.status() != WL_CONNECTED || !g_client) {
             StateLock lock;
-            if (lock && g_ps) g_ps->on_link_offline(now);
+            if (lock && g_ps) {
+                g_ps->on_link_offline(now);
+                cache_phase_snapshot_unlocked();
+            }
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
@@ -1559,15 +1591,15 @@ static void network_task(void* /*arg*/) {
 
         if (poll_now && poll_controller(now, &link_failures)) {
             last_jc_poll_ms = now;
-            StateLock lock;
-            if (lock && g_ps) {
-                desired_delivered = g_ps->desired_delivered();
-                pending_sync = g_ps->pending_sync();
-            }
-            if (!desired_delivered && pending_sync) {
-                if (deliver_desired(now, &link_failures)) {
-                    last_jc_poll_ms = 0;
+            bool redeliver = false;
+            {
+                StateLock lock;
+                if (lock && g_ps) {
+                    redeliver = !g_ps->desired_delivered() && g_ps->pending_sync();
                 }
+            }
+            if (redeliver && deliver_desired(now, &link_failures)) {
+                last_jc_poll_ms = 0;
             }
         }
 
@@ -1654,21 +1686,42 @@ void setup() {
         StateLock lock;
         if (lock) {
             g_ps.reset(new osp::PanelState(g_model, saved_rt));
+            cache_phase_snapshot_unlocked();
         }
     }
     build_grid();
     {
         StateLock lock;
-        if (lock) ui_update();
+        if (lock) {
+            cache_phase_snapshot_unlocked();
+            ui_update();
+        }
     }
 
-    xTaskCreatePinnedToCore(ui_task, "ui-task", 8192, nullptr, 2, nullptr, 1);
-    xTaskCreatePinnedToCore(network_task, "net-task", 12288, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore(ui_task, "ui-task", 8192, nullptr, 2, &g_ui_task_handle, 1);
+    xTaskCreatePinnedToCore(network_task, "net-task", 12288, nullptr, 1, &g_net_task_handle, 0);
 }
 
 // ---------------------------------------------------------------------------
 // loop()
 // ---------------------------------------------------------------------------
 void loop() {
+    if (g_dev_log_enabled) {
+        const uint32_t ui_beat = g_ui_beat;
+        const uint32_t net_beat = g_net_beat;
+        const uint32_t phase = g_phase_snapshot;
+        const UBaseType_t ui_hwm =
+            g_ui_task_handle ? uxTaskGetStackHighWaterMark(g_ui_task_handle) : 0;
+        const UBaseType_t net_hwm =
+            g_net_task_handle ? uxTaskGetStackHighWaterMark(g_net_task_handle) : 0;
+        Serial.printf("[HB] ms=%lu ui=%lu net=%lu phase=%s heap=%u ui_hwm=%u net_hwm=%u\n",
+                      static_cast<unsigned long>(millis()),
+                      static_cast<unsigned long>(ui_beat),
+                      static_cast<unsigned long>(net_beat),
+                      phase_snapshot_name(phase),
+                      static_cast<unsigned int>(ESP.getFreeHeap()),
+                      static_cast<unsigned int>(ui_hwm),
+                      static_cast<unsigned int>(net_hwm));
+    }
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
