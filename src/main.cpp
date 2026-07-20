@@ -433,8 +433,9 @@ static bool start_provisioning_portal(const String& current_ssid,
                                         "type='password' autocomplete='off'");
     WiFiManagerParameter dev_log_param("dev_log",
                                        "Enable remote debug log (port 2323)",
-                                       current_dev_log ? "1" : "", 2,
-                                       "type='checkbox'");
+                                       "1", 2,
+                                       current_dev_log ? "type='checkbox' checked"
+                                                       : "type='checkbox'");
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
                                            "1", 2,
@@ -506,12 +507,13 @@ static bool start_sta_web_portal(const String& current_ssid,
                                         "type='password' autocomplete='off'");
     WiFiManagerParameter dev_log_param("dev_log",
                                        "Enable remote debug log (port 2323)",
-                                       current_dev_log ? "1" : "", 2,
-                                       "type='checkbox'");
+                                       "1", 2,
+                                       current_dev_log ? "type='checkbox' checked"
+                                                       : "type='checkbox'");
     WiFiManagerParameter reset_touch_param("reset_touch",
-                                           "Reset touch calibration",
-                                           "1", 2,
-                                           "type='checkbox'");
+                                               "Reset touch calibration",
+                                               "1", 2,
+                                               "type='checkbox'");
 
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
