@@ -299,9 +299,6 @@ void PanelState::stop() {
 void PanelState::set_run_time(int t_sec) {
   on_touch(now_ms_);
   view_.run_time_s = clamp_run_time(t_sec);
-  if (view_.phase == Phase::Running) {
-    queue_desired_run(view_.running_sid);
-  }
 }
 
 void PanelState::set_auto_advance(bool enabled) {

@@ -69,7 +69,7 @@ and read back the running station + `rem` from `/jc`.
 (idle/running visibility, name-headline + eyebrow + countdown, one consistent
 Advance/Stop row, run-time stepper, Auto-advance toggle, scaling grid),
 driven by the M5 client. Implement: select=run, Advance wrap + skip
-disabled, jump, run-time-change-restarts-current (extend), auto-advance
+disabled, jump, run-time-change-applies-to-next-run (editing run time while running does not restart the current station), auto-advance
 (stop-after-last), the `/jc` reconcile, signal-loss state, and 5-min idle sleep.
 *Done when:* the on-device behavior matches `00-mockup-reference.html` tapped
 side by side, using the mock.

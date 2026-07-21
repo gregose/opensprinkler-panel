@@ -29,7 +29,7 @@ This folder is the complete package for a coding agent to build the firmware.
 ## Definition of done (summary — full list in `03`)
 
 A tech can walk up to the panel, and with no other device: pick any enabled
-station and run it, Advance (wrapping), jump via the grid, extend by
-changing run time, toggle auto-advance to cycle the yard, and Stop — all
+station and run it, Advance (wrapping), jump via the grid, adjust the run time
+(takes effect on the next run), toggle auto-advance to cycle the yard, and Stop — all
 reflected against the controller's real state, recovering cleanly from Wi-Fi
 loss, and sleeping when idle.

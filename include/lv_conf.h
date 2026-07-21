@@ -7,7 +7,8 @@
  *
  * Key constraints vs. the LVGL defaults:
  *   - 16-bit color (RGB565) to match the ST7796U and save RAM.
- *   - 128 KB LVGL heap — keeps headroom for WiFi stack (~80 KB) and app.
+ *   - System malloc/free (LV_USE_STDLIB_MALLOC = LV_STDLIB_CLIB) so the
+ *     LVGL heap stays on the FreeRTOS heap; no 64 KB static BSS pool.
  *   - Only the widgets used by the panel UI are enabled.
  *   - No file system, no PNG/JPEG decoder.
  */
@@ -28,12 +29,14 @@
 /* ---- Memory ------------------------------------------------------------ */
 /** Delegate to the system allocator (malloc/free) so the LVGL heap does
  *  NOT consume BSS on the no-PSRAM ESP32.  The Arduino heap has ~180 KB
- *  free after the WiFi stack, which is enough for the panel widgets.      */
-#define LV_MEM_CUSTOM 1
-#define LV_MEM_CUSTOM_INCLUDE <stdlib.h>
-#define LV_MEM_CUSTOM_ALLOC   malloc
-#define LV_MEM_CUSTOM_FREE    free
-#define LV_MEM_CUSTOM_REALLOC realloc
+ *  free after the WiFi stack, which is enough for the panel widgets.
+ *
+ *  LVGL 9.x uses LV_USE_STDLIB_MALLOC (not the LVGL 8.x LV_MEM_CUSTOM flag).
+ *  LV_STDLIB_CLIB = 1 routes allocation to the standard malloc/free/realloc,
+ *  which on Arduino/FreeRTOS maps to the FreeRTOS heap.  Without this the
+ *  default is LV_STDLIB_BUILTIN which silently allocates a 64 KB static BSS
+ *  pool — fatal on the 124 KB dram0_0_seg of the no-PSRAM ESP32.            */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
 
 /* ---- Rendering --------------------------------------------------------- */
 /** Refresh period in ms (~30 fps).  The draw callback must call

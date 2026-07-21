@@ -53,7 +53,7 @@ static constexpr int LEDC_RES_BITS   = 8;
 
 static constexpr int SCREEN_W        = 480;
 static constexpr int SCREEN_H        = 320;
-static constexpr int DRAW_BUF_LINES  = 4;
+static constexpr int DRAW_BUF_LINES  = 40;
 
 // NVS namespace and keys — must match src/main.cpp.
 static constexpr const char* NVS_NS    = "osp-panel";
