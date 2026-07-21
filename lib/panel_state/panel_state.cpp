@@ -48,10 +48,16 @@ void PanelState::enter_running(int sid, int countdown_s) {
 }
 
 void PanelState::enter_idle() {
+  // Only reset the idle-sleep clock on a genuine transition INTO idle
+  // (e.g. Running->Idle). on_jc() re-affirms idle on EVERY ~2 s /jc poll
+  // while already idle; if we reset here unconditionally the idle timer is
+  // wiped every poll and idle_elapsed_ms() can never reach the sleep
+  // timeout, so the screen never sleeps (#60).
+  const bool was_idle = (view_.phase == Phase::Idle);
   view_.phase = Phase::Idle;
   view_.running_sid = -1;
   view_.countdown_s = 0;
-  last_touch_ms_ = now_ms_;
+  if (!was_idle) last_touch_ms_ = now_ms_;
 }
 
 void PanelState::begin_await_close() {
@@ -153,7 +159,8 @@ void PanelState::tick(uint32_t now_ms) {
   }
 
   if (view_.phase == Phase::Idle && !view_.sleeping) {
-    if ((now_ms - last_touch_ms_) >= kSleepTimeoutMs) {
+    if (sleep_timeout_ms_ != 0 &&
+        (now_ms - last_touch_ms_) >= sleep_timeout_ms_) {
       view_.sleeping = true;
     }
   }

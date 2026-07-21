@@ -77,7 +77,8 @@ static constexpr uint32_t JN_RETRY_INITIAL_MS = 1000;
 static constexpr uint32_t JN_RETRY_MAX_MS = 10000;
 static constexpr int LINK_RETRY_LIMIT = 3;
 static constexpr const char* HEARTBEAT_LOG_FORMAT =
-    "[HB] ms=%lu ui=%lu net=%lu phase=%s heap=%u ui_hwm=%u net_hwm=%u\n";
+    "[HB] ms=%lu ui=%lu net=%lu phase=%s sleeping=%d idle_ms=%lu "
+    "sleep_to_ms=%lu heap=%u ui_hwm=%u net_hwm=%u\n";
 
 // Boot-hold mode: determined at startup by measuring how long BOOT is held.
 enum class BootMode { kNormal, kEditConfig, kFactoryClear };
@@ -93,6 +94,11 @@ static constexpr const char* NVS_DEV_LOG   = "dev_log";
 static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
 static constexpr const char* NVS_AA        = "auto_adv";
+static constexpr const char* NVS_SLEEP     = "sleep_s";
+// Idle-sleep timeout in seconds, persisted in NVS and settable in the config
+// portal. 0 disables sleep. Default mirrors PanelState::kDefaultSleepTimeoutMs.
+static constexpr int DEFAULT_SLEEP_S = 300;
+static constexpr int MAX_SLEEP_S     = 3600;
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
 static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
 static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
@@ -141,6 +147,18 @@ static volatile uint32_t g_net_beat = 0;
 static volatile uint32_t g_phase_snapshot = static_cast<uint32_t>(osp::Phase::Idle);
 static volatile bool g_dev_log_enabled = false;
 static bool g_consume_touch_until_release = false;
+// Touch trace edge-tracking (#60 observability): remember whether the last
+// poll was pressed so we can emit one [TOUCH] dev-log line per press (rising
+// edge) without spamming every poll. Single-sample phantom presses no longer
+// keep the panel awake — that was really the enter_idle() re-affirm resetting
+// the idle timer on every /jc poll (fixed in panel_state), not raw touch — so
+// no debounce is applied here and single taps stay instant/responsive.
+static bool g_touch_was_pressed = false;
+// Snapshots for the heartbeat (fix #60 observability): populated under the
+// state lock in ui_task so loop() can print them without taking the lock.
+static volatile bool     g_sleeping_snapshot   = false;
+static volatile uint32_t g_idle_ms_snapshot    = 0;
+static volatile uint32_t g_sleep_to_ms_snapshot = 0;
 static TaskHandle_t g_ui_task_handle = nullptr;
 static TaskHandle_t g_net_task_handle = nullptr;
 
@@ -167,6 +185,9 @@ private:
 static void cache_phase_snapshot_unlocked() {
     if (g_ps) {
         g_phase_snapshot = static_cast<uint32_t>(g_ps->view().phase);
+        g_sleeping_snapshot = g_ps->view().sleeping;
+        g_idle_ms_snapshot = g_ps->idle_elapsed_ms();
+        g_sleep_to_ms_snapshot = g_ps->sleep_timeout_ms();
     }
 }
 
@@ -328,7 +349,8 @@ static void load_config_from_nvs(String* ssid,
                                  String* ota_pass,
                                  int* run_time_s,
                                  bool* dev_log = nullptr,
-                                 bool* auto_advance = nullptr) {
+                                 bool* auto_advance = nullptr,
+                                 int* sleep_timeout_s = nullptr) {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
     if (ssid) *ssid = prefs.getString(NVS_SSID, "");
@@ -339,6 +361,7 @@ static void load_config_from_nvs(String* ssid,
     if (run_time_s) *run_time_s = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
     if (dev_log) *dev_log = prefs.getBool(NVS_DEV_LOG, false);
     if (auto_advance) *auto_advance = prefs.getBool(NVS_AA, false);
+    if (sleep_timeout_s) *sleep_timeout_s = prefs.getInt(NVS_SLEEP, DEFAULT_SLEEP_S);
     prefs.end();
 }
 
@@ -347,7 +370,8 @@ static void save_config_to_nvs(const String& ssid,
                                const String& os_host,
                                const String& pw_md5,
                                const String& ota_pass,
-                               bool dev_log) {
+                               bool dev_log,
+                               int sleep_timeout_s) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putString(NVS_SSID, ssid);
@@ -357,6 +381,7 @@ static void save_config_to_nvs(const String& ssid,
     if (ota_pass.isEmpty()) prefs.remove(NVS_OTA);
     else                    prefs.putString(NVS_OTA, ota_pass);
     prefs.putBool(NVS_DEV_LOG, dev_log);
+    prefs.putInt(NVS_SLEEP, sleep_timeout_s);
     prefs.end();
 }
 
@@ -435,7 +460,8 @@ static void save_portal_params_to_nvs(const String& ssid,
                                       const WiFiManagerParameter& os_host_param,
                                       const WiFiManagerParameter& os_pass_param,
                                       const WiFiManagerParameter& ota_pass_param,
-                                      const WiFiManagerParameter& dev_log_param) {
+                                      const WiFiManagerParameter& dev_log_param,
+                                      const WiFiManagerParameter& sleep_param) {
     const String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
 
     String saved_host = osp::normalize_os_host(os_host_param.getValue()).c_str();
@@ -452,12 +478,21 @@ static void save_portal_params_to_nvs(const String& ssid,
 
     const String saved_ota_pass = osp::trim_ascii(ota_pass_param.getValue()).c_str();
     const bool saved_dev_log = (strcmp(dev_log_param.getValue(), "1") == 0);
-    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass, saved_dev_log);
-    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s, dev_log %s)\n",
+
+    // Idle-sleep timeout (seconds). Blank/invalid falls back to the default;
+    // clamp to [0, MAX_SLEEP_S] (0 = never sleep).
+    const String sleep_str = osp::trim_ascii(sleep_param.getValue()).c_str();
+    int saved_sleep_s = sleep_str.isEmpty() ? DEFAULT_SLEEP_S : sleep_str.toInt();
+    if (saved_sleep_s < 0) saved_sleep_s = 0;
+    if (saved_sleep_s > MAX_SLEEP_S) saved_sleep_s = MAX_SLEEP_S;
+
+    save_config_to_nvs(ssid, pass, saved_host, saved_pw_md5, saved_ota_pass,
+                       saved_dev_log, saved_sleep_s);
+    Serial.printf("Config saved for host %s (pw_md5 %s, ota_pass %s, dev_log %s, sleep_s %d)\n",
                   saved_host.c_str(),
                   osp::is_valid_md5_hex(saved_pw_md5.c_str()) ? "set" : "invalid",
                   saved_ota_pass.isEmpty() ? "empty" : "set",
-                  saved_dev_log ? "true" : "false");
+                  saved_dev_log ? "true" : "false", saved_sleep_s);
 }
 
 // Start the WiFiManager captive-portal (AP mode).
@@ -479,6 +514,7 @@ static bool start_provisioning_portal(const String& current_ssid,
                                       const String& current_pw_md5,
                                       const String& current_ota_pass,
                                       bool current_dev_log,
+                                      int current_sleep_s,
                                       bool non_destructive,
                                       bool* touch_cal_reset_out) {
     draw_boot_message(non_destructive ? "Edit config" : "Setup mode",
@@ -487,10 +523,12 @@ static bool start_provisioning_portal(const String& current_ssid,
 
     char host_buf[65] = {};
     char ota_buf[65] = {};
+    char sleep_buf[8] = {};
     String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
     String trimmed_ota = osp::trim_ascii(current_ota_pass.c_str()).c_str();
     normalized_host.toCharArray(host_buf, sizeof(host_buf));
     trimmed_ota.toCharArray(ota_buf, sizeof(ota_buf));
+    snprintf(sleep_buf, sizeof(sleep_buf), "%d", current_sleep_s);
 
     WiFiManager wm;
 
@@ -512,6 +550,10 @@ static bool start_provisioning_portal(const String& current_ssid,
                                        current_dev_log ? "type='checkbox' checked"
                                                        : "type='checkbox'",
                                        WFM_LABEL_AFTER);
+    WiFiManagerParameter sleep_param("sleep_s",
+                                     "Screen sleep timeout (seconds, 0 = never)",
+                                     sleep_buf, sizeof(sleep_buf),
+                                     "type='number' min='0' max='3600'");
     WiFiManagerParameter reset_touch_param("reset_touch",
                                            "Reset touch calibration",
                                            "1", 2,
@@ -525,6 +567,11 @@ static bool start_provisioning_portal(const String& current_ssid,
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
+    // Labelled text/number fields must precede the label-after checkboxes:
+    // WiFiManager renders a checkbox's label inline with no trailing break, so
+    // a following field's label would butt up against it. Grouping the
+    // checkboxes last keeps each on its own line.
+    wm.addParameter(&sleep_param);
     wm.addParameter(&dev_log_param);
     if (non_destructive) {
         wm.addParameter(&reset_touch_param);
@@ -542,7 +589,8 @@ static bool start_provisioning_portal(const String& current_ssid,
     const String saved_pass = !WiFi.psk().isEmpty()  ? WiFi.psk()  : current_pass;
 
     save_portal_params_to_nvs(saved_ssid, saved_pass, current_host, current_pw_md5,
-                               os_host_param, os_pass_param, ota_pass_param, dev_log_param);
+                               os_host_param, os_pass_param, ota_pass_param,
+                               dev_log_param, sleep_param);
 
     if (non_destructive && touch_cal_reset_out) {
         *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
@@ -564,13 +612,16 @@ static bool start_sta_web_portal(const String& current_ssid,
                                  const String& current_pw_md5,
                                  const String& current_ota_pass,
                                  bool current_dev_log,
+                                 int current_sleep_s,
                                  bool* touch_cal_reset_out) {
     char host_buf[65] = {};
     char ota_buf[65] = {};
+    char sleep_buf[8] = {};
     String normalized_host = osp::normalize_os_host(current_host.c_str()).c_str();
     String trimmed_ota = osp::trim_ascii(current_ota_pass.c_str()).c_str();
     normalized_host.toCharArray(host_buf, sizeof(host_buf));
     trimmed_ota.toCharArray(ota_buf, sizeof(ota_buf));
+    snprintf(sleep_buf, sizeof(sleep_buf), "%d", current_sleep_s);
 
     WiFiManager wm;
 
@@ -588,6 +639,10 @@ static bool start_sta_web_portal(const String& current_ssid,
                                        current_dev_log ? "type='checkbox' checked"
                                                        : "type='checkbox'",
                                        WFM_LABEL_AFTER);
+    WiFiManagerParameter sleep_param("sleep_s",
+                                     "Screen sleep timeout (seconds, 0 = never)",
+                                     sleep_buf, sizeof(sleep_buf),
+                                     "type='number' min='0' max='3600'");
     WiFiManagerParameter reset_touch_param("reset_touch",
                                                    "Reset touch calibration",
                                                    "1", 2,
@@ -597,6 +652,8 @@ static bool start_sta_web_portal(const String& current_ssid,
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
+    // Labelled fields before the label-after checkboxes (see AP portal note).
+    wm.addParameter(&sleep_param);
     wm.addParameter(&dev_log_param);
     wm.addParameter(&reset_touch_param);
 
@@ -628,7 +685,8 @@ static bool start_sta_web_portal(const String& current_ssid,
 
     // WiFi creds unchanged — keep the existing NVS ssid/pass.
     save_portal_params_to_nvs(current_ssid, current_pass, current_host, current_pw_md5,
-                               os_host_param, os_pass_param, ota_pass_param, dev_log_param);
+                               os_host_param, os_pass_param, ota_pass_param,
+                               dev_log_param, sleep_param);
 
     if (touch_cal_reset_out) {
         *touch_cal_reset_out = (strcmp(reset_touch_param.getValue(), "1") == 0);
@@ -642,7 +700,9 @@ static bool ensure_network_config() {
     String ota_pass;
     bool dev_log = false;
     int ignored_run_time = osp::PanelState::kDefaultRunTime;
-    load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, &ota_pass, &ignored_run_time, &dev_log);
+    int sleep_s = DEFAULT_SLEEP_S;
+    load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, &ota_pass,
+                         &ignored_run_time, &dev_log, nullptr, &sleep_s);
 
     g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
     g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -671,9 +731,10 @@ static bool ensure_network_config() {
         pass = "";
         ota_pass = "";
         dev_log = false;
+        sleep_s = DEFAULT_SLEEP_S;
         Serial.println("Factory clear complete; starting provisioning portal");
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   dev_log, false, nullptr);
+                                   dev_log, sleep_s, false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -695,7 +756,7 @@ static bool ensure_network_config() {
             // STA connected — serve config over existing WiFi, no AP needed.
             const bool saved = start_sta_web_portal(ssid, pass, g_os_host,
                                                      g_pw_md5, ota_pass,
-                                                     dev_log, &touch_cal_reset);
+                                                     dev_log, sleep_s, &touch_cal_reset);
             if (saved && touch_cal_reset) {
                 Serial.println("Touch cal reset: removing NVS key");
                 Preferences prefs;
@@ -715,7 +776,7 @@ static bool ensure_network_config() {
         Serial.println("STA connect failed; falling back to AP captive portal");
         const bool saved = start_provisioning_portal(ssid, pass, g_os_host,
                                                       g_pw_md5, ota_pass,
-                                                      dev_log, true, &touch_cal_reset);
+                                                      dev_log, sleep_s, true, &touch_cal_reset);
         if (saved) {
             if (touch_cal_reset) {
                 Serial.println("Touch cal reset: removing NVS key");
@@ -743,7 +804,7 @@ static bool ensure_network_config() {
     if (!has_config || !connected) {
         Serial.println("Starting provisioning portal");
         start_provisioning_portal(ssid, pass, g_os_host, g_pw_md5, ota_pass,
-                                   dev_log, false, nullptr);
+                                   dev_log, sleep_s, false, nullptr);
         load_config_from_nvs(&ssid, &pass, &g_os_host, &g_pw_md5, nullptr, nullptr);
         g_os_host = osp::normalize_os_host(g_os_host.c_str()).c_str();
         g_pw_md5 = osp::normalize_md5_hex(g_pw_md5.c_str()).c_str();
@@ -829,9 +890,26 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 
     if (!pressed) {
         g_consume_touch_until_release = false;
+        g_touch_was_pressed = false;
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
+
+    // Trace once per press (rising edge) so a bench can correlate real taps
+    // with idle_ms and spot any phantom presses, without spamming every poll.
+    if (!g_touch_was_pressed && g_dev_log_enabled) {
+        uint32_t idle_ms = 0;
+        {
+            StateLock lock;
+            if (lock && g_ps) idle_ms = g_ps->idle_elapsed_ms();
+        }
+        Serial.printf("[TOUCH] x=%u y=%u z=%u idle_ms=%lu\n",
+                      static_cast<unsigned int>(tx),
+                      static_cast<unsigned int>(ty),
+                      static_cast<unsigned int>(tft.getTouchRawZ()),
+                      static_cast<unsigned long>(idle_ms));
+    }
+    g_touch_was_pressed = true;
 
     bool consume = g_consume_touch_until_release;
     {
@@ -1855,11 +1933,14 @@ void setup() {
     // ---- Load NVS config ------------------------------------------------
     int saved_rt = osp::PanelState::kDefaultRunTime;
     bool saved_aa = false;
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
+    int saved_sleep_s = DEFAULT_SLEEP_S;
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt,
+                         nullptr, &saved_aa, &saved_sleep_s);
 
     // ---- Provision / connect (M4 seam) ----------------------------------
     ensure_network_config();
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt,
+                         nullptr, &saved_aa, &saved_sleep_s);
 
     // ---- OTA responder + TCP log server (requires Wi-Fi) ----------------
     // ArduinoOTA.begin() only called when NVS ota_pass is non-empty.
@@ -1906,6 +1987,7 @@ void setup() {
         if (lock) {
             g_ps.reset(new osp::PanelState(g_model, saved_rt));
             g_ps->set_auto_advance(saved_aa);
+            g_ps->set_sleep_timeout_ms((uint32_t)saved_sleep_s * 1000UL);
             cache_phase_snapshot_unlocked();
         }
     }
@@ -1939,6 +2021,9 @@ void loop() {
                       static_cast<unsigned long>(ui_beat),
                       static_cast<unsigned long>(net_beat),
                       phase_snapshot_name(phase),
+                      g_sleeping_snapshot ? 1 : 0,
+                      static_cast<unsigned long>(g_idle_ms_snapshot),
+                      static_cast<unsigned long>(g_sleep_to_ms_snapshot),
                       static_cast<unsigned int>(ESP.getFreeHeap()),
                       static_cast<unsigned int>(ui_hwm),
                       static_cast<unsigned int>(net_hwm));

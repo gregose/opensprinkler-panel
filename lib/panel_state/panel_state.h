@@ -52,7 +52,7 @@ class PanelState {
   static constexpr int kMinRunTime = 15;
   static constexpr int kMaxRunTime = 600;
   static constexpr int kRunTimeStep = 15;
-  static constexpr uint32_t kSleepTimeoutMs = 300000;
+  static constexpr uint32_t kDefaultSleepTimeoutMs = 300000;  // 5 minutes
   static constexpr uint32_t kSyncTimeoutMs = 20000;
   static constexpr int kConfirmGraceSeconds = 10;
 
@@ -76,6 +76,15 @@ class PanelState {
   void set_auto_advance(bool enabled);
   void on_touch(uint32_t now_ms);
 
+  // Idle-sleep timeout control. 0 disables sleep entirely (stays awake).
+  // Configurable so the value can be tuned/persisted (NVS) and shortened for
+  // on-device testing without waiting the full production timeout.
+  void set_sleep_timeout_ms(uint32_t ms) { sleep_timeout_ms_ = ms; }
+  uint32_t sleep_timeout_ms() const { return sleep_timeout_ms_; }
+  // Milliseconds since the last touch/interaction (idle age). Useful for
+  // heartbeat/telemetry so a bench can watch the idle timer climb.
+  uint32_t idle_elapsed_ms() const { return now_ms_ - last_touch_ms_; }
+
   const PanelView& view() const { return view_; }
   DesiredIntent desired() const { return desired_; }
   bool has_desired() const { return desired_.kind != IntentKind::None; }
@@ -95,6 +104,7 @@ class PanelState {
 
   uint32_t now_ms_ = 0;
   uint32_t last_touch_ms_ = 0;
+  uint32_t sleep_timeout_ms_ = kDefaultSleepTimeoutMs;
   uint32_t last_countdown_tick_ms_ = 0;
   uint32_t desired_at_ms_ = 0;
   uint32_t await_close_at_ms_ = 0;
