@@ -862,9 +862,7 @@ static lv_obj_t* btn_stop       = nullptr;
 static lv_obj_t* btn_rt_minus   = nullptr;
 static lv_obj_t* lbl_rt_value   = nullptr;
 static lv_obj_t* btn_rt_plus    = nullptr;
-static lv_obj_t* btn_auto_adv   = nullptr;
-static lv_obj_t* lbl_aa_title   = nullptr;
-static lv_obj_t* lbl_aa_hint    = nullptr;
+static lv_obj_t* sw_auto_adv    = nullptr;
 
 // Grid
 static lv_obj_t* lbl_grid_title  = nullptr;
@@ -940,10 +938,10 @@ static void ev_rt_plus(lv_event_t* e) {
     }
 }
 static void ev_auto_adv(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
         StateLock lock;
         if (!(lock && g_ps)) return;
-        g_ps->set_auto_advance(lv_obj_has_state(btn_auto_adv, LV_STATE_CHECKED));
+        g_ps->set_auto_advance(!g_ps->view().auto_advance);
     }
 }
 static void ev_pill(lv_event_t* e) {
@@ -1145,12 +1143,17 @@ static void build_ui() {
     // ---- Right panel ---------------------------------------------------
     {
         lv_obj_t* pnl = lv_obj_create(scr);
-        lv_obj_set_size(pnl, RIGHT_W, PANEL_H);
+        lv_obj_set_size(pnl, RIGHT_W, CONTENT_H);
         lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
         lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
         lv_obj_set_style_border_width(pnl, 0, 0);
         lv_obj_set_style_pad_all(pnl, 10, 0);
         lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
+
+        static constexpr int STEP_Y = 18;
+        static constexpr int STEP_H = 44;
+        static constexpr int PANEL_PAD = 10;
+        static constexpr int PANEL_CONTENT_W = RIGHT_W - (2 * PANEL_PAD);
 
         // Run time label
         lv_obj_t* rt_lbl = lv_label_create(pnl);
@@ -1162,58 +1165,52 @@ static void build_ui() {
         // Run-time stepper: [-] MM:SS [+]
         btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS,
                                 CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
-        lv_obj_set_size(btn_rt_minus, 46, 44);
-        lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, 18);
+        lv_obj_set_size(btn_rt_minus, 46, STEP_H);
+        lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, STEP_Y);
         lv_obj_add_event_cb(btn_rt_minus, ev_rt_minus, LV_EVENT_CLICKED, nullptr);
 
         lbl_rt_value = lv_label_create(pnl);
         lv_label_set_text(lbl_rt_value, "1:00");
         lv_obj_set_style_text_font(lbl_rt_value, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(lbl_rt_value, hex_color(CLR_TEXT), 0);
-        lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0, 26);
+        lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0,
+                     STEP_Y + (STEP_H - lv_font_get_line_height(&lv_font_montserrat_20)) / 2);
 
         btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS,
                                CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
-        lv_obj_set_size(btn_rt_plus, 46, 44);
-        lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
+        lv_obj_set_size(btn_rt_plus, 46, STEP_H);
+        lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, STEP_Y);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
-        // Auto-advance toggle button
-        static constexpr int RIGHT_PANEL_PAD = 10;
-        static constexpr int AUTO_ADV_Y = 64;
-        static constexpr int AUTO_ADV_H = 44;
-        static_assert(AUTO_ADV_Y + AUTO_ADV_H <= PANEL_H - (2 * RIGHT_PANEL_PAD),
-                      "Auto-advance button must fit within the right panel content area");
-        btn_auto_adv = lv_button_create(pnl);
-        lv_obj_add_flag(btn_auto_adv, LV_OBJ_FLAG_CHECKABLE);
-        lv_obj_set_size(btn_auto_adv, RIGHT_W - (2 * RIGHT_PANEL_PAD), AUTO_ADV_H);
-        lv_obj_align(btn_auto_adv, LV_ALIGN_TOP_LEFT, 0, AUTO_ADV_Y);
-        lv_obj_set_style_radius(btn_auto_adv, 6, 0);
-        lv_obj_set_style_border_width(btn_auto_adv, 1, 0);
-        lv_obj_set_style_border_color(btn_auto_adv, hex_color(CLR_LINE), 0);
-        lv_obj_set_style_bg_color(btn_auto_adv, hex_color(CLR_BG), 0);
-        lv_obj_set_style_bg_opa(btn_auto_adv, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(btn_auto_adv,
-                                  hex_color(CLR_TEAL),
-                                  LV_PART_MAIN | LV_STATE_CHECKED);
-        lv_obj_set_style_border_color(btn_auto_adv,
-                                      hex_color(CLR_TEAL),
-                                      LV_PART_MAIN | LV_STATE_CHECKED);
-        lv_obj_add_event_cb(btn_auto_adv, ev_auto_adv, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t* divider = lv_obj_create(pnl);
+        lv_obj_remove_style_all(divider);
+        lv_obj_set_size(divider, PANEL_CONTENT_W, 1);
+        lv_obj_set_style_bg_color(divider, hex_color(CLR_LINE), 0);
+        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+        lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 0, 80);
 
-        lbl_aa_title = lv_label_create(btn_auto_adv);
+        lv_obj_t* row_auto_adv = lv_obj_create(pnl);
+        lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, 40);
+        lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, 94);
+        lv_obj_set_style_bg_opa(row_auto_adv, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row_auto_adv, 0, 0);
+        lv_obj_set_style_pad_all(row_auto_adv, 0, 0);
+        lv_obj_add_flag(row_auto_adv, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(row_auto_adv, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(row_auto_adv, ev_auto_adv, LV_EVENT_CLICKED, nullptr);
+
+        lv_obj_t* lbl_aa_title = lv_label_create(row_auto_adv);
         lv_label_set_text(lbl_aa_title, "Auto-advance");
-        lv_obj_set_style_text_font(lbl_aa_title, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl_aa_title, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl_aa_title, hex_color(CLR_TEXT), 0);
-        lv_obj_align(lbl_aa_title, LV_ALIGN_TOP_LEFT, 10, 5);
+        lv_obj_align(lbl_aa_title, LV_ALIGN_LEFT_MID, 0, 0);
 
-        lbl_aa_hint = lv_label_create(btn_auto_adv);
-        lv_label_set_text(lbl_aa_hint, "Stops when time ends");
-        lv_obj_set_style_text_font(lbl_aa_hint, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_aa_hint, hex_color(CLR_MUTED), 0);
-        lv_label_set_long_mode(lbl_aa_hint, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(lbl_aa_hint, RIGHT_W - 40);
-        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 10, 24);
+        sw_auto_adv = lv_switch_create(row_auto_adv);
+        lv_obj_align(sw_auto_adv, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_bg_color(sw_auto_adv, hex_color(CLR_LINE), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sw_auto_adv, hex_color(CLR_TEAL),
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_clear_flag(sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // ---- Grid area -----------------------------------------------------
@@ -1388,7 +1385,7 @@ static void ui_update() {
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_MUTED), 0);
         } else {
-            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_LIST);
+            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_DOWN);
             lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
@@ -1417,19 +1414,12 @@ static void ui_update() {
     snprintf(buf, sizeof(buf), "%d:%02d", v.run_time_s / 60, v.run_time_s % 60);
     lv_label_set_text(lbl_rt_value, buf);
 
-    // Auto-advance button
-    const bool btn_checked = lv_obj_has_state(btn_auto_adv, LV_STATE_CHECKED);
-    if (v.auto_advance != btn_checked) {
-        if (v.auto_advance) lv_obj_add_state(btn_auto_adv, LV_STATE_CHECKED);
-        else                lv_obj_clear_state(btn_auto_adv, LV_STATE_CHECKED);
+    // Auto-advance switch
+    const bool sw_on = lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED);
+    if (v.auto_advance != sw_on) {
+        if (v.auto_advance) lv_obj_add_state(sw_auto_adv, LV_STATE_CHECKED);
+        else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
     }
-    lv_obj_set_style_text_color(lbl_aa_title,
-                                hex_color(v.auto_advance ? CLR_BG : CLR_TEXT), 0);
-    lv_obj_set_style_text_color(lbl_aa_hint,
-                                hex_color(v.auto_advance ? CLR_LINE : CLR_MUTED), 0);
-    lv_label_set_text(lbl_aa_hint,
-                      v.auto_advance ? "Runs the next station"
-                                     : "Stops when time ends");
 
     // Grid label
     lv_label_set_text(lbl_grid_title, running ? "Jump to station" : "Stations");
