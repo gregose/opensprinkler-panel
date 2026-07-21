@@ -567,8 +567,12 @@ static bool start_provisioning_portal(const String& current_ssid,
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
-    wm.addParameter(&dev_log_param);
+    // Labelled text/number fields must precede the label-after checkboxes:
+    // WiFiManager renders a checkbox's label inline with no trailing break, so
+    // a following field's label would butt up against it. Grouping the
+    // checkboxes last keeps each on its own line.
     wm.addParameter(&sleep_param);
+    wm.addParameter(&dev_log_param);
     if (non_destructive) {
         wm.addParameter(&reset_touch_param);
     }
@@ -648,8 +652,9 @@ static bool start_sta_web_portal(const String& current_ssid,
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
     wm.addParameter(&ota_pass_param);
-    wm.addParameter(&dev_log_param);
+    // Labelled fields before the label-after checkboxes (see AP portal note).
     wm.addParameter(&sleep_param);
+    wm.addParameter(&dev_log_param);
     wm.addParameter(&reset_touch_param);
 
     bool params_saved = false;
