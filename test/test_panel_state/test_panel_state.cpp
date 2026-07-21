@@ -163,7 +163,6 @@ void test_stop_queues_stop_until_idle_confirmed() {
 
   TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
   TEST_ASSERT_FALSE(f.ps.pending_sync());
-  TEST_ASSERT_EQUAL_STRING("Stopped.", f.ps.view().toast.c_str());
 }
 
 void test_sync_status_goes_stale_after_timeout_but_keeps_intent() {
@@ -211,7 +210,6 @@ void test_offline_countdown_to_zero_holds_running_at_zero_until_jc_confirms_idle
 
   TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
   TEST_ASSERT_FALSE(f.ps.awaiting_close());
-  TEST_ASSERT_EQUAL_STRING("Station 2 finished.", f.ps.view().toast.c_str());
 }
 
 void test_auto_advance_queues_next_station_after_close_confirmation() {
@@ -234,7 +232,7 @@ void test_auto_advance_queues_next_station_after_close_confirmation() {
   TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
 }
 
-void test_last_auto_advance_station_finishes_idle_with_toast() {
+void test_last_auto_advance_station_finishes_idle() {
   Fixture f(2);
 
   f.ps.set_auto_advance(true);
@@ -246,7 +244,8 @@ void test_last_auto_advance_station_finishes_idle_with_toast() {
   f.ps.on_jc(make_jc_idle(2), 3000);
 
   TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
-  TEST_ASSERT_EQUAL_STRING("Finished all stations.", f.ps.view().toast.c_str());
+  TEST_ASSERT_FALSE(f.ps.awaiting_close());
+  TEST_ASSERT_FALSE(f.ps.has_desired());
 }
 
 void test_station_list_loaded_flag_tracks_jn_readiness() {
@@ -278,18 +277,7 @@ void test_sleep_wakes_on_touch() {
   TEST_ASSERT_FALSE(f.ps.view().sleeping);
 }
 
-void test_toast_clears_after_timeout() {
-  Fixture f;
 
-  f.ps.on_jc(make_jc_running(0, 1), 1000);
-  f.ps.on_link_offline(1500);
-  f.ps.tick(2000);
-  f.ps.on_jc(make_jc_idle(3), 2500);
-  TEST_ASSERT_EQUAL_STRING("Station 1 finished.", f.ps.view().toast.c_str());
-
-  f.ps.tick(2500 + PanelState::kToastDurationMs + 1);
-  TEST_ASSERT_EQUAL_STRING("", f.ps.view().toast.c_str());
-}
 
 int main(int, char**) {
   UNITY_BEGIN();
@@ -308,11 +296,10 @@ int main(int, char**) {
   RUN_TEST(test_link_state_distinguishes_reconnecting_offline_and_auth);
   RUN_TEST(test_offline_countdown_to_zero_holds_running_at_zero_until_jc_confirms_idle);
   RUN_TEST(test_auto_advance_queues_next_station_after_close_confirmation);
-  RUN_TEST(test_last_auto_advance_station_finishes_idle_with_toast);
+  RUN_TEST(test_last_auto_advance_station_finishes_idle);
   RUN_TEST(test_station_list_loaded_flag_tracks_jn_readiness);
   RUN_TEST(test_auth_error_does_not_clear_pending_intent);
   RUN_TEST(test_sleep_wakes_on_touch);
-  RUN_TEST(test_toast_clears_after_timeout);
 
   return UNITY_END();
 }

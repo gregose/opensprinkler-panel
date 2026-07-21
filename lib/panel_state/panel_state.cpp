@@ -17,11 +17,6 @@ int PanelState::clamp_run_time(int t_sec) const {
   return t_sec;
 }
 
-void PanelState::post_toast(const std::string& msg) {
-  view_.toast = msg;
-  toast_set_ms_ = now_ms_;
-}
-
 void PanelState::clear_desired() {
   desired_ = DesiredIntent{};
   desired_delivered_ = false;
@@ -59,39 +54,18 @@ void PanelState::enter_idle() {
   last_touch_ms_ = now_ms_;
 }
 
-void PanelState::begin_await_close(PendingFinish finish, int sid) {
+void PanelState::begin_await_close() {
   await_close_ = true;
   await_close_at_ms_ = now_ms_;
-  pending_finish_ = finish;
-  pending_finish_sid_ = sid;
   if (view_.phase == Phase::Running) {
     view_.countdown_s = 0;
   }
 }
 
 void PanelState::finish_idle_transition() {
-  const PendingFinish finish = pending_finish_;
-  const int sid = pending_finish_sid_;
   await_close_ = false;
   await_close_at_ms_ = 0;
-  pending_finish_ = PendingFinish::None;
-  pending_finish_sid_ = -1;
   enter_idle();
-
-  switch (finish) {
-    case PendingFinish::Stopped:
-      post_toast("Stopped.");
-      break;
-    case PendingFinish::StationFinished:
-      post_toast("Station " + std::to_string(station_number(sid)) +
-                 " finished.");
-      break;
-    case PendingFinish::FinishedAllStations:
-      post_toast("Finished all stations.");
-      break;
-    case PendingFinish::None:
-      break;
-  }
 }
 
 bool PanelState::pending_sync() const {
@@ -154,10 +128,6 @@ void PanelState::tick(uint32_t now_ms) {
 
   now_ms_ = now_ms;
 
-  if (!view_.toast.empty() && (now_ms - toast_set_ms_ >= kToastDurationMs)) {
-    view_.toast.clear();
-  }
-
   if (view_.phase == Phase::Running && view_.countdown_s > 0) {
     const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
     const uint32_t secs = elapsed / 1000u;
@@ -171,12 +141,9 @@ void PanelState::tick(uint32_t now_ms) {
               view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
           if (next_sid != -1) {
             queue_desired_run(next_sid);
-            begin_await_close(PendingFinish::None, finished_sid);
+            begin_await_close();
           } else {
-            begin_await_close(view_.auto_advance
-                                  ? PendingFinish::FinishedAllStations
-                                  : PendingFinish::StationFinished,
-                              finished_sid);
+            begin_await_close();
           }
         }
       } else {
@@ -235,22 +202,17 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
   if (jc_running_sid != -1) {
     await_close_ = false;
     await_close_at_ms_ = 0;
-    pending_finish_ = PendingFinish::None;
-    pending_finish_sid_ = -1;
     enter_running(jc_running_sid, jc_running_rem);
   } else {
     if (await_close_) {
       finish_idle_transition();
     } else if (desired_.kind == IntentKind::Stop) {
       enter_idle();
-      post_toast("Stopped.");
       clear_desired();
       return;
     } else if (has_desired()) {
       enter_idle();
     } else if (view_.phase == Phase::Running) {
-      pending_finish_ = PendingFinish::StationFinished;
-      pending_finish_sid_ = view_.running_sid;
       finish_idle_transition();
     } else {
       enter_idle();

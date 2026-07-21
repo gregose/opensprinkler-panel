@@ -338,7 +338,7 @@
     screen.innerHTML='<div class="scr">'
       + '<div class="topbar">'+topbar()+'</div>'
       + '<div class="main"><div class="left">'+left+'</div><div class="right">'+right+'</div></div>'
-      + '<div class="grid"><div class="lab">'+(S.running?'Jump to station':'Stations')+'</div><div class="pills" style="grid-template-columns:repeat('+cols+',1fr)">'+pills+'</div></div>'
+      + '<div class="grid"><div class="lab">'+'Stations'+'</div><div class="pills" style="grid-template-columns:repeat('+cols+',1fr)">'+pills+'</div></div>'
       + (S.toast?'<div class="toast">'+S.toast+'</div>':'')
       + '</div>';
     if(S.toast){ clearTimeout(render._t); render._t=setTimeout(function(){S.toast=null;render();},3000); }

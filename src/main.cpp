@@ -883,7 +883,6 @@ static int       g_pill_count    = 0;
 
 // Overlays
 static lv_obj_t* sleep_overlay  = nullptr;
-static lv_obj_t* lbl_toast      = nullptr;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1139,7 +1138,11 @@ static void build_ui() {
     lv_label_set_text(lbl_countdown, "0:00");
     lv_obj_set_style_text_font(lbl_countdown, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
-    lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
+    // Sit lower in the panel (near the action buttons) so it's clearly
+    // separated from the station name above. Font line height is 32 px and the
+    // panel content area is ~101 px, so y=66 leaves a comfortable gap under the
+    // name without clipping the bottom (66 + 32 = 98 <= 101).
+    lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 66);
 
     // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_SIDE_PAD = 10;
@@ -1263,18 +1266,6 @@ static void build_ui() {
     lv_obj_set_style_bg_opa(sleep_overlay, LV_OPA_COVER, 0);
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-    // ---- Toast label ---------------------------------------------------
-    lbl_toast = lv_label_create(scr);
-    lv_label_set_text(lbl_toast, "");
-    lv_obj_set_style_text_font(lbl_toast, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_toast, hex_color(CLR_TEXT), 0);
-    lv_obj_set_style_bg_color(lbl_toast, hex_color(CLR_LINE), 0);
-    lv_obj_set_style_bg_opa(lbl_toast, LV_OPA_80, 0);
-    lv_obj_set_style_pad_all(lbl_toast, 6, 0);
-    lv_obj_set_style_radius(lbl_toast, 6, 0);
-    lv_obj_align(lbl_toast, LV_ALIGN_TOP_MID, 0, 34);
-    lv_obj_add_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---------------------------------------------------------------------------
@@ -1439,8 +1430,8 @@ static void ui_update() {
         else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
     }
 
-    // Grid label
-    lv_label_set_text(lbl_grid_title, running ? "JUMP TO STATION" : "STATIONS");
+    // Grid label (kept consistent as "STATIONS" in both idle and running).
+    lv_label_set_text(lbl_grid_title, "STATIONS");
 
     // Pill highlights
     for (int i = 0; i < g_pill_count; ++i) {
@@ -1457,14 +1448,6 @@ static void ui_update() {
     // Sleep overlay + backlight
     obj_set_hidden(sleep_overlay, !v.sleeping);
     ledcWrite(LEDC_CHANNEL, v.sleeping ? BACKLIGHT_OFF : BACKLIGHT_ON);
-
-    // Toast
-    if (!v.toast.empty()) {
-        lv_label_set_text(lbl_toast, v.toast.c_str());
-        lv_obj_remove_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(lbl_toast, LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 // ---------------------------------------------------------------------------
