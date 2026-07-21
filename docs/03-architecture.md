@@ -98,7 +98,7 @@ Why:
 Config to persist in NVS (`Preferences`): `wifi_ssid`, `wifi_pass`,
 `os_host` (IP or mDNS name), `os_pw_md5` (MD5 of device password),
 `ota_pass` (ArduinoOTA/log-stream password), and any
-tunables you expose (`run_time_default`, `sleep_minutes`).
+tunables you expose (`run_time_default`, `sleep_s`).
 
 **First run / no valid config / Wi-Fi fails to connect:**
 1. Start SoftAP + **WiFiManager captive portal**. Show on the panel: "Setup — join Wi-Fi **OSPanel-Setup**, open the page" (so the tech-less first-time setup is obvious).
@@ -168,9 +168,22 @@ LVGL calls with a mutex. Don't start here.
 
 ## Sleep / backlight
 - Backlight on **GPIO27** (high = on). Drive it with **LEDC PWM** so sleep can blank/dim it.
-- **Idle + untouched ≥ 5 min → backlight off** (sleep overlay). Any touch wakes and is consumed.
+- **Idle + untouched ≥ sleep timeout → backlight off** (sleep overlay). Any touch wakes and is consumed.
 - **Never sleep while a station is running.**
-- `sleep_minutes` configurable (default 5).
+- **Sleep timeout is configurable + NVS-persisted** (`sleep_s`, seconds, default **300**,
+  clamp 0–3600, **`0` = never sleep**). Set it in the WiFiManager config portal
+  ("Screen sleep timeout" field, reachable via the cold-boot AP portal or the 3 s
+  BOOT-hold STA edit portal). `PanelState::set_sleep_timeout_ms()` applies it at boot.
+- **Phantom-touch fix (#60):** the XPT2046 resistive panel shares the SPI bus and
+  emits single-sample phantom PRESSED events that used to reset the idle timer, so
+  the screen never slept. `touchpad_read_cb` now requires **`TOUCH_DEBOUNCE_READS`
+  consecutive polls** past a Z-pressure threshold before reporting PRESSED to LVGL,
+  so noise spikes never reset `last_touch_ms_`.
+- **Heartbeat observability:** when `dev_log` is enabled the 1 s `[HB]` line also
+  reports `sleeping`, `idle_ms` (time since last confirmed touch), and `sleep_to_ms`
+  (active timeout), and a `[TOUCH]` trace prints once per confirmed press — so the
+  bench can watch the idle timer climb, confirm phantom presses are gone, and verify
+  the sleep transition without a DMM.
 
 ---
 
@@ -221,7 +234,7 @@ Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
 6. Auto-advance off = stop at end; on = next station, stopping after the last.
 7. Every action issues the correct `/cm`/`/cv` calls (off-then-on where required); the ~2 s `/jc` poll reconciles highlight + countdown from controller truth.
 8. Wi-Fi loss → red top bar, commands halt, open station still auto-stops on the controller; reconnect self-heals from `/jc`.
-9. Sleeps after 5 min idle (backlight off via GPIO27 PWM); stays lit while running.
+9. Sleeps after the configurable idle timeout (default 5 min; backlight off via GPIO27 PWM); stays lit while running.
 10. Runs against the real controller with 14 stations, and correctly shows a 24-station (extender) layout.
 11. Top bar shows PANEL + CTRL Wi-Fi bars (CTRL → `— —` on signal loss); no battery indicator.
 12. Resistive touch is calibrated once and the calibration persists in NVS across reboots.

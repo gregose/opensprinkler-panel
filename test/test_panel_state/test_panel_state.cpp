@@ -270,11 +270,46 @@ void test_auth_error_does_not_clear_pending_intent() {
 void test_sleep_wakes_on_touch() {
   Fixture f;
 
-  f.ps.tick(PanelState::kSleepTimeoutMs + 1);
+  f.ps.tick(PanelState::kDefaultSleepTimeoutMs + 1);
   TEST_ASSERT_TRUE(f.ps.view().sleeping);
 
-  f.ps.on_touch(PanelState::kSleepTimeoutMs + 2);
+  f.ps.on_touch(PanelState::kDefaultSleepTimeoutMs + 2);
   TEST_ASSERT_FALSE(f.ps.view().sleeping);
+}
+
+void test_sleep_timeout_configurable() {
+  Fixture f;
+
+  // Default is the production timeout.
+  TEST_ASSERT_EQUAL_UINT32(PanelState::kDefaultSleepTimeoutMs,
+                           f.ps.sleep_timeout_ms());
+
+  // Shorten it (as the NVS/config path would): sleeps at the new threshold.
+  f.ps.set_sleep_timeout_ms(30000);
+  TEST_ASSERT_EQUAL_UINT32(30000, f.ps.sleep_timeout_ms());
+
+  f.ps.tick(29999);
+  TEST_ASSERT_FALSE(f.ps.view().sleeping);
+  f.ps.tick(30000);
+  TEST_ASSERT_TRUE(f.ps.view().sleeping);
+}
+
+void test_sleep_timeout_zero_disables() {
+  Fixture f;
+
+  f.ps.set_sleep_timeout_ms(0);
+  // Never sleeps regardless of how much idle time elapses.
+  f.ps.tick(PanelState::kDefaultSleepTimeoutMs * 10);
+  TEST_ASSERT_FALSE(f.ps.view().sleeping);
+}
+
+void test_idle_elapsed_ms_tracks_since_touch() {
+  Fixture f;
+
+  f.ps.tick(1000);       // last_touch primed at 0 by the fixture
+  f.ps.on_touch(5000);
+  f.ps.tick(8000);
+  TEST_ASSERT_EQUAL_UINT32(3000, f.ps.idle_elapsed_ms());
 }
 
 
@@ -300,6 +335,9 @@ int main(int, char**) {
   RUN_TEST(test_station_list_loaded_flag_tracks_jn_readiness);
   RUN_TEST(test_auth_error_does_not_clear_pending_intent);
   RUN_TEST(test_sleep_wakes_on_touch);
+  RUN_TEST(test_sleep_timeout_configurable);
+  RUN_TEST(test_sleep_timeout_zero_disables);
+  RUN_TEST(test_idle_elapsed_ms_tracks_since_touch);
 
   return UNITY_END();
 }

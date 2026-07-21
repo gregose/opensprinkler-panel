@@ -153,7 +153,8 @@ void PanelState::tick(uint32_t now_ms) {
   }
 
   if (view_.phase == Phase::Idle && !view_.sleeping) {
-    if ((now_ms - last_touch_ms_) >= kSleepTimeoutMs) {
+    if (sleep_timeout_ms_ != 0 &&
+        (now_ms - last_touch_ms_) >= sleep_timeout_ms_) {
       view_.sleeping = true;
     }
   }
