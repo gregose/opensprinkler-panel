@@ -83,6 +83,7 @@ static constexpr const char* NVS_OTA       = "ota_pass";
 static constexpr const char* NVS_DEV_LOG   = "dev_log";
 static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
+static constexpr const char* NVS_AA        = "auto_adv";
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
 static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
 static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
@@ -317,7 +318,8 @@ static void load_config_from_nvs(String* ssid,
                                  String* pw_md5,
                                  String* ota_pass,
                                  int* run_time_s,
-                                 bool* dev_log = nullptr) {
+                                 bool* dev_log = nullptr,
+                                 bool* auto_advance = nullptr) {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
     if (ssid) *ssid = prefs.getString(NVS_SSID, "");
@@ -327,6 +329,7 @@ static void load_config_from_nvs(String* ssid,
     if (ota_pass) *ota_pass = prefs.getString(NVS_OTA, "");
     if (run_time_s) *run_time_s = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
     if (dev_log) *dev_log = prefs.getBool(NVS_DEV_LOG, false);
+    if (auto_advance) *auto_advance = prefs.getBool(NVS_AA, false);
     prefs.end();
 }
 
@@ -352,6 +355,13 @@ static void save_run_time_to_nvs(int run_time_s) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putInt(NVS_RT, run_time_s);
+    prefs.end();
+}
+
+static void save_auto_adv_to_nvs(bool on) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putBool(NVS_AA, on);
     prefs.end();
 }
 
@@ -863,7 +873,6 @@ static lv_obj_t* btn_rt_minus   = nullptr;
 static lv_obj_t* lbl_rt_value   = nullptr;
 static lv_obj_t* btn_rt_plus    = nullptr;
 static lv_obj_t* sw_auto_adv    = nullptr;
-static lv_obj_t* lbl_aa_hint    = nullptr;
 
 // Grid
 static lv_obj_t* lbl_grid_title  = nullptr;
@@ -894,13 +903,16 @@ static int get_pill_sid(lv_obj_t* obj) {
 
 // Create a button with a centered text label.
 static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
-                           uint32_t bg, uint32_t fg) {
+                           uint32_t bg, uint32_t fg,
+                           const lv_font_t* font = &lv_font_montserrat_14,
+                           int radius = 6) {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_style_bg_color(btn, hex_color(bg), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_radius(btn, radius, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_t* lbl = lv_label_create(btn);
     lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, font, 0);
     lv_obj_set_style_text_color(lbl, hex_color(fg), 0);
     lv_obj_center(lbl);
     return btn;
@@ -936,10 +948,11 @@ static void ev_rt_plus(lv_event_t* e) {
     }
 }
 static void ev_auto_adv(lv_event_t* e) {
-    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
         StateLock lock;
         if (!(lock && g_ps)) return;
-        g_ps->set_auto_advance(lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED));
+        g_ps->set_auto_advance(!g_ps->view().auto_advance);
+        save_auto_adv_to_nvs(g_ps->view().auto_advance);
     }
 }
 static void ev_pill(lv_event_t* e) {
@@ -1120,30 +1133,38 @@ static void build_ui() {
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
 
     // ---- Action row (Advance / Stop) -----------------------------------
-    static constexpr int ACTION_GAP = 4;
-    const int action_btn_w = (LEFT_W - ACTION_GAP) / 2;
+    static constexpr int ACTION_SIDE_PAD = 10;
+    static constexpr int ACTION_GAP = 10;
+    const int action_btn_w = (LEFT_W - (2 * ACTION_SIDE_PAD) - ACTION_GAP) / 2;
 
-    btn_advance = make_btn(scr, LV_SYMBOL_NEXT " Advance", CLR_TEAL, CLR_BG);
+    btn_advance = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+                           CLR_TEAL, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_advance, 0, ACTION_Y);
+    lv_obj_set_pos(btn_advance, ACTION_SIDE_PAD, ACTION_Y);
     lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
 
-    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop", CLR_RED, CLR_BG);
+    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
+                        CLR_RED, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_stop, action_btn_w + ACTION_GAP, ACTION_Y);
+    lv_obj_set_pos(btn_stop, ACTION_SIDE_PAD + action_btn_w + ACTION_GAP, ACTION_Y);
     lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
     // ---- Right panel ---------------------------------------------------
     {
         lv_obj_t* pnl = lv_obj_create(scr);
-        lv_obj_set_size(pnl, RIGHT_W, PANEL_H);
+        lv_obj_set_size(pnl, RIGHT_W, CONTENT_H);
         lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
         lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
         lv_obj_set_style_border_width(pnl, 0, 0);
         lv_obj_set_style_pad_all(pnl, 10, 0);
         lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
+
+        static constexpr int STEP_Y = 18;
+        static constexpr int STEP_H = 44;
+        static constexpr int PANEL_PAD = 10;
+        static constexpr int PANEL_CONTENT_W = RIGHT_W - (2 * PANEL_PAD);
 
         // Run time label
         lv_obj_t* rt_lbl = lv_label_create(pnl);
@@ -1153,44 +1174,54 @@ static void build_ui() {
         lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
         // Run-time stepper: [-] MM:SS [+]
-        btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS, CLR_LINE, CLR_TEXT);
-        lv_obj_set_size(btn_rt_minus, 46, 44);
-        lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, 18);
+        btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS,
+                                CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
+        lv_obj_set_size(btn_rt_minus, 46, STEP_H);
+        lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, STEP_Y);
         lv_obj_add_event_cb(btn_rt_minus, ev_rt_minus, LV_EVENT_CLICKED, nullptr);
 
         lbl_rt_value = lv_label_create(pnl);
         lv_label_set_text(lbl_rt_value, "1:00");
         lv_obj_set_style_text_font(lbl_rt_value, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(lbl_rt_value, hex_color(CLR_TEXT), 0);
-        lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0, 26);
+        lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0,
+                     STEP_Y + (STEP_H - lv_font_get_line_height(&lv_font_montserrat_20)) / 2);
 
-        btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS, CLR_LINE, CLR_TEXT);
-        lv_obj_set_size(btn_rt_plus, 46, 44);
-        lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
+        btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS,
+                               CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
+        lv_obj_set_size(btn_rt_plus, 46, STEP_H);
+        lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, STEP_Y);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
-        // Auto-advance label + switch
-        lv_obj_t* aa_lbl = lv_label_create(pnl);
-        lv_label_set_text(aa_lbl, "Auto-advance");
-        lv_obj_set_style_text_font(aa_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(aa_lbl, hex_color(CLR_MUTED), 0);
-        lv_obj_align(aa_lbl, LV_ALIGN_TOP_LEFT, 0, 64);
+        lv_obj_t* divider = lv_obj_create(pnl);
+        lv_obj_remove_style_all(divider);
+        lv_obj_set_size(divider, PANEL_CONTENT_W, 1);
+        lv_obj_set_style_bg_color(divider, hex_color(CLR_LINE), 0);
+        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+        lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 0, 80);
 
-        sw_auto_adv = lv_switch_create(pnl);
-        lv_obj_set_size(sw_auto_adv, 52, 26);
-        lv_obj_align(sw_auto_adv, LV_ALIGN_TOP_RIGHT, 0, 64);
-        lv_obj_set_style_bg_color(sw_auto_adv,
-                                   hex_color(CLR_TEAL),
-                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_add_event_cb(sw_auto_adv, ev_auto_adv, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t* row_auto_adv = lv_obj_create(pnl);
+        lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, 40);
+        lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, 94);
+        lv_obj_set_style_bg_opa(row_auto_adv, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row_auto_adv, 0, 0);
+        lv_obj_set_style_pad_all(row_auto_adv, 0, 0);
+        lv_obj_add_flag(row_auto_adv, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(row_auto_adv, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(row_auto_adv, ev_auto_adv, LV_EVENT_CLICKED, nullptr);
 
-        lbl_aa_hint = lv_label_create(pnl);
-        lv_label_set_text(lbl_aa_hint, "Stops when time ends");
-        lv_obj_set_style_text_font(lbl_aa_hint, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_aa_hint, hex_color(CLR_MUTED), 0);
-        lv_label_set_long_mode(lbl_aa_hint, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(lbl_aa_hint, RIGHT_W - 20);
-        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 0, 92);
+        lv_obj_t* lbl_aa_title = lv_label_create(row_auto_adv);
+        lv_label_set_text(lbl_aa_title, "Auto-advance");
+        lv_obj_set_style_text_font(lbl_aa_title, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl_aa_title, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_aa_title, LV_ALIGN_LEFT_MID, 0, 0);
+
+        sw_auto_adv = lv_switch_create(row_auto_adv);
+        lv_obj_align(sw_auto_adv, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_bg_color(sw_auto_adv, hex_color(CLR_LINE), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(sw_auto_adv, hex_color(CLR_TEAL),
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
+        lv_obj_clear_flag(sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
     }
 
     // ---- Grid area -----------------------------------------------------
@@ -1270,7 +1301,7 @@ static void build_grid() {
         snprintf(num, sizeof(num), "%d", sid + 1);
         lv_obj_t* lbl = lv_label_create(pill);
         lv_label_set_text(lbl, num);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(lbl, hex_color(CLR_TEXT), 0);
         lv_obj_center(lbl);
 
@@ -1365,7 +1396,7 @@ static void ui_update() {
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_MUTED), 0);
         } else {
-            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_WIFI);
+            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_DOWN);
             lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
@@ -1395,14 +1426,11 @@ static void ui_update() {
     lv_label_set_text(lbl_rt_value, buf);
 
     // Auto-advance switch
-    const bool sw_checked = lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED);
-    if (v.auto_advance != sw_checked) {
+    const bool sw_on = lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED);
+    if (v.auto_advance != sw_on) {
         if (v.auto_advance) lv_obj_add_state(sw_auto_adv, LV_STATE_CHECKED);
         else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
     }
-    lv_label_set_text(lbl_aa_hint,
-                      v.auto_advance ? "Runs the next station"
-                                     : "Stops when time ends");
 
     // Grid label
     lv_label_set_text(lbl_grid_title, running ? "Jump to station" : "Stations");
@@ -1695,11 +1723,12 @@ void setup() {
 
     // ---- Load NVS config ------------------------------------------------
     int saved_rt = osp::PanelState::kDefaultRunTime;
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+    bool saved_aa = false;
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
 
     // ---- Provision / connect (M4 seam) ----------------------------------
     ensure_network_config();
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
 
     // ---- OTA responder + TCP log server (requires Wi-Fi) ----------------
     // ArduinoOTA.begin() only called when NVS ota_pass is non-empty.
@@ -1745,6 +1774,7 @@ void setup() {
         StateLock lock;
         if (lock) {
             g_ps.reset(new osp::PanelState(g_model, saved_rt));
+            g_ps->set_auto_advance(saved_aa);
             cache_phase_snapshot_unlocked();
         }
     }
