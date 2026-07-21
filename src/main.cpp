@@ -147,14 +147,13 @@ static volatile uint32_t g_net_beat = 0;
 static volatile uint32_t g_phase_snapshot = static_cast<uint32_t>(osp::Phase::Idle);
 static volatile bool g_dev_log_enabled = false;
 static bool g_consume_touch_until_release = false;
-// Touch debounce (fix #60): the XPT2046 resistive controller shares the SPI
-// bus with the display and emits occasional single-sample phantom presses.
-// Because a raw PRESSED resets the idle-sleep timer, those ghosts kept the
-// panel awake forever. Require a run of consecutive pressed reads before a
-// press is treated as real, and gate acceptance on a raw-Z pressure floor.
-static constexpr uint8_t  TOUCH_DEBOUNCE_READS = 3;    // consecutive samples
-static constexpr uint16_t TOUCH_Z_THRESHOLD    = 600;  // min raw pressure
-static uint8_t g_touch_press_streak = 0;
+// Touch trace edge-tracking (#60 observability): remember whether the last
+// poll was pressed so we can emit one [TOUCH] dev-log line per press (rising
+// edge) without spamming every poll. Single-sample phantom presses no longer
+// keep the panel awake — that was really the enter_idle() re-affirm resetting
+// the idle timer on every /jc poll (fixed in panel_state), not raw touch — so
+// no debounce is applied here and single taps stay instant/responsive.
+static bool g_touch_was_pressed = false;
 // Snapshots for the heartbeat (fix #60 observability): populated under the
 // state lock in ui_task so loop() can print them without taking the lock.
 static volatile bool     g_sleeping_snapshot   = false;
@@ -882,27 +881,18 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
 
 static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     uint16_t tx = 0, ty = 0;
-    const bool raw_pressed = tft.getTouch(&tx, &ty, TOUCH_Z_THRESHOLD);
+    const bool pressed = tft.getTouch(&tx, &ty);
 
-    if (!raw_pressed) {
-        g_touch_press_streak = 0;
+    if (!pressed) {
         g_consume_touch_until_release = false;
+        g_touch_was_pressed = false;
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
 
-    // Debounce: only treat the press as real once it has been seen on
-    // TOUCH_DEBOUNCE_READS consecutive polls. Single-sample noise spikes never
-    // reach LVGL and never reset the idle timer (fix #60).
-    if (g_touch_press_streak < 255) ++g_touch_press_streak;
-    if (g_touch_press_streak < TOUCH_DEBOUNCE_READS) {
-        data->state = LV_INDEV_STATE_RELEASED;
-        return;
-    }
-
-    // Trace exactly once per confirmed press (the debounce edge) so a bench can
-    // watch real touches land and confirm phantom presses are gone.
-    if (g_touch_press_streak == TOUCH_DEBOUNCE_READS && g_dev_log_enabled) {
+    // Trace once per press (rising edge) so a bench can correlate real taps
+    // with idle_ms and spot any phantom presses, without spamming every poll.
+    if (!g_touch_was_pressed && g_dev_log_enabled) {
         uint32_t idle_ms = 0;
         {
             StateLock lock;
@@ -914,6 +904,7 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
                       static_cast<unsigned int>(tft.getTouchRawZ()),
                       static_cast<unsigned long>(idle_ms));
     }
+    g_touch_was_pressed = true;
 
     bool consume = g_consume_touch_until_release;
     {

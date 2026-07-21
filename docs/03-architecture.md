@@ -174,11 +174,14 @@ LVGL calls with a mutex. Don't start here.
   clamp 0–3600, **`0` = never sleep**). Set it in the WiFiManager config portal
   ("Screen sleep timeout" field, reachable via the cold-boot AP portal or the 3 s
   BOOT-hold STA edit portal). `PanelState::set_sleep_timeout_ms()` applies it at boot.
-- **Phantom-touch fix (#60):** the XPT2046 resistive panel shares the SPI bus and
-  emits single-sample phantom PRESSED events that used to reset the idle timer, so
-  the screen never slept. `touchpad_read_cb` now requires **`TOUCH_DEBOUNCE_READS`
-  consecutive polls** past a Z-pressure threshold before reporting PRESSED to LVGL,
-  so noise spikes never reset `last_touch_ms_`.
+- **Root-cause fix (#60):** the idle-sleep timer never expired because
+  `PanelState::enter_idle()` re-stamped the "last interaction" time on **every
+  ~2 s `/jc` poll** while already idle (`on_jc()` re-affirms idle each poll), so
+  the elapsed-idle clock was wiped continuously and never reached the timeout.
+  `enter_idle()` now only resets the idle clock on a genuine transition **into**
+  idle (e.g. Running→Idle); re-affirming idle on a poll leaves it running. Raw
+  touch is **not** debounced (single taps stay instant); a rising-edge `[TOUCH]`
+  dev-log trace is emitted once per press for bench correlation.
 - **Heartbeat observability:** when `dev_log` is enabled the 1 s `[HB]` line also
   reports `sleeping`, `idle_ms` (time since last confirmed touch), and `sleep_to_ms`
   (active timeout), and a `[TOUCH]` trace prints once per confirmed press — so the
