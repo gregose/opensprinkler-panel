@@ -4,7 +4,7 @@
 
 - **Board:** LCDwiki **3.5″ ESP32-32E Display** — SKU **E32R35T**, community name **ESP32-3248S035R** (a "CYD" / Cheap Yellow Display). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E module, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB flash), 320×480 **TN** TFT, **ST7796U** display over 4-wire SPI, **XPT2046 resistive** touch over the **same SPI bus**, RGB status LED, on-board Li-battery charge circuit (no fuel gauge), BOOT + RESET side buttons, TF slot (unused), Type-C for power + flashing.
 - **Orientation:** landscape, **480×320**. (TN panel — pick the landscape flip whose best viewing angle faces the installed direction; tune during bring-up.)
-- **Power:** 5 V via Type-C (wall). Optional 3.7 V Li backup on the JST header, charged on-board; **no battery monitoring** (see below).
+- **Power:** 5 V via Type-C (wall). Optional 3.7 V Li backup on the JST header (JP2), charged on-board (TP4054); no fuel gauge, but **battery voltage is sensed on GPIO34** (`BAT_ADC`, ÷2 divider) for a coarse charge indicator (see below).
 
 ### Pin map (from the LCDwiki E32R35T wiki — ground truth; verify on the physical board)
 
@@ -23,8 +23,8 @@
 | SD CS / MOSI / SCLK / MISO | 5 / 23 / 18 / 19 | separate bus, unused |
 | Audio enable / DAC | 4 / 26 | unused |
 | BOOT button | 0 | re-provision trigger (hold on boot) |
-| Battery voltage ADC | 34 | available but **unused** (no battery indicator) |
-| Spare inputs | 35, 39 | input-only, unused |
+| Battery voltage ADC (`BAT_ADC`) | 34 | VBAT ÷ 2 via 100K/100K divider; ADC1, input-only. **Wired — used for battery indicator** |
+| Spare inputs | 35, 39 | input-only, broken out on headers, unused |
 
 > **The LCD and the XPT2046 touch share one SPI bus** (SCLK 14 / MOSI 13 / MISO 12) with separate chip-selects (LCD 15, touch 33). TFT_eSPI drives both on the same bus — keep the touch SPI clock low (~2.5 MHz) even though the display runs fast.
 
@@ -177,17 +177,33 @@ LVGL calls with a mutex. Don't start here.
 ## Battery & power
 
 The board runs on **5 V via Type-C** (wall-powered) and has an on-board Li-battery
-charge circuit with an optional 3.7 V backup cell on the JST header. There is **no
-PMIC / fuel gauge** (unlike the AXP2101 on the S3 board), so charge %, current, and
-AC-present are **not** exposed over I²C.
+charge circuit with an optional 3.7 V backup cell on the JST header (JP2). There is
+**no PMIC / fuel gauge** (unlike the AXP2101 on the S3 board), so charge %, current,
+and AC-present are **not** exposed over I²C — but the raw battery **voltage is wired
+to an ADC** (see below), so a coarse charge estimate is available.
 
-- **No battery indicator.** Battery monitoring is intentionally **dropped** for this
-  hardware — the panel is a wall-mounted, mains-powered unit and the backup cell is
-  passive. The top bar shows only the two Wi-Fi signal readouts (below); there is no
-  battery glyph. (Where the mockup shows a battery, omit it.)
-- Battery voltage is physically available on the **GPIO34 ADC** if a future revision
-  wants a coarse voltage readout, but it is **unused** in this build.
-- Battery is backup, not the primary mode — don't gate any control behavior on it.
+Verified against the **E32R35T schematic** (authoritative for the 3248S035R/C base
+PCB — the 035R and 035C share this exact power circuit, so battery support is
+universal across both):
+
+- **Battery level detection:** `BAT+ → R2 (100K) → BAT_ADC → R3 (100K) → GND`, with
+  C1/C2 (0.1 µF) filter caps. That's an even **100K/100K divider (÷2)**, so
+  `VBAT = ADC_mV × 2`. The node is **`BAT_ADC` on GPIO34** (ADC1_CH6, input-only,
+  Wi-Fi-safe). At 11 dB attenuation the full LiPo range (4.2 V → 2.10 V, 3.0 V →
+  1.50 V at the pin) sits in the ADC's linear region.
+- **Charge/discharge:** a **TP4054** single-cell linear charger (R27 = 3.3 K PROG ≈
+  300 mA) plus a **Q3 (SL2305) P-FET + R28** load-share/reverse-blocking path, so the
+  battery is isolated while USB 5 V is present. The TP4054 `CHRG` status pin is **not
+  routed to a GPIO**, so there is **no hardware charge-status flag** — firmware sees
+  voltage only (charging can only be inferred heuristically from a steady ~4.2 V).
+- Battery is **backup, not the primary mode** — don't gate any control behaviour on
+  it. The battery indicator is display-only.
+
+**Battery monitoring firmware** lives as a pure `lib/battery_monitor` (counts/mV →
+VBAT → LiPo % with smoothing, native-unit-tested) plus thin ADC glue in `src/`, so
+the same code serves both board variants. The exact divider ratio and ADC-Vref
+calibration are confirmed empirically on the bench via the diagnostic firmware's
+`a` (ADC/battery probe) command before the ratio is trusted.
 
 ## Signal indicators
 

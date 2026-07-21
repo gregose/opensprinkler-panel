@@ -53,7 +53,7 @@ static constexpr int LEDC_RES_BITS   = 8;
 
 static constexpr int SCREEN_W        = 480;
 static constexpr int SCREEN_H        = 320;
-static constexpr int DRAW_BUF_LINES  = 40;
+static constexpr int DRAW_BUF_LINES  = 4;
 
 // NVS namespace and keys — must match src/main.cpp.
 static constexpr const char* NVS_NS    = "osp-panel";
@@ -634,6 +634,73 @@ static void o_os_api_test() {
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ADC / battery probe (bring-up) — validate the on-board battery sense.
+//
+// Per the E32R35T schematic (authoritative for the 3248S035R/C base PCB):
+//   GPIO34 = BAT_ADC, tapped from BAT+ through a 100K/100K divider (R2/R3)
+//            with 0.1uF filter caps (C1/C2) -> VBAT = ADC_mV * 2.0.
+//   GPIO35 / GPIO39 = free ADC1 inputs, broken out on headers (no factory
+//            divider). Read here only as a sanity/floating reference.
+// ADC1 pins are safe to read with WiFi active (unlike ADC2). GPIO34 is
+// input-only. Full LiPo 4.2V -> 2.10V at the pin, 3.0V -> 1.50V: both sit in
+// the ESP32 ADC's linear region at 11 dB attenuation.
+//
+// Prints raw counts (0..4095) + calibrated millivolts (analogReadMilliVolts
+// applies the chip's eFuse Vref), and the derived VBAT (= GPIO34 mV * 2) so
+// the bench can compare it directly against a multimeter on BAT+/JP2.
+// Procedure: run on USB (battery charging) and on battery-only at a couple of
+// charge levels; confirm the divider ratio (~2.0) and calibration accuracy.
+// ---------------------------------------------------------------------------
+static constexpr int   BAT_ADC_PIN   = 34;     // GPIO34 = BAT_ADC (schematic)
+static constexpr float BAT_DIV_RATIO = 2.0f;   // 100K/100K divider
+
+static void a_adc_probe() {
+    static const int  kPins[]  = {34, 35, 39};
+    static const char* kNames[] = {"GPIO34/BAT", "GPIO35/P3 ", "GPIO39/VN "};
+    const int kNumPins = 3;
+    const int kSamples = 16;  // multisample to tame ESP32 ADC noise
+
+    for (int i = 0; i < kNumPins; ++i) {
+        analogSetPinAttenuation(kPins[i], ADC_11db);  // ~0..3.1V input range
+    }
+
+    Serial.println("ADC probe: raw(0-4095) + calibrated mV per pin at ~1 Hz.");
+    Serial.println("  GPIO34 = BAT_ADC (VBAT/2 via 100K/100K); VBAT = mV*2.");
+    Serial.println("  Compare VBAT to a multimeter on BAT+/JP2 to confirm ratio.");
+    Serial.println("  Send 'q' to stop.");
+
+    for (;;) {
+        if (Serial.available() && (char)Serial.read() == 'q') break;
+
+        char line[192];
+        int n = snprintf(line, sizeof(line), "ADC:");
+        unsigned bat_mv = 0;
+        for (int i = 0; i < kNumPins; ++i) {
+            uint32_t raw_sum = 0, mv_sum = 0;
+            for (int s = 0; s < kSamples; ++s) {
+                raw_sum += (uint32_t)analogRead(kPins[i]);
+                mv_sum  += analogReadMilliVolts(kPins[i]);
+            }
+            const unsigned raw = (unsigned)(raw_sum / kSamples);
+            const unsigned mv  = (unsigned)(mv_sum / kSamples);
+            if (kPins[i] == BAT_ADC_PIN) bat_mv = mv;
+            n += snprintf(line + n, sizeof(line) - n,
+                          "  %s raw=%4u mV=%4u", kNames[i], raw, mv);
+        }
+        const unsigned vbat = (unsigned)(bat_mv * BAT_DIV_RATIO + 0.5f);
+        snprintf(line + n, sizeof(line) - n, "  => VBAT=%u mV", vbat);
+        Serial.println(line);
+
+        // ~1 s between samples, but stay responsive to 'q'.
+        for (int d = 0; d < 100; ++d) {
+            if (Serial.available()) break;
+            delay(10);
+        }
+    }
+    Serial.println("ADC probe stopped.");
+}
+
 static void print_help() {
     Serial.println("\n--- Diag menu (send one char) ---");
     Serial.println("  b  Boot banner (M0)");
@@ -645,6 +712,7 @@ static void print_help() {
     Serial.println("  l  LVGL smoke test: button + timer label (M3, 'q' stop)");
     Serial.println("  w  WiFi connect test (NVS creds -> IP/RSSI/gateway/DNS)");
     Serial.println("  o  OpenSprinkler API test: read-only /jn + /jc via os_client");
+    Serial.println("  a  ADC/battery probe: raw+mV on GPIO34/35/39 (~1 Hz, 'q' stop)");
     Serial.println("  n  Print NVS config");
     Serial.println("  s  Set NVS key (interactive / tools/seed-nvs.sh)");
     Serial.println("  x  Clear NVS namespace");
@@ -694,6 +762,7 @@ void loop() {
         case 'l': m3_lvgl_smoke();       break;
         case 'w': w_wifi_test();         break;
         case 'o': o_os_api_test();       break;
+        case 'a': a_adc_probe();         break;
         case 'n': nvs_print();           break;
         case 's': nvs_set_interactive(); break;
         case 'x': nvs_clear();           break;
