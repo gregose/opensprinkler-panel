@@ -1290,7 +1290,7 @@ static void build_grid() {
         snprintf(num, sizeof(num), "%d", sid + 1);
         lv_obj_t* lbl = lv_label_create(pill);
         lv_label_set_text(lbl, num);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_color(lbl, hex_color(CLR_TEXT), 0);
         lv_obj_center(lbl);
 
