@@ -39,6 +39,7 @@
 #include "panel_config.h"
 #include "panel_state.h"
 #include "station_model.h"
+#include "battery_monitor.h"
 #include "ui_font_countdown_48.h"
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,10 @@
 // ---------------------------------------------------------------------------
 static constexpr int PIN_BACKLIGHT = 27;
 static constexpr int PIN_BOOT_BTN  = 0;
+// Battery sense: BAT_ADC on GPIO34 (ADC1_CH6, input-only, Wi-Fi-safe) reads
+// VBAT/2 through an even 100K/100K divider (schematic E32R35T, ratio confirmed
+// 1.991 on-device). See lib/battery_monitor.
+static constexpr int PIN_BAT_ADC   = 34;
 static constexpr int LEDC_CHANNEL  = 0;
 static constexpr int LEDC_FREQ_HZ  = 5000;
 static constexpr int LEDC_RES_BITS = 8;
@@ -64,6 +69,10 @@ static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
 static constexpr uint32_t UI_TICK_MS = 5;
 static constexpr uint32_t NETWORK_LOOP_MS = 50;
 static constexpr uint32_t JC_POLL_INTERVAL_MS = 2000;
+// Battery: multisample count per read and how often to sample the ADC. The
+// gauge is coarse and EMA-smoothed, so a slow cadence keeps it calm and cheap.
+static constexpr int      BAT_ADC_SAMPLES  = 16;
+static constexpr uint32_t BAT_SAMPLE_MS    = 3000;
 static constexpr uint32_t JN_RETRY_INITIAL_MS = 1000;
 static constexpr uint32_t JN_RETRY_MAX_MS = 10000;
 static constexpr int LINK_RETRY_LIMIT = 3;
@@ -855,6 +864,20 @@ struct SigMeter {
 static SigMeter sig_panel;
 static SigMeter sig_ctrl;
 
+// Battery gauge widget: a battery pictogram (outline + terminal nub + inner
+// fill scaled by state-of-charge) followed by a "NN%" label. Sits to the right
+// of the PANEL/CTRL meters in the same top-bar group.
+struct BattGlyph {
+    lv_obj_t* body = nullptr;  // outline; border colour = tier
+    lv_obj_t* nub  = nullptr;  // terminal nub; colour = tier
+    lv_obj_t* fill = nullptr;  // inner fill; width = %, colour = tier
+    lv_obj_t* pct  = nullptr;  // "NN%" label
+};
+static BattGlyph batt_glyph;
+
+// Smoothed LiPo monitor fed from PIN_BAT_ADC (pure logic in lib/battery_monitor).
+static osp::BatteryMonitor g_batt;
+
 // Left panel states
 static lv_obj_t* pnl_idle       = nullptr;
 static lv_obj_t* lbl_idle_head  = nullptr;
@@ -1049,6 +1072,113 @@ static void update_sig_meter(const SigMeter& m, int quality, bool connected) {
     }
 }
 
+// Battery pictogram geometry. Body is 18×11 with a 1 px border + 1 px pad, so
+// the inner fill spans BATT_FILL_MAX_W × 7 px. A 2 px nub hangs off the right.
+static constexpr int BATT_BODY_W    = 18;
+static constexpr int BATT_BODY_H    = 11;
+static constexpr int BATT_FILL_MAX_W = BATT_BODY_W - 2 /*border*/ - 2 /*pad*/;  // 14
+
+// Build the battery gauge (pictogram + percent) into `parent`.
+static BattGlyph build_batt_glyph(lv_obj_t* parent) {
+    BattGlyph g;
+
+    // Flex-row: pictogram + percent label, small gap.
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(row, LV_SIZE_CONTENT, TOP_H);
+    lv_obj_set_style_pad_column(row, 4, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Pictogram holder (body + nub in absolute layout).
+    lv_obj_t* pic = lv_obj_create(row);
+    lv_obj_remove_style_all(pic);
+    lv_obj_set_style_bg_opa(pic, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(pic, BATT_BODY_W + 2, BATT_BODY_H);  // +2 for the nub
+    lv_obj_clear_flag(pic, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Body outline.
+    g.body = lv_obj_create(pic);
+    lv_obj_remove_style_all(g.body);
+    lv_obj_set_size(g.body, BATT_BODY_W, BATT_BODY_H);
+    lv_obj_set_pos(g.body, 0, 0);
+    lv_obj_set_style_bg_opa(g.body, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g.body, 1, 0);
+    lv_obj_set_style_border_color(g.body, hex_color(CLR_TEAL), 0);
+    lv_obj_set_style_radius(g.body, 2, 0);
+    lv_obj_set_style_pad_all(g.body, 1, 0);
+    lv_obj_clear_flag(g.body, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Terminal nub.
+    g.nub = lv_obj_create(pic);
+    lv_obj_remove_style_all(g.nub);
+    lv_obj_set_size(g.nub, 2, 5);
+    lv_obj_set_pos(g.nub, BATT_BODY_W, (BATT_BODY_H - 5) / 2);
+    lv_obj_set_style_bg_color(g.nub, hex_color(CLR_TEAL), 0);
+    lv_obj_set_style_bg_opa(g.nub, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(g.nub, 1, 0);
+    lv_obj_clear_flag(g.nub, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Inner fill (left-anchored, width scaled by %).
+    g.fill = lv_obj_create(g.body);
+    lv_obj_remove_style_all(g.fill);
+    lv_obj_set_size(g.fill, BATT_FILL_MAX_W, 7);
+    lv_obj_set_pos(g.fill, 0, 0);
+    lv_obj_set_style_bg_color(g.fill, hex_color(CLR_TEAL), 0);
+    lv_obj_set_style_bg_opa(g.fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(g.fill, 1, 0);
+    lv_obj_clear_flag(g.fill, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Percent label.
+    g.pct = lv_label_create(row);
+    lv_obj_set_style_text_font(g.pct, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(g.pct, hex_color(CLR_TEXT), 0);
+    lv_label_set_text(g.pct, "--%");
+
+    return g;
+}
+
+// Update fill width, tier colour and percent text.
+static void update_batt_glyph(const BattGlyph& g, int percent,
+                              osp::BatteryTier tier) {
+    if (!g.body) return;
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    const uint32_t clr = (tier == osp::BatteryTier::Healthy) ? CLR_TEAL
+                       : (tier == osp::BatteryTier::Low)     ? CLR_AMBER
+                                                             : CLR_RED;
+    lv_obj_set_style_border_color(g.body, hex_color(clr), 0);
+    lv_obj_set_style_bg_color(g.nub, hex_color(clr), 0);
+    lv_obj_set_style_bg_color(g.fill, hex_color(clr), 0);
+
+    // Fill width tracks %, but keep a visible sliver whenever a cell is present.
+    int w = (BATT_FILL_MAX_W * percent + 50) / 100;
+    if (w < 2) w = 2;
+    if (w > BATT_FILL_MAX_W) w = BATT_FILL_MAX_W;
+    lv_obj_set_width(g.fill, w);
+
+    char b[8];
+    snprintf(b, sizeof(b), "%d%%", percent);
+    lv_label_set_text(g.pct, b);
+}
+
+// Sample the battery ADC (multisampled) on a slow cadence and feed the monitor.
+static void poll_battery() {
+    static uint32_t last_ms = 0;
+    const uint32_t now = millis();
+    if (last_ms != 0 && (now - last_ms) < BAT_SAMPLE_MS) return;
+    last_ms = now;
+    uint32_t sum = 0;
+    for (int i = 0; i < BAT_ADC_SAMPLES; ++i) {
+        sum += analogReadMilliVolts(PIN_BAT_ADC);
+    }
+    g_batt.add_tap_sample(static_cast<int>(sum / BAT_ADC_SAMPLES));
+}
+
 static void build_ui() {
     lv_obj_t* scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, hex_color(CLR_BG), 0);
@@ -1085,6 +1215,7 @@ static void build_ui() {
 
         sig_panel = build_sig_meter(sig_group, "PANEL");
         sig_ctrl  = build_sig_meter(sig_group, "CTRL");
+        batt_glyph = build_batt_glyph(sig_group);
     }
 
     // ---- Left panel: Idle ---------------------------------------------
@@ -1357,6 +1488,12 @@ static void ui_update() {
                      WiFi.status() == WL_CONNECTED);
     update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi),
                      v.link == osp::LinkState::Connected);
+
+    // Battery gauge: sample the ADC on a slow cadence, render the smoothed
+    // state-of-charge. Always shown — an absent cell floats the sense node high
+    // (indistinguishable from full), so there is no reliable "no battery" state.
+    poll_battery();
+    update_batt_glyph(batt_glyph, g_batt.percent(), g_batt.tier());
 
     // Phase visibility
     obj_set_hidden(pnl_idle,    running);
@@ -1698,6 +1835,10 @@ void setup() {
     ledcWrite(LEDC_CHANNEL, BACKLIGHT_ON);
 
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
+
+    // Battery sense ADC: ~0–3.1 V range so VBAT/2 (1.5–2.1 V) sits in the
+    // linear region. Uses the eFuse Vref calibration via analogReadMilliVolts.
+    analogSetPinAttenuation(PIN_BAT_ADC, ADC_11db);
 
     // ---- TFT init -------------------------------------------------------
     tft.init();
