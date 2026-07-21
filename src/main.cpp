@@ -1179,10 +1179,15 @@ static void build_ui() {
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
         // Auto-advance toggle button
+        static constexpr int RIGHT_PANEL_PAD = 10;
+        static constexpr int AUTO_ADV_Y = 64;
+        static constexpr int AUTO_ADV_H = 44;
+        static_assert(AUTO_ADV_Y + AUTO_ADV_H <= PANEL_H - (2 * RIGHT_PANEL_PAD),
+                      "Auto-advance button must fit within the right panel content area");
         btn_auto_adv = lv_button_create(pnl);
         lv_obj_add_flag(btn_auto_adv, LV_OBJ_FLAG_CHECKABLE);
-        lv_obj_set_size(btn_auto_adv, RIGHT_W - 20, 54);
-        lv_obj_align(btn_auto_adv, LV_ALIGN_TOP_LEFT, 0, 76);
+        lv_obj_set_size(btn_auto_adv, RIGHT_W - (2 * RIGHT_PANEL_PAD), AUTO_ADV_H);
+        lv_obj_align(btn_auto_adv, LV_ALIGN_TOP_LEFT, 0, AUTO_ADV_Y);
         lv_obj_set_style_radius(btn_auto_adv, 6, 0);
         lv_obj_set_style_border_width(btn_auto_adv, 1, 0);
         lv_obj_set_style_border_color(btn_auto_adv, hex_color(CLR_LINE), 0);
@@ -1200,7 +1205,7 @@ static void build_ui() {
         lv_label_set_text(lbl_aa_title, "Auto-advance");
         lv_obj_set_style_text_font(lbl_aa_title, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(lbl_aa_title, hex_color(CLR_TEXT), 0);
-        lv_obj_align(lbl_aa_title, LV_ALIGN_TOP_LEFT, 10, 7);
+        lv_obj_align(lbl_aa_title, LV_ALIGN_TOP_LEFT, 10, 5);
 
         lbl_aa_hint = lv_label_create(btn_auto_adv);
         lv_label_set_text(lbl_aa_hint, "Stops when time ends");
@@ -1208,7 +1213,7 @@ static void build_ui() {
         lv_obj_set_style_text_color(lbl_aa_hint, hex_color(CLR_MUTED), 0);
         lv_label_set_long_mode(lbl_aa_hint, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(lbl_aa_hint, RIGHT_W - 40);
-        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 10, 28);
+        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 10, 24);
     }
 
     // ---- Grid area -----------------------------------------------------
