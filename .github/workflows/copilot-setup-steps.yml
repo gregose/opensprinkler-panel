@@ -55,3 +55,5 @@ jobs:
           pio pkg install -g --library "bodmer/TFT_eSPI@^2.5"
           pio pkg install -g --library "lvgl/lvgl@^9.2"
           pio pkg install -g --library "tzapu/WiFiManager@^2.0"
+          # GT911 capacitive touch — for the ESP32-3248S035C port (#63, cyd-35c env).
+          pio pkg install -g --library "tamctec/TAMC_GT911@^1.0.2"
