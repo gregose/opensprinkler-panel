@@ -312,6 +312,41 @@ void test_idle_elapsed_ms_tracks_since_touch() {
   TEST_ASSERT_EQUAL_UINT32(3000, f.ps.idle_elapsed_ms());
 }
 
+// Regression for #60: on_jc() re-affirms idle via enter_idle() on every ~2 s
+// poll. That must NOT reset the idle-sleep clock, or idle_elapsed_ms() is
+// capped at the poll interval and the screen never sleeps.
+void test_idle_timer_survives_repeated_jc_polls() {
+  Fixture f;  // ticked at 0 -> idle clock primed at 0
+  f.ps.set_sleep_timeout_ms(30000);
+
+  uint32_t t = 0;
+  for (int i = 0; i < 20; ++i) {
+    t += 2000;                       // simulate the ~2 s /jc poll cadence
+    f.ps.on_jc(make_jc_idle(), t);   // re-affirms idle every poll
+    f.ps.tick(t);
+    // Idle age must track wall time, not reset on each poll.
+    TEST_ASSERT_EQUAL_UINT32(t, f.ps.idle_elapsed_ms());
+    if (t < 30000) TEST_ASSERT_FALSE(f.ps.view().sleeping);
+  }
+  TEST_ASSERT_TRUE(f.ps.view().sleeping);
+}
+
+// A genuine Running->Idle transition DOES reset the idle clock (so a fresh
+// timeout starts when a run ends), unlike a re-affirming idle poll.
+void test_running_to_idle_transition_resets_idle_clock() {
+  Fixture f;
+
+  f.ps.on_jc(make_jc_running(1, 60), 10000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  // Station stops -> transition back to idle at t=50000.
+  f.ps.on_jc(make_jc_idle(), 50000);
+  f.ps.tick(50000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
+  // Idle clock reset at the transition, not counting the running period.
+  TEST_ASSERT_EQUAL_UINT32(0, f.ps.idle_elapsed_ms());
+}
+
 
 
 int main(int, char**) {
@@ -338,6 +373,8 @@ int main(int, char**) {
   RUN_TEST(test_sleep_timeout_configurable);
   RUN_TEST(test_sleep_timeout_zero_disables);
   RUN_TEST(test_idle_elapsed_ms_tracks_since_touch);
+  RUN_TEST(test_idle_timer_survives_repeated_jc_polls);
+  RUN_TEST(test_running_to_idle_transition_resets_idle_clock);
 
   return UNITY_END();
 }
