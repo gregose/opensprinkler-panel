@@ -862,7 +862,8 @@ static lv_obj_t* btn_stop       = nullptr;
 static lv_obj_t* btn_rt_minus   = nullptr;
 static lv_obj_t* lbl_rt_value   = nullptr;
 static lv_obj_t* btn_rt_plus    = nullptr;
-static lv_obj_t* sw_auto_adv    = nullptr;
+static lv_obj_t* btn_auto_adv   = nullptr;
+static lv_obj_t* lbl_aa_title   = nullptr;
 static lv_obj_t* lbl_aa_hint    = nullptr;
 
 // Grid
@@ -939,7 +940,7 @@ static void ev_auto_adv(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
         StateLock lock;
         if (!(lock && g_ps)) return;
-        g_ps->set_auto_advance(lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED));
+        g_ps->set_auto_advance(lv_obj_has_state(btn_auto_adv, LV_STATE_CHECKED));
     }
 }
 static void ev_pill(lv_event_t* e) {
@@ -1169,28 +1170,37 @@ static void build_ui() {
         lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
-        // Auto-advance label + switch
-        lv_obj_t* aa_lbl = lv_label_create(pnl);
-        lv_label_set_text(aa_lbl, "Auto-advance");
-        lv_obj_set_style_text_font(aa_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(aa_lbl, hex_color(CLR_MUTED), 0);
-        lv_obj_align(aa_lbl, LV_ALIGN_TOP_LEFT, 0, 64);
+        // Auto-advance toggle button
+        btn_auto_adv = lv_button_create(pnl);
+        lv_obj_add_flag(btn_auto_adv, LV_OBJ_FLAG_CHECKABLE);
+        lv_obj_set_size(btn_auto_adv, RIGHT_W - 20, 54);
+        lv_obj_align(btn_auto_adv, LV_ALIGN_TOP_LEFT, 0, 76);
+        lv_obj_set_style_radius(btn_auto_adv, 6, 0);
+        lv_obj_set_style_border_width(btn_auto_adv, 1, 0);
+        lv_obj_set_style_border_color(btn_auto_adv, hex_color(CLR_LINE), 0);
+        lv_obj_set_style_bg_color(btn_auto_adv, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_opa(btn_auto_adv, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(btn_auto_adv,
+                                  hex_color(CLR_TEAL),
+                                  LV_PART_MAIN | LV_STATE_CHECKED);
+        lv_obj_set_style_border_color(btn_auto_adv,
+                                      hex_color(CLR_TEAL),
+                                      LV_PART_MAIN | LV_STATE_CHECKED);
+        lv_obj_add_event_cb(btn_auto_adv, ev_auto_adv, LV_EVENT_VALUE_CHANGED, nullptr);
 
-        sw_auto_adv = lv_switch_create(pnl);
-        lv_obj_set_size(sw_auto_adv, 52, 26);
-        lv_obj_align(sw_auto_adv, LV_ALIGN_TOP_RIGHT, 0, 64);
-        lv_obj_set_style_bg_color(sw_auto_adv,
-                                   hex_color(CLR_TEAL),
-                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
-        lv_obj_add_event_cb(sw_auto_adv, ev_auto_adv, LV_EVENT_VALUE_CHANGED, nullptr);
+        lbl_aa_title = lv_label_create(btn_auto_adv);
+        lv_label_set_text(lbl_aa_title, "Auto-advance");
+        lv_obj_set_style_text_font(lbl_aa_title, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_aa_title, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_aa_title, LV_ALIGN_TOP_LEFT, 10, 7);
 
-        lbl_aa_hint = lv_label_create(pnl);
+        lbl_aa_hint = lv_label_create(btn_auto_adv);
         lv_label_set_text(lbl_aa_hint, "Stops when time ends");
         lv_obj_set_style_text_font(lbl_aa_hint, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(lbl_aa_hint, hex_color(CLR_MUTED), 0);
         lv_label_set_long_mode(lbl_aa_hint, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(lbl_aa_hint, RIGHT_W - 20);
-        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 0, 92);
+        lv_obj_set_width(lbl_aa_hint, RIGHT_W - 40);
+        lv_obj_align(lbl_aa_hint, LV_ALIGN_TOP_LEFT, 10, 28);
     }
 
     // ---- Grid area -----------------------------------------------------
@@ -1365,7 +1375,7 @@ static void ui_update() {
             lv_label_set_text(lbl_idle_sub, "Waiting for the controller to respond");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_MUTED), 0);
         } else {
-            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_WIFI);
+            snprintf(buf, sizeof(buf), "%s Select a station", LV_SYMBOL_LIST);
             lv_label_set_text(lbl_idle_head, buf);
             lv_label_set_text(lbl_idle_sub, "Tap a station below to start");
             lv_obj_set_style_text_color(lbl_idle_sub, hex_color(CLR_TEAL), 0);
@@ -1394,12 +1404,16 @@ static void ui_update() {
     snprintf(buf, sizeof(buf), "%d:%02d", v.run_time_s / 60, v.run_time_s % 60);
     lv_label_set_text(lbl_rt_value, buf);
 
-    // Auto-advance switch
-    const bool sw_checked = lv_obj_has_state(sw_auto_adv, LV_STATE_CHECKED);
-    if (v.auto_advance != sw_checked) {
-        if (v.auto_advance) lv_obj_add_state(sw_auto_adv, LV_STATE_CHECKED);
-        else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
+    // Auto-advance button
+    const bool btn_checked = lv_obj_has_state(btn_auto_adv, LV_STATE_CHECKED);
+    if (v.auto_advance != btn_checked) {
+        if (v.auto_advance) lv_obj_add_state(btn_auto_adv, LV_STATE_CHECKED);
+        else                lv_obj_clear_state(btn_auto_adv, LV_STATE_CHECKED);
     }
+    lv_obj_set_style_text_color(lbl_aa_title,
+                                hex_color(v.auto_advance ? CLR_BG : CLR_TEXT), 0);
+    lv_obj_set_style_text_color(lbl_aa_hint,
+                                hex_color(v.auto_advance ? CLR_LINE : CLR_MUTED), 0);
     lv_label_set_text(lbl_aa_hint,
                       v.auto_advance ? "Runs the next station"
                                      : "Stops when time ends");
