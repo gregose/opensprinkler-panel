@@ -30,6 +30,11 @@
 #include <TFT_eSPI.h>
 #include <lvgl.h>
 
+#if defined(TOUCH_GT911)
+#include <Wire.h>
+#include <TAMC_GT911.h>
+#endif
+
 #include "os_client.h"
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,14 @@ static constexpr int HTTP_TIMEOUT_MS = 2000;
 // ---------------------------------------------------------------------------
 static TFT_eSPI tft;
 
+#if defined(TOUCH_GT911)
+// GT911 capacitive touch controller over I2C (ESP32-3248S035C).
+// Screen dimensions match the landscape display (480 × 320).
+// INT is commonly tied to GND on these boards — poll via read().
+static TAMC_GT911 gt911(GT911_SDA, GT911_SCL, GT911_INT, GT911_RST,
+                        SCREEN_W, SCREEN_H);
+#endif
+
 // LVGL draw buffer — same sizing as main.cpp (no PSRAM on this board).
 // RGB565 render target = 2 bytes/px. Must satisfy LVGL 9's draw-buffer
 // alignment requirement: lv_display_set_buffers() asserts that buf1 is aligned
@@ -102,11 +115,20 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
 }
 
 static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
+#if defined(TOUCH_GT911)
+    gt911.read();
+    data->state   = gt911.isTouched ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    if (gt911.isTouched) {
+        data->point.x = static_cast<int32_t>(gt911.points[0].x);
+        data->point.y = static_cast<int32_t>(gt911.points[0].y);
+    }
+#else
     uint16_t tx = 0, ty = 0;
     const bool pressed = tft.getTouch(&tx, &ty);
     data->state   = pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     data->point.x = static_cast<int32_t>(tx);
     data->point.y = static_cast<int32_t>(ty);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -199,8 +221,14 @@ static void m1_step_rotation() {
 }
 
 // ---------------------------------------------------------------------------
-// M2 — Raw touch stream + calibration (TFT_eSPI built-in)
+// M2 — Raw touch stream + calibration
 // ---------------------------------------------------------------------------
+// GT911 (035C): poll GT911 and print screen coordinates.
+// XPT2046 (035R): read raw ADC + mapped coords; also supports TFT_eSPI
+// interactive calibration ('c' command).
+// ---------------------------------------------------------------------------
+
+#if !defined(TOUCH_GT911)
 // Load a saved calData[5] blob from NVS and apply it via setTouch(). Returns
 // true if a valid calibration was found and applied.
 static bool load_touch_cal() {
@@ -217,6 +245,7 @@ static bool load_touch_cal() {
     Serial.printf("Touch: no saved calibration (run 'c' to calibrate).\n");
     return false;
 }
+#endif
 
 static void m2_draw_crosshair(int x, int y, uint16_t color) {
     tft.drawLine(x - 10, y, x + 10, y, color);
@@ -225,6 +254,32 @@ static void m2_draw_crosshair(int x, int y, uint16_t color) {
 }
 
 static void m2_touch_stream() {
+#if defined(TOUCH_GT911)
+    Serial.println("M2: GT911 touch stream active (screen coords).");
+    Serial.println("    Send 'q' to stop.");
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.setCursor(4, 4);
+    tft.print("GT911 touch stream — send 'q' to stop");
+
+    while (true) {
+        if (Serial.available()) {
+            const char ch = (char)Serial.read();
+            if (ch == 'q' || ch == 'Q') break;
+        }
+        gt911.read();
+        if (gt911.isTouched) {
+            Serial.printf("M2: touches=%u screen(%3u,%3u)\n",
+                          (unsigned)gt911.touches,
+                          (unsigned)gt911.points[0].x,
+                          (unsigned)gt911.points[0].y);
+            m2_draw_crosshair((int)gt911.points[0].x,
+                              (int)gt911.points[0].y, TFT_CYAN);
+        }
+        delay(50);
+    }
+#else
     Serial.println("M2: touch stream active (raw ADC x/y/z + mapped coords).");
     Serial.println("    Send 'q' to stop.");
     tft.fillScreen(TFT_BLACK);
@@ -250,9 +305,11 @@ static void m2_touch_stream() {
         }
         delay(50);
     }
+#endif
     Serial.println("M2: touch stream stopped.");
 }
 
+#if !defined(TOUCH_GT911)
 static void m2_calibration() {
     // Use TFT_eSPI's built-in interactive calibration: it draws corner targets,
     // collects the taps, and fills a uint16_t calData[5] blob (xmin, ymin, xmax,
@@ -295,6 +352,7 @@ static void m2_calibration() {
     tft.setCursor(10, 10);
     tft.println("Calibration saved");
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // M3 — LVGL smoke test
@@ -640,8 +698,12 @@ static void print_help() {
     Serial.println("  d  Display color cycle (M1)");
     Serial.println("  i  Toggle invertDisplay (M1)");
     Serial.println("  r  Step display rotation (M1)");
+#if defined(TOUCH_GT911)
+    Serial.println("  t  Touch stream: GT911 screen coords (M2, 'q' stop)");
+#else
     Serial.println("  t  Touch stream: raw ADC x/y/z + screen coords (M2, 'q' stop)");
     Serial.println("  c  Touch calibration (TFT_eSPI calibrateTouch, saves to NVS)");
+#endif
     Serial.println("  l  LVGL smoke test: button + timer label (M3, 'q' stop)");
     Serial.println("  w  WiFi connect test (NVS creds -> IP/RSSI/gateway/DNS)");
     Serial.println("  o  OpenSprinkler API test: read-only /jn + /jc via os_client");
@@ -672,7 +734,13 @@ void setup() {
     tft.setSwapBytes(true);
     tft.setRotation(g_rotation);
     tft.fillScreen(TFT_BLACK);
+
+    // Touch init: GT911 (035C) over I2C, or load XPT2046 calibration (035R).
+#if defined(TOUCH_GT911)
+    gt911.begin();
+#else
     load_touch_cal();
+#endif
 
     m0_boot_banner();
     print_help();
@@ -690,7 +758,9 @@ void loop() {
         case 'i': m1_toggle_invert();    break;
         case 'r': m1_step_rotation();    break;
         case 't': m2_touch_stream();     break;
+#if !defined(TOUCH_GT911)
         case 'c': m2_calibration();      break;
+#endif
         case 'l': m3_lvgl_smoke();       break;
         case 'w': w_wifi_test();         break;
         case 'o': o_os_api_test();       break;

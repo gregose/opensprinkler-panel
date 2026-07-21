@@ -88,3 +88,10 @@ jobs:
         with:
           name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
           path: firmware-artifact/diag/
+
+      # 035C capacitive-touch firmware builds (compile+link verification only;
+      # no artifact packaging until hardware is validated).
+      - name: Build production firmware (cyd-35c)
+        run: pio run -e cyd-35c
+      - name: Build diagnostic firmware (cyd-35c-diag)
+        run: GIT_SHA=${{ steps.meta.outputs.sha }} pio run -e cyd-35c-diag

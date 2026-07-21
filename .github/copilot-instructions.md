@@ -1,8 +1,12 @@
 # Copilot instructions — opensprinkler-panel
 
-ESP32 firmware for a wall-mounted 3.5" resistive CYD touch panel that runs and
-steps OpenSprinkler stations over the controller's local HTTP API. Built with
+ESP32 firmware for a wall-mounted 3.5" CYD touch panel that runs and steps
+OpenSprinkler stations over the controller's local HTTP API. Built with
 PlatformIO (stock `espressif32`) + Arduino + TFT_eSPI + LVGL.
+
+Two supported boards — identical MCU and display, different touch controller:
+- **ESP32-3248S035R** (`cyd-35r`): XPT2046 resistive touch, shared SPI bus.
+- **ESP32-3248S035C** (`cyd-35c`): GT911 capacitive touch, I2C (SDA33/SCL32/INT21/RST25). Touch path gated by `-D TOUCH_GT911=1`.
 
 ## Dependency management (READ THIS BEFORE ADDING ANY LIBRARY)
 
@@ -37,7 +41,7 @@ Keep the pinned tool versions identical across `platformio.ini`,
   as the reference pattern.
 - Keep Arduino/hardware glue thin, in `src/`.
 - Every logic change must keep `pio test -e native` green. Firmware must build
-  with `pio run -e cyd-35r`.
+  with `pio run -e cyd-35r` AND `pio run -e cyd-35c`.
 
 ## OpenSprinkler API contract
 
@@ -48,7 +52,13 @@ device password. `result == 1` means success.
 
 ## Hardware notes
 
-Classic ESP32 (ESP32-WROOM-32E), **no PSRAM**, 4MB flash. Display and XPT2046
-resistive touch share ONE SPI bus — keep the touch clock low (~2.5MHz) while the
-display runs fast. LVGL draw buffers must be small/partial (internal RAM only).
-See `docs/03-architecture.md` for the authoritative pin map.
+Classic ESP32 (ESP32-WROOM-32E), **no PSRAM**, 4MB flash. Display is ST7796U
+SPI (identical on both boards). LVGL draw buffers must be small/partial
+(internal RAM only). See `docs/03-architecture.md` for the authoritative pin maps.
+
+- **035R:** XPT2046 resistive touch shares the SPI bus with the display — keep
+  the touch clock low (~2.5MHz, `SPI_TOUCH_FREQUENCY`). Touch calibration blob
+  persists in NVS (`touch_cal` key).
+- **035C:** GT911 capacitive I2C touch (SDA33/SCL32/INT21/RST25). The INT pin is
+  commonly tied to GND — poll via `read()`, do NOT rely on hardware interrupts.
+  Calibration-free; no NVS touch calibration blob needed.

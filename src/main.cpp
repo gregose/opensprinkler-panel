@@ -35,6 +35,11 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
+#if defined(TOUCH_GT911)
+#include <Wire.h>
+#include <TAMC_GT911.h>
+#endif
+
 #include "os_client.h"
 #include "panel_config.h"
 #include "panel_state.h"
@@ -112,6 +117,16 @@ static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
 // Hardware objects
 // ---------------------------------------------------------------------------
 static TFT_eSPI tft;
+
+#if defined(TOUCH_GT911)
+// GT911 capacitive touch controller over I2C (ESP32-3248S035C).
+// Pin assignments from build flags (GT911_SDA/SCL/INT/RST); screen dimensions
+// match the landscape display (SCREEN_W × SCREEN_H = 480 × 320).
+// INT is commonly tied to GND on these boards — poll via read(), do NOT rely
+// on the INT line for interrupts.
+static TAMC_GT911 gt911(GT911_SDA, GT911_SCL, GT911_INT, GT911_RST,
+                        SCREEN_W, SCREEN_H);
+#endif
 
 // LVGL draw buffer (static, internal SRAM — no PSRAM on this board).
 // RGB565 render target = 2 bytes/px. Must be aligned to LVGL 9's
@@ -745,8 +760,9 @@ static bool ensure_network_config() {
 }
 
 // ---------------------------------------------------------------------------
-// Touch calibration
+// Touch calibration (XPT2046 / 035R only — not compiled for TOUCH_GT911)
 // ---------------------------------------------------------------------------
+#if !defined(TOUCH_GT911)
 // Load a saved calData[5] blob from NVS and apply it via setTouch().
 // Returns true if a valid 10-byte calibration was found and applied.
 // NVS namespace/key matches the diag firmware so a diag-seeded calibration
@@ -798,6 +814,7 @@ static void ensure_touch_calibration() {
         run_touch_calibration();
     }
 }
+#endif // !TOUCH_GT911
 
 // ---------------------------------------------------------------------------
 // LVGL callbacks
@@ -815,6 +832,30 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
 }
 
 static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
+#if defined(TOUCH_GT911)
+    gt911.read();
+    if (!gt911.isTouched) {
+        g_consume_touch_until_release = false;
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    bool consume = g_consume_touch_until_release;
+    {
+        StateLock lock;
+        if (lock && g_ps) {
+            if (g_ps->view().sleeping) {
+                g_ps->on_touch(millis());
+                consume = true;
+                g_consume_touch_until_release = true;
+            }
+        }
+    }
+
+    data->point.x = static_cast<int32_t>(gt911.points[0].x);
+    data->point.y = static_cast<int32_t>(gt911.points[0].y);
+    data->state = consume ? LV_INDEV_STATE_RELEASED : LV_INDEV_STATE_PRESSED;
+#else
     uint16_t tx = 0, ty = 0;
     const bool pressed = tft.getTouch(&tx, &ty);
 
@@ -840,6 +881,7 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     data->point.y = static_cast<int32_t>(ty);
     data->state = consume ? LV_INDEV_STATE_RELEASED
                           : LV_INDEV_STATE_PRESSED;
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1740,10 +1782,17 @@ void setup() {
         dev_loop_init(ota_pass_dl, dev_log_dl);
     }
 
-    // ---- Touch calibration -----------------------------------------------
-    // Must run AFTER WiFi/provisioning (portal is phone-based, no panel touch
-    // needed) and BEFORE lv_init() (calibrateTouch draws directly via TFT_eSPI).
+    // ---- Touch init ------------------------------------------------------
+    // GT911 (035C): initialize I2C and the capacitive controller.
+    // XPT2046 (035R): load or run interactive resistive calibration.
+    // Calibration must run AFTER WiFi/provisioning (portal is phone-based, no
+    // panel touch needed) and BEFORE lv_init() (calibrateTouch draws directly
+    // via TFT_eSPI and must not fight an active LVGL display).
+#if defined(TOUCH_GT911)
+    gt911.begin();
+#else
     ensure_touch_calibration();
+#endif
 
     // ---- LVGL init ------------------------------------------------------
     lv_init();

@@ -1,24 +1,31 @@
 # 03 — Architecture & Build Brief
 
-## Target
+## Target boards
 
-- **Board:** LCDwiki **3.5″ ESP32-32E Display** — SKU **E32R35T**, community name **ESP32-3248S035R** (a "CYD" / Cheap Yellow Display). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E module, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB flash), 320×480 **TN** TFT, **ST7796U** display over 4-wire SPI, **XPT2046 resistive** touch over the **same SPI bus**, RGB status LED, on-board Li-battery charge circuit (no fuel gauge), BOOT + RESET side buttons, TF slot (unused), Type-C for power + flashing.
+Both boards share the identical **ESP32-D0WD-V3** (ESP32-WROOM-32E) MCU, **ST7796U** SPI display, display pin map, USB-serial bridge (CP2102), and flash layout. The only difference is the touch controller.
+
+| | **ESP32-3248S035R** (035R) | **ESP32-3248S035C** (035C) |
+|---|---|---|
+| Community name | CYD / resistive | CYD / capacitive |
+| MCU | ESP32-WROOM-32E, 4 MB flash, no PSRAM | identical |
+| Display | ST7796U, SPI, 320×480 (landscape 480×320) | identical |
+| Touch | XPT2046 resistive, SPI, needs calibration | **GT911 capacitive, I2C, calibration-free** |
+| Firmware env | `cyd-35r`, `cyd-35r-diag` | `cyd-35c`, `cyd-35c-diag` |
+
 - **Orientation:** landscape, **480×320**. (TN panel — pick the landscape flip whose best viewing angle faces the installed direction; tune during bring-up.)
-- **Power:** 5 V via Type-C (wall). Optional 3.7 V Li backup on the JST header, charged on-board; **no battery monitoring** (see below).
+- **Power:** 5 V via Type-C or micro-USB (wall). Optional 3.7 V Li backup on the JST header, charged on-board; **no battery monitoring** (see below).
 
-### Pin map (from the LCDwiki E32R35T wiki — ground truth; verify on the physical board)
+### Display pin map (identical on both boards)
 
 | Function | ESP32 GPIO | Notes |
 |---|---|---|
 | LCD CS | 15 | ST7796U chip select (active low) |
 | LCD DC | 2 | data/command |
-| LCD SCLK | 14 | **SPI clock — shared LCD + touch** |
-| LCD MOSI | 13 | **SPI MOSI — shared LCD + touch** |
-| LCD MISO | 12 | **SPI MISO — shared LCD + touch** |
+| LCD SCLK | 14 | **SPI clock** |
+| LCD MOSI | 13 | **SPI MOSI** |
+| LCD MISO | 12 | **SPI MISO** |
 | LCD RST | — | tied to ESP32 EN (no dedicated GPIO; `TFT_RST = -1`) |
 | LCD backlight | 27 | high = on (drive via LEDC PWM for dimming/sleep) |
-| Touch CS | 33 | XPT2046 chip select |
-| Touch IRQ | 36 | XPT2046 pen interrupt (input-only pin) |
 | RGB LED R / G / B | 22 / 16 / 17 | common anode, **low = on** |
 | SD CS / MOSI / SCLK / MISO | 5 / 23 / 18 / 19 | separate bus, unused |
 | Audio enable / DAC | 4 / 26 | unused |
@@ -26,7 +33,25 @@
 | Battery voltage ADC | 34 | available but **unused** (no battery indicator) |
 | Spare inputs | 35, 39 | input-only, unused |
 
-> **The LCD and the XPT2046 touch share one SPI bus** (SCLK 14 / MOSI 13 / MISO 12) with separate chip-selects (LCD 15, touch 33). TFT_eSPI drives both on the same bus — keep the touch SPI clock low (~2.5 MHz) even though the display runs fast.
+### Touch pin map — 035R (XPT2046 resistive, SPI)
+
+| Function | ESP32 GPIO | Notes |
+|---|---|---|
+| Touch CS | 33 | XPT2046 chip select; shares SPI bus with LCD |
+| Touch IRQ | 36 | XPT2046 pen interrupt (input-only pin, unused) |
+
+> **The LCD and the XPT2046 touch share one SPI bus** (SCLK 14 / MOSI 13 / MISO 12) with separate chip-selects (LCD 15, touch 33). TFT_eSPI drives both on the same bus — keep the touch SPI clock low (~2.5 MHz, `SPI_TOUCH_FREQUENCY`) even though the display runs fast (40 MHz).
+
+### Touch pin map — 035C (GT911 capacitive, I2C)
+
+| Function | ESP32 GPIO | Notes |
+|---|---|---|
+| Touch SDA | 33 | GT911 I2C data |
+| Touch SCL | 32 | GT911 I2C clock |
+| Touch INT | 21 | GT911 interrupt — **commonly tied to GND on these boards; poll via `read()`, do NOT rely on the interrupt line** |
+| Touch RST | 25 | GT911 reset |
+
+GT911 I2C address: 0x5D (or 0x14, depending on INT state at power-on). GT911 is calibration-free; no NVS touch calibration blob is needed or written.
 
 ---
 
@@ -35,47 +60,46 @@
 **Use PlatformIO's official `platformio/espressif32` platform**, Arduino framework, with **TFT_eSPI** + **LVGL 9.x**.
 
 Why:
-- This is a **classic ESP32** (not an ESP32-S3), so the frozen-below-core-3.x limitation that forces the `pioarduino` fork on S3 boards **does not apply**. The official `platformio/espressif32` platform builds this board cleanly. **Do not use pioarduino here** — it adds nothing for a classic ESP32 and diverges from the huge body of CYD examples.
-- **TFT_eSPI** is the canonical, best-documented driver stack for these CYD boards: it drives the **ST7796U** display *and* the **XPT2046** resistive touch (with built-in calibration helpers) on the shared SPI bus, and integrates trivially with LVGL.
+- Both boards use a **classic ESP32** (not an ESP32-S3), so the frozen-below-core-3.x limitation that forces the `pioarduino` fork on S3 boards **does not apply**. The official `platformio/espressif32` platform builds both boards cleanly. **Do not use pioarduino here** — it adds nothing for a classic ESP32 and diverges from the huge body of CYD examples.
+- **TFT_eSPI** is the canonical, best-documented driver stack for these CYD boards: it drives the **ST7796U** display on both boards and, on the 035R, the **XPT2046** resistive touch (with built-in calibration helpers) on the shared SPI bus.
+- The 035C uses a separate **TAMC_GT911** library for the GT911 I2C touch controller. The display stack (TFT_eSPI + ST7796U) is identical on both boards; only the touch path changes, gated by the `-D TOUCH_GT911=1` build flag.
 
   ```ini
-  ; platformio.ini
-  [env:cyd-35r]
-  platform = espressif32            ; pin a version once building (e.g. espressif32@6.x)
+  ; platformio.ini — shared display config (cyd_common)
+  [cyd_common]
+  platform = espressif32@7.0.1
   framework = arduino
-  board = esp32dev                  ; ESP32-WROOM-32E, 4MB flash, no PSRAM
-  board_build.f_flash = 40000000L
-  board_build.flash_mode = dio
-  board_build.partitions = min_spiffs.csv ; dual-app OTA layout (~1.9MB/slot); fits the LVGL app (~1.3MB) with headroom and enables wireless updates
-  monitor_speed = 115200
-  lib_deps =
-    bodmer/TFT_eSPI
-    lvgl/lvgl@^9
-    bblanchon/ArduinoJson
-    tzapu/WiFiManager
+  board = esp32dev
+  board_build.partitions = min_spiffs.csv
   build_flags =
     -D USER_SETUP_LOADED=1
     -D ST7796_DRIVER=1
     -D LOAD_GLCD=1 -D LOAD_FONT2=1 -D LOAD_FONT4=1 -D LOAD_GFXFF=1
-    -D TFT_WIDTH=320
-    -D TFT_HEIGHT=480
+    -D TFT_WIDTH=320 -D TFT_HEIGHT=480
     -D TFT_MISO=12 -D TFT_MOSI=13 -D TFT_SCLK=14
     -D TFT_CS=15 -D TFT_DC=2 -D TFT_RST=-1 -D TFT_BL=27
-    -D TOUCH_CS=33
     -D SPI_FREQUENCY=40000000
-    -D SPI_TOUCH_FREQUENCY=2500000
-    -D LV_CONF_PATH=... (or lv_conf.h in include/)
+
+  ; 035R: XPT2046 resistive touch on the shared SPI bus
+  [env:cyd-35r]
+  extends = cyd_common
+  build_flags = ${cyd_common.build_flags} -D TOUCH_CS=33 -D SPI_TOUCH_FREQUENCY=2500000
+
+  ; 035C: GT911 capacitive touch over I2C
+  [env:cyd-35c]
+  extends = cyd_common
+  lib_deps = ... tamctec/TAMC_GT911@^1.0.2
+  build_flags = ${cyd_common.build_flags}
+    -D TOUCH_GT911=1 -D GT911_SDA=33 -D GT911_SCL=32 -D GT911_INT=21 -D GT911_RST=25
   ```
-  (Provide TFT_eSPI's setup either via these `build_flags` or a `User_Setup.h`; pin the platform/library versions once the build is green — they move.)
 
 > **Gotcha (verified on hardware):** with `USER_SETUP_LOADED=1`, TFT_eSPI compiles **only** the fonts you explicitly enable. Without `LOAD_GLCD`/`LOAD_FONT*`/`LOAD_GFXFF`, `drawString()`/`print()` silently render **nothing** (graphics primitives still work), which reads as a "blank text" display fault. The production UI is LVGL-rendered so it wouldn't catch this — but the diag firmware's labels and `calibrateTouch()` prompts need these flags. Keep them in the shared `[cyd_common]` build_flags so both envs get them.
 
 - **No PSRAM.** LVGL draw buffers must live in **internal DRAM** and be **small/partial** (e.g. a 480×40 line buffer, ~38 KB × 2), not a full framebuffer (480×320×2 ≈ 300 KB won't fit). This is the standard CYD approach; the single-task model below still applies.
 
-**Alternative:** `Arduino_GFX` (ST7796) + a standalone `XPT2046_Touchscreen` library is workable, but TFT_eSPI bundles display+touch and matches the CYD ecosystem — prefer it to de-risk bring-up.
-
 ### Library stack (PlatformIO `lib_deps`)
-- **Display + touch:** **TFT_eSPI** (bodmer) — ST7796U display driver *and* XPT2046 resistive-touch reader (with `touch_calibrate` / `setTouch`). One library covers both on the shared SPI bus.
+- **Display:** **TFT_eSPI** (bodmer) — ST7796U display driver. On the 035R, also drives the XPT2046 resistive touch (with `touch_calibrate` / `setTouch`) on the shared SPI bus.
+- **Touch (035C only):** **TAMC_GT911** (tamctec) — GT911 I2C capacitive touch driver. Polled in `touchpad_read_cb` (INT line is commonly tied to GND on these boards — do not rely on hardware interrupts).
 - **GUI:** **LVGL 9.x**. Provide `lv_conf.h`; draw buffers in **internal RAM** (small partial buffers — no PSRAM). Enable a monospace font for the digits (or convert JetBrains Mono; a built-in LVGL mono is an acceptable fallback).
 - **Provisioning:** **WiFiManager** (tzapu).
 - **OTA + wireless logs:** **ArduinoOTA** (bundled in arduino-esp32, no extra `lib_deps`) as the OTA responder; a tiny built-in `WiFiServer` TCP log sink. Both are framework built-ins — **M4.5 adds no new PlatformIO dependencies**.
@@ -85,8 +109,9 @@ Why:
 
 ### Known bring-up gotchas (flag, don't be surprised by)
 - ST7796U on these panels often needs specific **rotation + column/row offset** and sometimes **color inversion** (`tft.invertDisplay(true)` is common on CYDs); expect to tune rotation/mirror/offset/invert against the physical panel.
-- **Resistive touch (XPT2046) needs calibration** — a raw-ADC→pixel mapping per rotation. Run TFT_eSPI's calibration once, then **persist the 5 calibration values in NVS** and load them on boot (don't recalibrate every run). This replaces the capacitive axis-mapping step.
-- **Shared SPI bus** for LCD + touch: keep `SPI_TOUCH_FREQUENCY` low (~2.5 MHz) while the display runs at ~40 MHz; TFT_eSPI switches per transaction.
+- **Resistive touch (XPT2046, 035R only) needs calibration** — a raw-ADC→pixel mapping per rotation. Run TFT_eSPI's calibration once, then **persist the 5 calibration values in NVS** and load them on boot (don't recalibrate every run).
+- **035R shared SPI bus** for LCD + touch: keep `SPI_TOUCH_FREQUENCY` low (~2.5 MHz) while the display runs at ~40 MHz; TFT_eSPI switches per transaction.
+- **GT911 capacitive touch (035C):** calibration-free. The INT pin is commonly tied to GND on production boards — poll via `read()` in `touchpad_read_cb`, do NOT rely on the interrupt. I2C address is 0x5D (or 0x14 if INT is pulled high at power-on).
 - **No PSRAM** → keep LVGL draw buffers small and in internal DRAM; watch heap.
 - TN panel → viewing angle is directional; choose the landscape flip accordingly.
 - Backlight on GPIO27 → drive with LEDC PWM so sleep can dim/blank it.
@@ -208,4 +233,4 @@ Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
 9. Sleeps after 5 min idle (backlight off via GPIO27 PWM); stays lit while running.
 10. Runs against the real controller with 14 stations, and correctly shows a 24-station (extender) layout.
 11. Top bar shows PANEL + CTRL Wi-Fi bars (CTRL → `— —` on signal loss); no battery indicator.
-12. Resistive touch is calibrated once and the calibration persists in NVS across reboots.
+12. Touch is operational: on the 035R, resistive calibration is performed once and persists in NVS; on the 035C, GT911 capacitive touch works without calibration.

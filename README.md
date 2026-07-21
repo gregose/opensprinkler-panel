@@ -7,22 +7,31 @@ v3 controller directly over its local HTTP API.
 
 ## Hardware
 
-LCDwiki **3.5″ ESP32-32E Display** (SKU **E32R35T**, community name
-**ESP32-3248S035R**, a "CYD"):
+Two supported boards — both use the same **ESP32-D0WD-V3** (ESP32-WROOM-32E) MCU
+and **ST7796U** SPI display (identical display pin map). Only the touch controller
+differs:
 
+| Board | Touch | Firmware env |
+|---|---|---|
+| **ESP32-3248S035R** (CYD, resistive) | XPT2046 resistive, SPI, needs calibration | `cyd-35r` |
+| **ESP32-3248S035C** (CYD, capacitive) | GT911 capacitive, I2C, calibration-free | `cyd-35c` |
+
+Both boards:
 - Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E) — dual-core LX6, 520 KB SRAM,
   **no PSRAM**, 4 MB flash
 - 320×480 **TN** panel, **ST7796U** over SPI → mounted landscape (**480×320**)
-- **XPT2046 resistive** touch on the **same SPI bus** as the display
-- Wall-powered via 5 V / Type-C (optional passive Li backup; no battery gauge)
+- Wall-powered via 5 V / Type-C or micro-USB (optional passive Li backup; no battery gauge)
 
-Full pin map and rationale in [`docs/03-architecture.md`](docs/03-architecture.md).
+Full pin maps and rationale in [`docs/03-architecture.md`](docs/03-architecture.md).
 
 ## Software stack
 
 PlatformIO · stock **`espressif32@7.0.1`** platform · Arduino framework ·
-**TFT_eSPI** (ST7796U display + XPT2046 touch) · **LVGL 9** · WiFiManager ·
-ArduinoJson · Preferences (NVS).
+**TFT_eSPI** (ST7796U display) · **LVGL 9** · WiFiManager · ArduinoJson ·
+Preferences (NVS).
+
+Touch driver is board-specific: **TFT_eSPI XPT2046** (035R) or
+**TAMC_GT911** (035C, gated by `-D TOUCH_GT911=1`).
 
 ## Project layout
 
@@ -32,7 +41,7 @@ src/                  Firmware entry point (hardware glue: display/touch/LVGL/Wi
 lib/station_model/    Hardware-independent domain logic (grid, navigation, bitmasks)
 test/                 Native (host) unit tests — run in CI, no board needed
 docs/mock_os.py       Mock OpenSprinkler controller for developing without hardware
-platformio.ini        Build config: `cyd-35r` (firmware) + `native` (tests)
+platformio.ini        Build config: cyd-35r / cyd-35c (firmware) + native (tests)
 ```
 
 ## Building & testing
@@ -42,9 +51,10 @@ platformio.ini        Build config: `cyd-35r` (firmware) + `native` (tests)
 > identically.
 
 ```bash
-pio test -e native      # hardware-independent unit tests
-pio run  -e cyd-35r     # compile the firmware
-pio run  -e cyd-35r -t upload && pio device monitor   # flash + serial (local, with board)
+pio test -e native        # hardware-independent unit tests
+pio run  -e cyd-35r       # compile firmware for 035R (XPT2046 resistive touch)
+pio run  -e cyd-35c       # compile firmware for 035C (GT911 capacitive touch)
+pio run  -e cyd-35r -t upload && pio device monitor   # flash + serial (local, with 035R)
 ```
 
 ## Flashing without a local toolchain
