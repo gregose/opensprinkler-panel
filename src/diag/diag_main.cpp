@@ -668,29 +668,62 @@ static void a_adc_probe() {
     Serial.println("ADC probe: raw(0-4095) + calibrated mV per pin at ~1 Hz.");
     Serial.println("  GPIO34 = BAT_ADC (VBAT/2 via 100K/100K); VBAT = mV*2.");
     Serial.println("  Compare VBAT to a multimeter on BAT+/JP2 to confirm ratio.");
-    Serial.println("  Send 'q' to stop.");
+    Serial.println("  Reads also render on the TFT so battery-only (USB unplugged,");
+    Serial.println("  no serial) is still captured on-screen. Send 'q' to stop.");
+
+    // Static screen scaffold — drawn once. Values are fixed-width (%4u / %u.%02u)
+    // and painted with an opaque background so each refresh overwrites cleanly
+    // without a full fillScreen (avoids flicker on battery-only readout).
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.drawString("BATTERY / ADC PROBE", 8, 6);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.setTextSize(1);
+    tft.drawString("GPIO34 = BAT_ADC (VBAT/2, 100K/100K).  'q' = stop", 8, 28);
+    tft.drawString("Compare VBAT to a multimeter on BAT+ / JP2.", 8, 40);
 
     for (;;) {
         if (Serial.available() && (char)Serial.read() == 'q') break;
 
         char line[192];
         int n = snprintf(line, sizeof(line), "ADC:");
-        unsigned bat_mv = 0;
+        unsigned bat_raw = 0, bat_mv = 0;
+        unsigned mv[3] = {0, 0, 0}, raw[3] = {0, 0, 0};
         for (int i = 0; i < kNumPins; ++i) {
             uint32_t raw_sum = 0, mv_sum = 0;
             for (int s = 0; s < kSamples; ++s) {
                 raw_sum += (uint32_t)analogRead(kPins[i]);
                 mv_sum  += analogReadMilliVolts(kPins[i]);
             }
-            const unsigned raw = (unsigned)(raw_sum / kSamples);
-            const unsigned mv  = (unsigned)(mv_sum / kSamples);
-            if (kPins[i] == BAT_ADC_PIN) bat_mv = mv;
+            raw[i] = (unsigned)(raw_sum / kSamples);
+            mv[i]  = (unsigned)(mv_sum / kSamples);
+            if (kPins[i] == BAT_ADC_PIN) { bat_raw = raw[i]; bat_mv = mv[i]; }
             n += snprintf(line + n, sizeof(line) - n,
-                          "  %s raw=%4u mV=%4u", kNames[i], raw, mv);
+                          "  %s raw=%4u mV=%4u", kNames[i], raw[i], mv[i]);
         }
         const unsigned vbat = (unsigned)(bat_mv * BAT_DIV_RATIO + 0.5f);
         snprintf(line + n, sizeof(line) - n, "  => VBAT=%u mV", vbat);
         Serial.println(line);
+
+        // ---- On-screen readout (survives USB-unplugged battery-only run) ----
+        char buf[48];
+        // Big VBAT in volts.
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.setTextSize(5);
+        snprintf(buf, sizeof(buf), "%u.%02uV", vbat / 1000, (vbat % 1000) / 10);
+        tft.drawString(buf, 8, 66);
+        // VBAT in mV + the divider-tap mV.
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
+        tft.setTextSize(2);
+        snprintf(buf, sizeof(buf), "VBAT %4u mV  (tap %4u mV)", vbat, bat_mv);
+        tft.drawString(buf, 8, 128);
+        // GPIO34 raw, then the two sanity pins.
+        snprintf(buf, sizeof(buf), "G34 raw %4u", bat_raw);
+        tft.drawString(buf, 8, 158);
+        snprintf(buf, sizeof(buf), "G35 %4u mV   G39 %4u mV", mv[1], mv[2]);
+        tft.drawString(buf, 8, 188);
 
         // ~1 s between samples, but stay responsive to 'q'.
         for (int d = 0; d < 100; ++d) {
@@ -698,6 +731,7 @@ static void a_adc_probe() {
             delay(10);
         }
     }
+    tft.setTextSize(1);
     Serial.println("ADC probe stopped.");
 }
 
