@@ -72,6 +72,21 @@ void test_rssi_to_bars() {
   TEST_ASSERT_EQUAL_INT(0, rssi_to_bars(-100));
 }
 
+// --- display_bars -----------------------------------------------------------
+
+void test_display_bars() {
+  // connected=false always returns 0 regardless of quality
+  TEST_ASSERT_EQUAL_INT(0, display_bars(0, false));
+  TEST_ASSERT_EQUAL_INT(0, display_bars(4, false));
+  TEST_ASSERT_EQUAL_INT(0, display_bars(2, false));
+  // connected=true floors at 1 (quality 0 -> 1)
+  TEST_ASSERT_EQUAL_INT(1, display_bars(0, true));
+  // connected=true passes quality through for 1..4
+  TEST_ASSERT_EQUAL_INT(1, display_bars(1, true));
+  TEST_ASSERT_EQUAL_INT(2, display_bars(2, true));
+  TEST_ASSERT_EQUAL_INT(4, display_bars(4, true));
+}
+
 // --- StationModel: filtering ------------------------------------------------
 
 static std::vector<std::string> names14() {
@@ -196,6 +211,7 @@ int main(int, char**) {
   RUN_TEST(test_grid_layout_single_row);
   RUN_TEST(test_grid_layout_two_rows);
   RUN_TEST(test_rssi_to_bars);
+  RUN_TEST(test_display_bars);
   RUN_TEST(test_model_all_runnable);
   RUN_TEST(test_model_filters_disabled_and_master);
   RUN_TEST(test_model_pump_association_not_master);

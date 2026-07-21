@@ -24,6 +24,13 @@ int rssi_to_bars(int rssi_dbm) {
   return 0;
 }
 
+int display_bars(int quality, bool connected) {
+  if (!connected) return 0;
+  if (quality < 1) return 1;
+  if (quality > 4) return 4;
+  return quality;
+}
+
 void StationModel::load(const std::vector<std::string>& names,
                         const std::vector<uint8_t>& stn_dis,
                         int mas, int mas2) {
