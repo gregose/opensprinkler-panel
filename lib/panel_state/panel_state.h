@@ -43,7 +43,6 @@ struct PanelView {
   int run_time_s = 60;
   bool auto_advance = false;
   int ctrl_rssi = 0;
-  std::string toast;
   LinkState link = LinkState::Connected;
 };
 
@@ -54,7 +53,6 @@ class PanelState {
   static constexpr int kMaxRunTime = 600;
   static constexpr int kRunTimeStep = 15;
   static constexpr uint32_t kSleepTimeoutMs = 300000;
-  static constexpr uint32_t kToastDurationMs = 3000;
   static constexpr uint32_t kSyncTimeoutMs = 20000;
   static constexpr int kConfirmGraceSeconds = 10;
 
@@ -91,13 +89,6 @@ class PanelState {
   void mark_desired_needs_retry();
 
  private:
-  enum class PendingFinish {
-    None,
-    Stopped,
-    StationFinished,
-    FinishedAllStations,
-  };
-
   StationModel& model_;
   PanelView view_;
   DesiredIntent desired_;
@@ -105,27 +96,22 @@ class PanelState {
   uint32_t now_ms_ = 0;
   uint32_t last_touch_ms_ = 0;
   uint32_t last_countdown_tick_ms_ = 0;
-  uint32_t toast_set_ms_ = 0;
   uint32_t desired_at_ms_ = 0;
   uint32_t await_close_at_ms_ = 0;
   bool desired_delivered_ = false;
   bool await_close_ = false;
   bool initialized_ = false;
-  PendingFinish pending_finish_ = PendingFinish::None;
-  int pending_finish_sid_ = -1;
 
   int clamp_run_time(int t_sec) const;
-  void post_toast(const std::string& msg);
   void queue_desired_run(int sid);
   void queue_desired_stop();
   void clear_desired();
   void enter_running(int sid, int countdown_s);
   void enter_idle();
-  void begin_await_close(PendingFinish finish, int sid);
+  void begin_await_close();
   void finish_idle_transition();
   void reconcile_desired_after_jc();
   bool desired_matches_confirmed() const;
-  static int station_number(int sid) { return sid + 1; }
 };
 
 }  // namespace osp
