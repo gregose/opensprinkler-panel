@@ -1139,7 +1139,11 @@ static void build_ui() {
     lv_label_set_text(lbl_countdown, "0:00");
     lv_obj_set_style_text_font(lbl_countdown, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
-    lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
+    // Sit lower in the panel (near the action buttons) so it's clearly
+    // separated from the station name above. Font line height is 32 px and the
+    // panel content area is ~101 px, so y=66 leaves a comfortable gap under the
+    // name without clipping the bottom (66 + 32 = 98 <= 101).
+    lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 66);
 
     // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_SIDE_PAD = 10;
@@ -1439,8 +1443,8 @@ static void ui_update() {
         else                lv_obj_clear_state(sw_auto_adv, LV_STATE_CHECKED);
     }
 
-    // Grid label
-    lv_label_set_text(lbl_grid_title, running ? "JUMP TO STATION" : "STATIONS");
+    // Grid label (kept consistent as "STATIONS" in both idle and running).
+    lv_label_set_text(lbl_grid_title, "STATIONS");
 
     // Pill highlights
     for (int i = 0; i < g_pill_count; ++i) {

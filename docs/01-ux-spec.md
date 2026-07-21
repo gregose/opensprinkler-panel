@@ -37,7 +37,7 @@ There is **one screen** with two states: **Idle** and **Running**. Plus a
   - **Countdown**, large, amber (e.g. `2:14`) — the single time element. **No** "Running" label, **no** "left" label, **no** progress bar.
   - Action row pinned to the bottom: **Advance ›** (teal) and **■ Stop** (red).
 - **Right panel:** Run time stepper + Auto-advance toggle.
-- **Grid:** the active station pill is highlighted teal. Label reads **"Jump to station"**.
+- **Grid:** the active station pill is highlighted teal. Label reads **"Stations"** (kept consistent with idle).
 
 **Action buttons — one consistent left-nav row.** Advance and Stop are the same
 height and share one baseline at the panel bottom. Stop is distinguished by
@@ -90,7 +90,7 @@ running" station — selecting a station *is* running it.
 
 - Idle heading: `Select a station`
 - Idle sub: `Tap a station below to start` (with a leading teal `▾`)
-- Grid label: `Stations` (idle) / `Jump to station` (running)
+- Grid label: `Stations` (idle and running)
 - Eyebrow: `Station N`
 - Run time label: `Run time`
 - Auto-advance label: `Auto-advance`; helper `Runs the next station` / `Stops when time ends`
