@@ -992,11 +992,9 @@ static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
 // Signal-meter helpers (Part 3)
 // ---------------------------------------------------------------------------
 
-// Build a compact drawn RSSI meter in parent.
+// Build a compact drawn RSSI meter into `parent` (a pre-created flex-row group).
 // Layout: "PANEL"/"CTRL" label followed by 4 ascending bar rectangles.
-// The outer flex-row container is aligned via (align, x_ofs, 0).
-static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt,
-                                lv_align_t align, int x_ofs) {
+static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt) {
     SigMeter m;
 
     // Flex-row outer container — transparent, no border, no padding.
@@ -1010,7 +1008,6 @@ static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt,
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(row, align, x_ofs, 0);
 
     // "PANEL" / "CTRL" text label.
     lv_obj_t* lbl = lv_label_create(row);
@@ -1039,14 +1036,14 @@ static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt,
     return m;
 }
 
-// Update bar colours: first n bars filled (teal/amber/red), remainder dim.
-// Colour mapping mirrors docs/01 §top-bar RSSI spec: ≥3 bars=teal, 2=amber, ≤1=red.
-static void update_sig_meter(const SigMeter& m, int n) {
-    if (n < 0) n = 0;
-    if (n > 4) n = 4;
-    const uint32_t fill_clr = (n >= 3) ? CLR_TEAL
-                            : (n >= 2)  ? CLR_AMBER
-                                        : CLR_RED;
+// Update bar colours: first display_bars(quality, connected) bars filled,
+// remainder dim. Colour is by quality tier so the two 1-bar connected cases
+// (weak amber vs very-weak red) are distinguishable.
+static void update_sig_meter(const SigMeter& m, int quality, bool connected) {
+    const int n = osp::display_bars(quality, connected);
+    const uint32_t fill_clr = (quality >= 3) ? CLR_TEAL
+                            : (quality >= 1)  ? CLR_AMBER
+                                              : CLR_RED;
     for (int i = 0; i < 4; ++i) {
         lv_obj_set_style_bg_color(m.bars[i],
             hex_color(i < n ? fill_clr : CLR_LINE), 0);
@@ -1074,9 +1071,21 @@ static void build_ui() {
         lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
         lv_label_set_text(lbl_host, LV_SYMBOL_WIFI " Connected");
 
-        // Drawn signal meters replace the old ASCII-bar text labels.
-        sig_panel = build_sig_meter(bar, "PANEL", LV_ALIGN_RIGHT_MID, -112);
-        sig_ctrl  = build_sig_meter(bar, "CTRL",  LV_ALIGN_RIGHT_MID, -4);
+        // Drawn signal meters in a right-aligned flex-row group (PANEL left, CTRL right).
+        lv_obj_t* sig_group = lv_obj_create(bar);
+        lv_obj_remove_style_all(sig_group);
+        lv_obj_set_style_bg_opa(sig_group, LV_OPA_TRANSP, 0);
+        lv_obj_set_size(sig_group, LV_SIZE_CONTENT, TOP_H);
+        lv_obj_set_style_pad_column(sig_group, 16, 0);
+        lv_obj_clear_flag(sig_group, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(sig_group, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(sig_group, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(sig_group, LV_FLEX_ALIGN_END,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_align(sig_group, LV_ALIGN_RIGHT_MID, -4, 0);
+
+        sig_panel = build_sig_meter(sig_group, "PANEL");
+        sig_ctrl  = build_sig_meter(sig_group, "CTRL");
     }
 
     // ---- Left panel: Idle ---------------------------------------------
@@ -1113,7 +1122,7 @@ static void build_ui() {
     lv_obj_add_flag(pnl_running, LV_OBJ_FLAG_HIDDEN);  // hidden until running
 
     lbl_eyebrow = lv_label_create(pnl_running);
-    lv_label_set_text(lbl_eyebrow, "Station 1");
+    lv_label_set_text(lbl_eyebrow, "STATION 1");
     lv_obj_set_style_text_font(lbl_eyebrow, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_eyebrow, hex_color(CLR_TEAL), 0);
     lv_obj_align(lbl_eyebrow, LV_ALIGN_TOP_LEFT, 0, 2);
@@ -1168,7 +1177,7 @@ static void build_ui() {
 
         // Run time label
         lv_obj_t* rt_lbl = lv_label_create(pnl);
-        lv_label_set_text(rt_lbl, "Run time");
+        lv_label_set_text(rt_lbl, "RUN TIME");
         lv_obj_set_style_text_font(rt_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(rt_lbl, hex_color(CLR_MUTED), 0);
         lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -1226,7 +1235,7 @@ static void build_ui() {
 
     // ---- Grid area -----------------------------------------------------
     lbl_grid_title = lv_label_create(scr);
-    lv_label_set_text(lbl_grid_title, "Stations");
+    lv_label_set_text(lbl_grid_title, "STATIONS");
     lv_obj_set_style_text_font(lbl_grid_title, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_grid_title, hex_color(CLR_MUTED), 0);
     lv_obj_set_pos(lbl_grid_title, 8, GRID_Y + 2);
@@ -1353,12 +1362,10 @@ static void ui_update() {
     lv_obj_set_style_text_color(lbl_host, hex_color(status_color), 0);
 
     // Drawn RSSI bar meters (Part 3).
-    update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()));
-    if (v.link == osp::LinkState::Connected) {
-        update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi));
-    } else {
-        update_sig_meter(sig_ctrl, 0);  // dim all bars when controller unreachable
-    }
+    update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()),
+                     WiFi.status() == WL_CONNECTED);
+    update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi),
+                     v.link == osp::LinkState::Connected);
 
     // Phase visibility
     obj_set_hidden(pnl_idle,    running);
@@ -1405,7 +1412,7 @@ static void ui_update() {
 
     if (running) {
         // Eyebrow: "Station N"
-        snprintf(buf, sizeof(buf), "Station %d", v.running_sid + 1);
+        snprintf(buf, sizeof(buf), "STATION %d", v.running_sid + 1);
         lv_label_set_text(lbl_eyebrow, buf);
 
         // Station name
@@ -1433,7 +1440,7 @@ static void ui_update() {
     }
 
     // Grid label
-    lv_label_set_text(lbl_grid_title, running ? "Jump to station" : "Stations");
+    lv_label_set_text(lbl_grid_title, running ? "JUMP TO STATION" : "STATIONS");
 
     // Pill highlights
     for (int i = 0; i < g_pill_count; ++i) {

@@ -43,6 +43,13 @@ GridLayout grid_layout(int n);
 // Wi-Fi RSSI (dBm) -> 0..4 bars, per docs/01 §top bar.
 int rssi_to_bars(int rssi_dbm);
 
+// Bars to actually light on screen: a connected link always shows at least 1
+// bar so users can distinguish "weak signal" from "disconnected". Empty (0)
+// means disconnected only.
+//   connected=true  → max(1, clamp(quality, 0, 4))
+//   connected=false → 0
+int display_bars(int quality, bool connected);
+
 class StationModel {
  public:
   // Build the model from the station configuration. `stn_dis` is the raw
