@@ -895,13 +895,16 @@ static int get_pill_sid(lv_obj_t* obj) {
 
 // Create a button with a centered text label.
 static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
-                           uint32_t bg, uint32_t fg) {
+                           uint32_t bg, uint32_t fg,
+                           const lv_font_t* font = &lv_font_montserrat_14,
+                           int radius = 6) {
     lv_obj_t* btn = lv_btn_create(parent);
     lv_obj_set_style_bg_color(btn, hex_color(bg), 0);
-    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_radius(btn, radius, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_t* lbl = lv_label_create(btn);
     lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, font, 0);
     lv_obj_set_style_text_color(lbl, hex_color(fg), 0);
     lv_obj_center(lbl);
     return btn;
@@ -1121,18 +1124,21 @@ static void build_ui() {
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 52);
 
     // ---- Action row (Advance / Stop) -----------------------------------
-    static constexpr int ACTION_GAP = 4;
-    const int action_btn_w = (LEFT_W - ACTION_GAP) / 2;
+    static constexpr int ACTION_SIDE_PAD = 10;
+    static constexpr int ACTION_GAP = 10;
+    const int action_btn_w = (LEFT_W - (2 * ACTION_SIDE_PAD) - ACTION_GAP) / 2;
 
-    btn_advance = make_btn(scr, LV_SYMBOL_NEXT " Advance", CLR_TEAL, CLR_BG);
+    btn_advance = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+                           CLR_TEAL, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_advance, 0, ACTION_Y);
+    lv_obj_set_pos(btn_advance, ACTION_SIDE_PAD, ACTION_Y);
     lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
 
-    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop", CLR_RED, CLR_BG);
+    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
+                        CLR_RED, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_stop, action_btn_w + ACTION_GAP, ACTION_Y);
+    lv_obj_set_pos(btn_stop, ACTION_SIDE_PAD + action_btn_w + ACTION_GAP, ACTION_Y);
     lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
@@ -1154,7 +1160,8 @@ static void build_ui() {
         lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
         // Run-time stepper: [-] MM:SS [+]
-        btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS, CLR_LINE, CLR_TEXT);
+        btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS,
+                                CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
         lv_obj_set_size(btn_rt_minus, 46, 44);
         lv_obj_align(btn_rt_minus, LV_ALIGN_TOP_LEFT, 0, 18);
         lv_obj_add_event_cb(btn_rt_minus, ev_rt_minus, LV_EVENT_CLICKED, nullptr);
@@ -1165,7 +1172,8 @@ static void build_ui() {
         lv_obj_set_style_text_color(lbl_rt_value, hex_color(CLR_TEXT), 0);
         lv_obj_align(lbl_rt_value, LV_ALIGN_TOP_MID, 0, 26);
 
-        btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS, CLR_LINE, CLR_TEXT);
+        btn_rt_plus = make_btn(pnl, LV_SYMBOL_PLUS,
+                               CLR_LINE, CLR_TEXT, &lv_font_montserrat_24, 9);
         lv_obj_set_size(btn_rt_plus, 46, 44);
         lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, 18);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
