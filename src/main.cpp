@@ -83,6 +83,7 @@ static constexpr const char* NVS_OTA       = "ota_pass";
 static constexpr const char* NVS_DEV_LOG   = "dev_log";
 static constexpr const char* NVS_TOUCHCAL  = "touch_cal";
 static constexpr const char* NVS_RT        = "run_time_s";
+static constexpr const char* NVS_AA        = "auto_adv";
 static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c";
 static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
 static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
@@ -317,7 +318,8 @@ static void load_config_from_nvs(String* ssid,
                                  String* pw_md5,
                                  String* ota_pass,
                                  int* run_time_s,
-                                 bool* dev_log = nullptr) {
+                                 bool* dev_log = nullptr,
+                                 bool* auto_advance = nullptr) {
     Preferences prefs;
     prefs.begin(NVS_NS, true);
     if (ssid) *ssid = prefs.getString(NVS_SSID, "");
@@ -327,6 +329,7 @@ static void load_config_from_nvs(String* ssid,
     if (ota_pass) *ota_pass = prefs.getString(NVS_OTA, "");
     if (run_time_s) *run_time_s = prefs.getInt(NVS_RT, osp::PanelState::kDefaultRunTime);
     if (dev_log) *dev_log = prefs.getBool(NVS_DEV_LOG, false);
+    if (auto_advance) *auto_advance = prefs.getBool(NVS_AA, false);
     prefs.end();
 }
 
@@ -352,6 +355,13 @@ static void save_run_time_to_nvs(int run_time_s) {
     Preferences prefs;
     prefs.begin(NVS_NS, false);
     prefs.putInt(NVS_RT, run_time_s);
+    prefs.end();
+}
+
+static void save_auto_adv_to_nvs(bool on) {
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.putBool(NVS_AA, on);
     prefs.end();
 }
 
@@ -942,6 +952,7 @@ static void ev_auto_adv(lv_event_t* e) {
         StateLock lock;
         if (!(lock && g_ps)) return;
         g_ps->set_auto_advance(!g_ps->view().auto_advance);
+        save_auto_adv_to_nvs(g_ps->view().auto_advance);
     }
 }
 static void ev_pill(lv_event_t* e) {
@@ -1712,11 +1723,12 @@ void setup() {
 
     // ---- Load NVS config ------------------------------------------------
     int saved_rt = osp::PanelState::kDefaultRunTime;
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+    bool saved_aa = false;
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
 
     // ---- Provision / connect (M4 seam) ----------------------------------
     ensure_network_config();
-    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt);
+    load_config_from_nvs(nullptr, nullptr, nullptr, nullptr, nullptr, &saved_rt, nullptr, &saved_aa);
 
     // ---- OTA responder + TCP log server (requires Wi-Fi) ----------------
     // ArduinoOTA.begin() only called when NVS ota_pass is non-empty.
@@ -1762,6 +1774,7 @@ void setup() {
         StateLock lock;
         if (lock) {
             g_ps.reset(new osp::PanelState(g_model, saved_rt));
+            g_ps->set_auto_advance(saved_aa);
             cache_phase_snapshot_unlocked();
         }
     }
