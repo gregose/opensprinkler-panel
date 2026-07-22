@@ -497,6 +497,10 @@ static bool wifi_connect_from_nvs() {
 
     Serial.printf("WiFi: connecting to SSID \"%s\"...\n", ssid.c_str());
     WiFi.mode(WIFI_STA);
+    // Match production: disable modem-sleep so the diag link is as stable/
+    // responsive as the panel's (Arduino-ESP32 defaults to WIFI_PS_MIN_MODEM,
+    // which causes latency/jitter on some APs). Keeps OTA + heartbeat clean.
+    WiFi.setSleep(false);
     WiFi.begin(ssid.c_str(), pass.c_str());
 
     const unsigned long t0 = millis();

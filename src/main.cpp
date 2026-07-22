@@ -575,6 +575,12 @@ static bool connect_wifi(const String& ssid, const String& pass) {
     Serial.printf("Connecting to %s\n", ssid.c_str());
     draw_boot_connecting(ssid.c_str());
     WiFi.mode(WIFI_STA);
+    // Disable WiFi modem-sleep (Arduino-ESP32 enables WIFI_PS_MIN_MODEM by
+    // default). This is a wall-powered panel, so radio stability beats the tiny
+    // idle-current saving: DTIM-beacon modem-sleep is the ESPHome
+    // `power_save_mode` knob that causes latency spikes / jitter / dropped
+    // frames on some APs (e.g. UniFi). Keep the link always-on and responsive.
+    WiFi.setSleep(false);
     WiFi.begin(ssid.c_str(), pass.c_str());
     const unsigned long t0 = millis();
     while (WiFi.status() != WL_CONNECTED &&
