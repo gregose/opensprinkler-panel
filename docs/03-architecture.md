@@ -107,6 +107,8 @@ tunables you expose (`run_time_default`, `sleep_s`).
 
 **Normal boot:** load NVS → connect Wi-Fi → `GET /jn` → run.
 
+**Wi-Fi modem-sleep is disabled** (`WiFi.setSleep(false)` right after `WiFi.mode(WIFI_STA)`). Arduino-ESP32 enables `WIFI_PS_MIN_MODEM` (DTIM-beacon modem-sleep) by default — the same knob as ESPHome's `power_save_mode` — which causes latency spikes, jitter, and dropped frames on some APs (notably UniFi). This is a wall-powered panel where an always-on, responsive link matters far more than the sub-milliamp idle saving, so we keep the radio awake. (If a future battery mode wants it back, gate it behind an explicit opt-in that is off by default and validated against the target AP.)
+
 **Re-provision path:** hold the **BOOT button (GPIO0)** for ~3 s to clear
 NVS/creds and re-enter the portal (also fall into the portal automatically if
 Wi-Fi can't connect after a few tries). An on-screen "Settings → reconfigure" is
