@@ -79,6 +79,7 @@ static constexpr int LINK_RETRY_LIMIT = 3;
 static constexpr const char* HEARTBEAT_LOG_FORMAT =
     "[HB] ms=%lu ui=%lu net=%lu phase=%s sleeping=%d idle_ms=%lu "
     "sleep_to_ms=%lu heap=%u ui_hwm=%u net_hwm=%u\n";
+static constexpr uint32_t HEARTBEAT_LOG_INTERVAL_MS = 1000;
 
 // Boot-hold mode: determined at startup by measuring how long BOOT is held.
 enum class BootMode { kNormal, kEditConfig, kFactoryClear };
@@ -2046,10 +2047,36 @@ static void ui_task(void* /*arg*/) {
     }
 }
 
+// Emit one [HB] observability line (fix #60). Called from network_task (core 0)
+// so the TeeSerial write shares the core that owns g_log_client — emitting from
+// loop() (core 1) meant HB never reached the TCP dev-log because of a cross-core
+// WiFiClient visibility race (fix #79); UART0 still saw it, masking the gap.
+static void emit_heartbeat_log() {
+    const uint32_t ui_beat = g_ui_beat;
+    const uint32_t net_beat = g_net_beat;
+    const uint32_t phase = g_phase_snapshot;
+    const UBaseType_t ui_hwm =
+        g_ui_task_handle ? uxTaskGetStackHighWaterMark(g_ui_task_handle) : 0;
+    const UBaseType_t net_hwm =
+        g_net_task_handle ? uxTaskGetStackHighWaterMark(g_net_task_handle) : 0;
+    Serial.printf(HEARTBEAT_LOG_FORMAT,
+                  static_cast<unsigned long>(millis()),
+                  static_cast<unsigned long>(ui_beat),
+                  static_cast<unsigned long>(net_beat),
+                  phase_snapshot_name(phase),
+                  g_sleeping_snapshot ? 1 : 0,
+                  static_cast<unsigned long>(g_idle_ms_snapshot),
+                  static_cast<unsigned long>(g_sleep_to_ms_snapshot),
+                  static_cast<unsigned int>(ESP.getFreeHeap()),
+                  static_cast<unsigned int>(ui_hwm),
+                  static_cast<unsigned int>(net_hwm));
+}
+
 static void network_task(void* /*arg*/) {
     uint32_t next_jn_attempt_ms = 0;
     uint32_t jn_retry_ms = JN_RETRY_INITIAL_MS;
     uint32_t last_jc_poll_ms = 0;
+    uint32_t last_hb_ms = 0;
     int link_failures = 0;
     bool station_list_loaded = false;
 
@@ -2058,6 +2085,14 @@ static void network_task(void* /*arg*/) {
         const uint32_t now = millis();
 
         dev_loop_handle();
+
+        // Heartbeat is emitted here (core 0) rather than from loop() so it
+        // reaches the TCP dev-log client (fix #79). Runs before the offline
+        // early-continue so it keeps beating while the link is down.
+        if (g_dev_log_enabled && (now - last_hb_ms) >= HEARTBEAT_LOG_INTERVAL_MS) {
+            last_hb_ms = now;
+            emit_heartbeat_log();
+        }
 
         if (WiFi.status() != WL_CONNECTED || !g_client) {
             StateLock lock;
@@ -2226,25 +2261,7 @@ void setup() {
 // loop()
 // ---------------------------------------------------------------------------
 void loop() {
-    if (g_dev_log_enabled) {
-        const uint32_t ui_beat = g_ui_beat;
-        const uint32_t net_beat = g_net_beat;
-        const uint32_t phase = g_phase_snapshot;
-        const UBaseType_t ui_hwm =
-            g_ui_task_handle ? uxTaskGetStackHighWaterMark(g_ui_task_handle) : 0;
-        const UBaseType_t net_hwm =
-            g_net_task_handle ? uxTaskGetStackHighWaterMark(g_net_task_handle) : 0;
-        Serial.printf(HEARTBEAT_LOG_FORMAT,
-                      static_cast<unsigned long>(millis()),
-                      static_cast<unsigned long>(ui_beat),
-                      static_cast<unsigned long>(net_beat),
-                      phase_snapshot_name(phase),
-                      g_sleeping_snapshot ? 1 : 0,
-                      static_cast<unsigned long>(g_idle_ms_snapshot),
-                      static_cast<unsigned long>(g_sleep_to_ms_snapshot),
-                      static_cast<unsigned int>(ESP.getFreeHeap()),
-                      static_cast<unsigned int>(ui_hwm),
-                      static_cast<unsigned int>(net_hwm));
-    }
+    // The dev-log heartbeat now emits from network_task (core 0) so it reaches
+    // the TCP client (fix #79). Nothing else runs on the Arduino loop task.
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
