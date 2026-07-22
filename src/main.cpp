@@ -120,7 +120,8 @@ static inline lv_color_t hex_color(uint32_t hex) {
     return lv_color_make((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
 }
 
-// Compatibility: hide/show using LVGL 9 flags.
+// UTF-8 em-dash used as a "no value" placeholder in labels.
+static constexpr const char* EM_DASH = "\xe2\x80\x94";
 static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
     if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -2162,7 +2163,7 @@ static void ui_update() {
         const auto& stns = g_model.stations();
         const char* name = (v.running_sid >= 0 &&
                             v.running_sid < static_cast<int>(stns.size()))
-                            ? stns[v.running_sid].name.c_str() : "\xe2\x80\x94";
+                            ? stns[v.running_sid].name.c_str() : EM_DASH;
         lv_label_set_text(lbl_stn_name, name);
 
         // Countdown (MM:SS)
@@ -2177,7 +2178,7 @@ static void ui_update() {
         const auto& progs = g_ps->program_list().programs;
 
         // Program name eyebrow
-        const char* prog_name = "\xe2\x80\x94";  // em-dash placeholder
+        const char* prog_name = EM_DASH;  // shown when JP data not yet loaded
         if (pr.program_index >= 0 &&
                 pr.program_index < static_cast<int>(progs.size())) {
             prog_name = progs[pr.program_index].name.c_str();
@@ -2254,7 +2255,7 @@ static void ui_update() {
                                                   v.sunrise_min, v.sunset_min);
                     if (nr < 0 || !en) {
                         snprintf(nr_buf, sizeof(nr_buf), "%s",
-                                 en ? "\xe2\x80\x94" : "Not scheduled");
+                                 en ? EM_DASH : "Not scheduled");
                     } else {
                         const long secs_until = nr - v.ctrl_devt;
                         const long days_until = (secs_until >= 0) ? secs_until / 86400 : 0;

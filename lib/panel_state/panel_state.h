@@ -155,6 +155,7 @@ class PanelState {
   void finish_idle_transition();
   void reconcile_desired_after_jc();
   bool desired_matches_confirmed() const;
+  bool should_allow_sleep() const;  // true when sleep timer is permitted to fire
 };
 
 }  // namespace osp

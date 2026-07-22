@@ -256,14 +256,23 @@ void PanelState::tick(uint32_t now_ms) {
   }
 
   // Sleep timer: applies when idle, and also for external program runs.
-  const bool can_sleep = (view_.phase == Phase::Idle) ||
-      (view_.phase == Phase::ProgramRunning && !run_initiated_by_panel_);
-  if (can_sleep && !view_.sleeping) {
+  if (should_allow_sleep() && !view_.sleeping) {
     if (sleep_timeout_ms_ != 0 &&
         (now_ms - last_touch_ms_) >= sleep_timeout_ms_) {
       view_.sleeping = true;
     }
   }
+}
+
+bool PanelState::should_allow_sleep() const {
+  // Idle: always allow sleep.
+  if (view_.phase == Phase::Idle) return true;
+  // Externally-started program run: allow sleep (backlight can blank while
+  // scheduled programs run unattended). Panel-initiated runs keep the
+  // backlight on (user is present at the panel).
+  if (view_.phase == Phase::ProgramRunning) return !run_initiated_by_panel_;
+  // Manual station run or any other phase: do not sleep.
+  return false;
 }
 
 void PanelState::reconcile_desired_after_jc() {

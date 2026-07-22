@@ -40,15 +40,15 @@ static JcData make_jc_running(int sid, int rem, int num_stations = 3,
 }
 
 // Build a JcData where sid is running as part of a program (pid != 99).
-static JcData make_jc_program_running(int sid, int rem, int pid,
+static JcData make_jc_program_running(int station_sid, int rem, int pid,
                                       int num_stations = 3,
                                       long start_epoch = 800) {
   JcData jc = make_jc_idle(num_stations);
   jc.devt = 1000;
-  jc.sbits[sid / 8] |= static_cast<uint8_t>(1u << (sid % 8));
-  jc.ps[sid].pid = pid;
-  jc.ps[sid].rem = rem;
-  jc.ps[sid].start = static_cast<int>(start_epoch);
+  jc.sbits[station_sid / 8] |= static_cast<uint8_t>(1u << (station_sid % 8));
+  jc.ps[station_sid].pid = pid;
+  jc.ps[station_sid].rem = rem;
+  jc.ps[station_sid].start = static_cast<int>(start_epoch);
   return jc;
 }
 
