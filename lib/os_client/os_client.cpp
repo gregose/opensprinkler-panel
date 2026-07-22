@@ -394,4 +394,21 @@ bool OsClient::extend(int sid, int t_sec) {
   return run_station(sid, t_sec);
 }
 
+bool OsClient::skip_station(int sid) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "/cm?pw=%s&sid=%d&en=0&ssta=1",
+           pw_hex_.c_str(), sid);
+  const std::string url = host_ + buf;
+  const std::string body = transport_(url);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
+  connected_ = ok;
+  return ok;
+}
+
 }  // namespace osp

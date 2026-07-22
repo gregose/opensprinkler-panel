@@ -176,6 +176,10 @@ class OsClient {
   // Extend: stop sid, then run it again for t_sec.
   bool extend(int sid, int t_sec);
 
+  // Skip-advance: stop sid with ssta=1 so the program queue moves to the next
+  // station automatically (/cm?sid=N&en=0&ssta=1).
+  bool skip_station(int sid);
+
  private:
   std::string host_;
   std::string pw_hex_;   // MD5 hex of the device password (supplied, from NVS)
