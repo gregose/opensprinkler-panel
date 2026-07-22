@@ -13,7 +13,7 @@
 
 namespace osp {
 
-enum class Phase { Idle, Running };
+enum class Phase { Idle, Running, ProgramRunning };
 
 enum class LinkState {
   Connected,
@@ -26,6 +26,9 @@ enum class IntentKind {
   None,
   Run,
   Stop,
+  RunProgram,         // run a program now; pid stored in sid field
+  SetProgramEnabled,  // enable/disable a program; pid in sid, bool in seconds
+  Pause,              // toggle pause (10 min fixed)
 };
 
 struct DesiredIntent {
@@ -44,6 +47,17 @@ struct PanelView {
   bool auto_advance = false;
   int ctrl_rssi = 0;
   LinkState link = LinkState::Connected;
+
+  // M9: program screen navigation and run state
+  bool showing_programs_list = false;
+  int prog_list_page = 0;
+  ProgramRunState prog_run;     // current program run queue (ProgramRunning phase)
+  bool paused = false;          // controller is paused (/jc pq flag)
+  int pause_remaining_s = 0;   // seconds left in pause (/jc pt)
+  int sunrise_min = 0;          // minutes since midnight (from /jc)
+  int sunset_min = 0;           // minutes since midnight (from /jc)
+  long ctrl_devt = 0;           // controller local epoch (from /jc devt)
+  bool run_initiated_by_panel = false;  // true when panel started this run
 };
 
 class PanelState {
@@ -67,6 +81,20 @@ class PanelState {
   void on_link_offline(uint32_t now_ms);
   void on_auth_error(uint32_t now_ms);
   void set_station_list_loaded(bool loaded);
+
+  // M9: programs list data (injected from network task after fetch_jp)
+  void set_program_list(const JpData& jp);
+  const JpData& program_list() const { return jp_cache_; }
+
+  // M9: programs list navigation (UI-only, no network)
+  void open_programs_list();
+  void close_programs_list();
+  void set_prog_list_page(int page);
+
+  // M9: program actions (queue intents delivered by network task)
+  void run_program_intent(int pid);
+  void toggle_program_enabled_intent(int pid, bool en);
+  void pause_toggle_intent();
 
   void select_station(int sid);
   void advance();
@@ -101,6 +129,7 @@ class PanelState {
   StationModel& model_;
   PanelView view_;
   DesiredIntent desired_;
+  JpData jp_cache_;
 
   uint32_t now_ms_ = 0;
   uint32_t last_touch_ms_ = 0;
@@ -111,12 +140,14 @@ class PanelState {
   bool desired_delivered_ = false;
   bool await_close_ = false;
   bool initialized_ = false;
+  bool run_initiated_by_panel_ = false;
 
   int clamp_run_time(int t_sec) const;
   void queue_desired_run(int sid);
   void queue_desired_stop();
   void clear_desired();
   void enter_running(int sid, int countdown_s);
+  void enter_program_running(const ProgramRunState& prog_state);
   void enter_idle();
   void begin_await_close();
   void finish_idle_transition();
