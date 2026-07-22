@@ -347,8 +347,10 @@ static String md5_hex(const String& plaintext) {
 static constexpr int BOOT_MX = 28;    // left content margin
 static constexpr int BOOT_RW = 424;   // content width (480 - 2*BOOT_MX)
 
-// Fill the background, draw the wordmark eyebrow + muted tag, and the accent
-// rule. `tag` is the muted suffix after the wordmark (git SHA or mode label).
+// Fill the background, draw the wordmark eyebrow + git-SHA suffix, and the
+// accent rule. `tag` is the muted suffix after the wordmark (the firmware SHA);
+// the mode is conveyed by the larger headline below, so the eyebrow stays
+// consistent across every boot screen.
 static void draw_boot_chrome(const char* tag, uint32_t rule_hex) {
     const uint16_t bg = tft565(CLR_BG);
     tft.fillScreen(bg);
@@ -445,7 +447,7 @@ static void draw_boot_connecting(const char* ssid) {
 }
 
 static void draw_boot_setup(const char* ap_ssid) {
-    draw_boot_chrome("SETUP", CLR_TEALDIM);
+    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
     draw_boot_headline("Set up your panel", CLR_TEXT);
     draw_boot_step(1, (String("Join Wi-Fi ") + ap_ssid).c_str(), 138);
     draw_boot_step(2, "Open 192.168.4.1", 186);
@@ -453,7 +455,7 @@ static void draw_boot_setup(const char* ap_ssid) {
 }
 
 static void draw_boot_configure(const char* url) {
-    draw_boot_chrome("CONFIGURE", CLR_TEALDIM);
+    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
     draw_boot_headline("Configure", CLR_TEXT);
     draw_boot_lede("Open on your network:", 134);
     draw_boot_value(url, 160, CLR_TEAL);
@@ -471,7 +473,7 @@ static void draw_boot_hold(BootMode mode) {
 }
 
 static void draw_boot_factory() {
-    draw_boot_chrome("RESET", CLR_RED);
+    draw_boot_chrome(fw_git_sha(), CLR_RED);
     draw_boot_headline("Erasing all settings", CLR_RED);
     draw_boot_lede("Clearing Wi-Fi, OpenSprinkler & touch calibration.", 134);
     draw_boot_footer("The panel will restart in setup mode");
@@ -643,8 +645,11 @@ static void save_portal_params_to_nvs(const String& ssid,
 
 // #44: replace the stock "Configure WiFi" menu button with "Configure" (the
 // page now covers Wi-Fi + OpenSprinkler + panel options). Links to /wifi.
+// The trailing <br/> matches the stock HTTP_PORTAL_MENU items (getMenuOut
+// appends _customMenuHTML verbatim) so this button gets the same vertical gap
+// as the others instead of butting into the next button.
 static const char PORTAL_MENU_HTML[] =
-    "<form action='/wifi' method='get'><button>Configure</button></form>";
+    "<form action='/wifi' method='get'><button>Configure</button></form><br/>";
 
 // Built once (embeds the firmware SHA in the brand line) and kept alive for the
 // portal's lifetime.
