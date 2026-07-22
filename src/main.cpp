@@ -214,6 +214,8 @@ static const char* phase_snapshot_name(uint32_t phase) {
             return "Idle";
         case osp::Phase::Running:
             return "Running";
+        case osp::Phase::ProgramRunning:
+            return "ProgramRunning";
     }
     return "Unknown";
 }
@@ -1201,6 +1203,38 @@ static lv_obj_t* stn_pills[24]   = {};
 static lv_obj_t* stn_pill_lbls[24] = {};  // labels inside pills for recoloring
 static int       g_pill_count    = 0;
 
+// M9: Right panel (needs show/hide for programs list and program queue views)
+static lv_obj_t* pnl_right       = nullptr;
+
+// M9: Programs list panel (full-width overlay at CONTENT_Y)
+static lv_obj_t* pnl_programs    = nullptr;
+static lv_obj_t* btn_programs    = nullptr;  // entry button on idle panel
+static constexpr int MAX_PROG_ROWS  = 4;
+static constexpr int MAX_PROG_PAGES = 6;
+static lv_obj_t* prog_rows[MAX_PROG_ROWS]          = {};
+static lv_obj_t* prog_row_name[MAX_PROG_ROWS]      = {};
+static lv_obj_t* prog_row_chip[MAX_PROG_ROWS]      = {};
+static lv_obj_t* prog_row_next[MAX_PROG_ROWS]      = {};
+static lv_obj_t* prog_row_btn_toggle[MAX_PROG_ROWS] = {};
+static lv_obj_t* prog_row_btn_run[MAX_PROG_ROWS]   = {};
+static lv_obj_t* prog_page_dots[MAX_PROG_PAGES]    = {};
+
+// M9: Program-run queue view panel
+static lv_obj_t* pnl_prog_queue  = nullptr;
+static lv_obj_t* lbl_prog_eyebrow = nullptr;
+static lv_obj_t* lbl_prog_name   = nullptr;
+static lv_obj_t* lbl_prog_stn    = nullptr;
+static lv_obj_t* lbl_prog_cd     = nullptr;
+
+// M9: Program queue action buttons (at ACTION_Y, same row as btn_advance/btn_stop)
+static lv_obj_t* btn_prog_adv    = nullptr;
+static lv_obj_t* btn_prog_pause  = nullptr;
+static lv_obj_t* lbl_prog_pause_txt = nullptr;
+static lv_obj_t* btn_prog_stop   = nullptr;
+
+// M9: signal that /jp should be re-fetched after a SetProgramEnabled delivery
+static volatile bool g_jp_needs_refresh = false;
+
 // Overlays
 static lv_obj_t* sleep_overlay  = nullptr;
 
@@ -1217,6 +1251,14 @@ static void set_pill_sid(lv_obj_t* obj, int sid) {
     lv_obj_set_user_data(obj, reinterpret_cast<void*>(static_cast<intptr_t>(sid)));
 }
 static int get_pill_sid(lv_obj_t* obj) {
+    return static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(obj)));
+}
+
+// Store/retrieve a program pid (int) as lv_obj user_data — for program rows.
+static void set_prog_pid(lv_obj_t* obj, int pid) {
+    lv_obj_set_user_data(obj, reinterpret_cast<void*>(static_cast<intptr_t>(pid)));
+}
+static int get_prog_pid(lv_obj_t* obj) {
     return static_cast<int>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(obj)));
 }
 
@@ -1282,6 +1324,63 @@ static void ev_pill(lv_event_t* e) {
         g_ps->select_station(get_pill_sid(pill));
     }
 }
+
+// M9: Programs list navigation
+static void ev_open_programs(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->open_programs_list();
+}
+static void ev_close_programs(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->close_programs_list();
+}
+static void ev_prog_page_dot(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    lv_obj_t* dot = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    g_ps->set_prog_list_page(get_prog_pid(dot));  // user_data holds page index
+}
+static void ev_prog_toggle_enabled(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    lv_obj_t* btn = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    const int pid = get_prog_pid(btn);
+    if (pid < 1) return;
+    const auto& progs = g_ps->program_list().programs;
+    const int idx = pid - 1;
+    if (idx >= static_cast<int>(progs.size())) return;
+    g_ps->toggle_program_enabled_intent(pid, !progs[idx].enabled);
+}
+static void ev_prog_run(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    lv_obj_t* btn = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    const int pid = get_prog_pid(btn);
+    if (pid >= 1) g_ps->run_program_intent(pid);
+}
+
+// M9: Program queue actions
+static void ev_prog_pause(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->pause_toggle_intent();
+}
+static void ev_prog_advance(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->program_advance_intent();
+}
+static void ev_prog_stop(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->stop();
+}
+
 static void ev_touch_any(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
         StateLock lock;
@@ -1538,6 +1637,13 @@ static void build_ui() {
     lv_obj_set_width(lbl_idle_sub, LEFT_W - 28);  // honour pad_all=14 each side
     lv_obj_align(lbl_idle_sub, LV_ALIGN_TOP_LEFT, 0, 50);
 
+    // "Programs" entry button — bottom-left of idle panel.
+    btn_programs = make_btn(pnl_idle, "Programs " LV_SYMBOL_RIGHT,
+                            CLR_LINE, CLR_TEAL, &lv_font_montserrat_16, 8);
+    lv_obj_set_size(btn_programs, 150, 34);
+    lv_obj_align(btn_programs, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_add_event_cb(btn_programs, ev_open_programs, LV_EVENT_CLICKED, nullptr);
+
     // ---- Left panel: Running ------------------------------------------
     pnl_running = lv_obj_create(scr);
     lv_obj_set_size(pnl_running, LEFT_W, PANEL_H);
@@ -1572,6 +1678,44 @@ static void build_ui() {
     // name without clipping the bottom (66 + 32 = 98 <= 101).
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 66);
 
+    // ---- Left panel: Program queue view (M9) ---------------------------
+    pnl_prog_queue = lv_obj_create(scr);
+    lv_obj_set_size(pnl_prog_queue, LEFT_W, PANEL_H);
+    lv_obj_set_pos(pnl_prog_queue, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(pnl_prog_queue, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(pnl_prog_queue, 0, 0);
+    lv_obj_set_style_pad_all(pnl_prog_queue, 14, 0);
+    lv_obj_clear_flag(pnl_prog_queue, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pnl_prog_queue, LV_OBJ_FLAG_HIDDEN);
+
+    lbl_prog_eyebrow = lv_label_create(pnl_prog_queue);
+    lv_label_set_text(lbl_prog_eyebrow, "PROGRAM");
+    lv_obj_set_style_text_font(lbl_prog_eyebrow, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_prog_eyebrow, hex_color(CLR_TEAL), 0);
+    lv_obj_align(lbl_prog_eyebrow, LV_ALIGN_TOP_LEFT, 0, 2);
+
+    lbl_prog_name = lv_label_create(pnl_prog_queue);
+    lv_label_set_text(lbl_prog_name, "");
+    lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
+    lv_label_set_long_mode(lbl_prog_name, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
+    lv_obj_align(lbl_prog_name, LV_ALIGN_TOP_LEFT, 0, 20);
+
+    lbl_prog_stn = lv_label_create(pnl_prog_queue);
+    lv_label_set_text(lbl_prog_stn, "");
+    lv_obj_set_width(lbl_prog_stn, LEFT_W - 28);
+    lv_label_set_long_mode(lbl_prog_stn, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(lbl_prog_stn, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_prog_stn, hex_color(CLR_TEAL), 0);
+    lv_obj_align(lbl_prog_stn, LV_ALIGN_TOP_LEFT, 0, 46);
+
+    lbl_prog_cd = lv_label_create(pnl_prog_queue);
+    lv_label_set_text(lbl_prog_cd, "0:00");
+    lv_obj_set_style_text_font(lbl_prog_cd, &ui_font_countdown_48, 0);
+    lv_obj_set_style_text_color(lbl_prog_cd, hex_color(CLR_AMBER), 0);
+    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 66);
+
     // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_SIDE_PAD = 10;
     static constexpr int ACTION_GAP = 10;
@@ -1591,9 +1735,39 @@ static void build_ui() {
     lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
+    // ---- Program queue action row (M9): Advance / Pause / Stop ---------
+    {
+        static constexpr int PROG_SIDE_PAD = 8;
+        static constexpr int PROG_BTN_GAP  = 8;
+        const int prog_btn_w = (LEFT_W - (2 * PROG_SIDE_PAD) - (2 * PROG_BTN_GAP)) / 3;
+
+        btn_prog_adv = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+                                CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_prog_adv, prog_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, ACTION_Y);
+        lv_obj_add_flag(btn_prog_adv, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_prog_adv, ev_prog_advance, LV_EVENT_CLICKED, nullptr);
+
+        btn_prog_pause = make_btn(scr, "Pause",
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_prog_pause, prog_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_prog_pause, PROG_SIDE_PAD + prog_btn_w + PROG_BTN_GAP, ACTION_Y);
+        lv_obj_add_flag(btn_prog_pause, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_prog_pause, ev_prog_pause, LV_EVENT_CLICKED, nullptr);
+        lbl_prog_pause_txt = static_cast<lv_obj_t*>(lv_obj_get_child(btn_prog_pause, 0));
+
+        btn_prog_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
+                                 CLR_RED, CLR_BG, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_prog_stop, prog_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_prog_stop, PROG_SIDE_PAD + 2*(prog_btn_w + PROG_BTN_GAP), ACTION_Y);
+        lv_obj_add_flag(btn_prog_stop, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_prog_stop, ev_prog_stop, LV_EVENT_CLICKED, nullptr);
+    }
+
     // ---- Right panel ---------------------------------------------------
     {
-        lv_obj_t* pnl = lv_obj_create(scr);
+        pnl_right = lv_obj_create(scr);
+        lv_obj_t* pnl = pnl_right;
         lv_obj_set_size(pnl, RIGHT_W, CONTENT_H);
         lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
         lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
@@ -1694,6 +1868,137 @@ static void build_ui() {
     lv_obj_set_style_bg_opa(sleep_overlay, LV_OPA_COVER, 0);
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    // ---- Programs list panel (M9) — full-width overlay -----------------
+    // Layout (height = CONTENT_H = 181 px):
+    //   Header: PROG_HDR_H=26 px
+    //   4 rows:  PROG_ROW_H=38 px each (= 152 px)
+    //   Dots:    3 px
+    static constexpr int PROG_HDR_H  = 26;
+    static constexpr int PROG_ROW_H  = 38;
+    static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H;
+    // Right-side button metrics within each row.
+    static constexpr int PROG_RUN_W  = 80;   // Run button width
+    static constexpr int PROG_TOG_W  = 86;   // Toggle (Enable/Disable) button width
+    static constexpr int PROG_BTN_RP = 4;    // right padding from row edge
+    static constexpr int PROG_BTN_G  = 4;    // gap between toggle and run
+    // x position of toggle and run buttons (within row, row width = SCREEN_W)
+    static constexpr int PROG_RUN_X  = SCREEN_W - PROG_BTN_RP - PROG_RUN_W;
+    static constexpr int PROG_TOG_X  = PROG_RUN_X - PROG_BTN_G - PROG_TOG_W;
+    // Left content area: name label width
+    static constexpr int PROG_NAME_W = PROG_TOG_X - 8 - 8;  // x=8, gap=8
+
+    pnl_programs = lv_obj_create(scr);
+    lv_obj_set_size(pnl_programs, SCREEN_W, CONTENT_H);
+    lv_obj_set_pos(pnl_programs, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(pnl_programs, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(pnl_programs, 0, 0);
+    lv_obj_set_style_pad_all(pnl_programs, 0, 0);
+    lv_obj_clear_flag(pnl_programs, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pnl_programs, LV_OBJ_FLAG_HIDDEN);
+
+    // Header row
+    {
+        lv_obj_t* hdr = lv_obj_create(pnl_programs);
+        lv_obj_set_size(hdr, SCREEN_W, PROG_HDR_H);
+        lv_obj_set_pos(hdr, 0, 0);
+        lv_obj_set_style_bg_color(hdr, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* lbl_title = lv_label_create(hdr);
+        lv_label_set_text(lbl_title, "PROGRAMS");
+        lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_title, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 10, 0);
+
+        lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
+                                      CLR_LINE, CLR_TEXT,
+                                      &lv_font_montserrat_14, 6);
+        lv_obj_set_size(btn_back, 72, 22);
+        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -6, 0);
+        lv_obj_add_event_cb(btn_back, ev_close_programs, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // 4 program rows
+    for (int r = 0; r < MAX_PROG_ROWS; ++r) {
+        const int ry = PROG_HDR_H + r * PROG_ROW_H;
+
+        prog_rows[r] = lv_obj_create(pnl_programs);
+        lv_obj_set_size(prog_rows[r], SCREEN_W, PROG_ROW_H);
+        lv_obj_set_pos(prog_rows[r], 0, ry);
+        lv_obj_set_style_bg_color(prog_rows[r], hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(prog_rows[r], 0, 0);
+        lv_obj_set_style_pad_all(prog_rows[r], 0, 0);
+        lv_obj_clear_flag(prog_rows[r], LV_OBJ_FLAG_SCROLLABLE);
+
+        // Program name (top line)
+        prog_row_name[r] = lv_label_create(prog_rows[r]);
+        lv_label_set_text(prog_row_name[r], "");
+        lv_obj_set_width(prog_row_name[r], PROG_NAME_W);
+        lv_label_set_long_mode(prog_row_name[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(prog_row_name[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(prog_row_name[r], hex_color(CLR_TEXT), 0);
+        lv_obj_set_pos(prog_row_name[r], 8, 3);
+
+        // ENABLED/DISABLED chip (bottom line, left)
+        prog_row_chip[r] = lv_label_create(prog_rows[r]);
+        lv_label_set_text(prog_row_chip[r], "ENABLED");
+        lv_obj_set_style_text_font(prog_row_chip[r], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(prog_row_chip[r], hex_color(CLR_TEAL), 0);
+        lv_obj_set_pos(prog_row_chip[r], 8, 22);
+
+        // Next-run text (bottom line, after chip)
+        prog_row_next[r] = lv_label_create(prog_rows[r]);
+        lv_label_set_text(prog_row_next[r], "");
+        lv_obj_set_width(prog_row_next[r], 160);
+        lv_label_set_long_mode(prog_row_next[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(prog_row_next[r], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(prog_row_next[r], hex_color(CLR_MUTED), 0);
+        lv_obj_set_pos(prog_row_next[r], 76, 22);
+
+        // Toggle (Enable/Disable) button
+        prog_row_btn_toggle[r] = make_btn(prog_rows[r], "Disable",
+                                          CLR_LINE, CLR_TEXT,
+                                          &lv_font_montserrat_12, 6);
+        lv_obj_set_size(prog_row_btn_toggle[r], PROG_TOG_W, PROG_ROW_H - 4);
+        lv_obj_set_pos(prog_row_btn_toggle[r], PROG_TOG_X, 2);
+        lv_obj_add_event_cb(prog_row_btn_toggle[r], ev_prog_toggle_enabled,
+                            LV_EVENT_CLICKED, nullptr);
+
+        // Run button
+        prog_row_btn_run[r] = make_btn(prog_rows[r], "Run " LV_SYMBOL_RIGHT,
+                                       CLR_TEAL, CLR_BG,
+                                       &lv_font_montserrat_12, 6);
+        lv_obj_set_size(prog_row_btn_run[r], PROG_RUN_W, PROG_ROW_H - 4);
+        lv_obj_set_pos(prog_row_btn_run[r], PROG_RUN_X, 2);
+        lv_obj_add_event_cb(prog_row_btn_run[r], ev_prog_run,
+                            LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Page dots (centered, below rows)
+    {
+        // Dots are 10×10 buttons; draw them centred on the panel.
+        static constexpr int DOT_W = 10, DOT_H = 10, DOT_GAP = 8;
+        const int total_w = MAX_PROG_PAGES * DOT_W + (MAX_PROG_PAGES - 1) * DOT_GAP;
+        const int dot_start_x = (SCREEN_W - total_w) / 2;
+        for (int d = 0; d < MAX_PROG_PAGES; ++d) {
+            prog_page_dots[d] = lv_btn_create(pnl_programs);
+            lv_obj_set_size(prog_page_dots[d], DOT_W, DOT_H);
+            lv_obj_set_pos(prog_page_dots[d],
+                           dot_start_x + d * (DOT_W + DOT_GAP),
+                           PROG_DOT_Y + 2);
+            lv_obj_set_style_radius(prog_page_dots[d], LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(prog_page_dots[d], 0, 0);
+            lv_obj_set_style_bg_color(prog_page_dots[d], hex_color(CLR_LINE), 0);
+            lv_obj_set_style_pad_all(prog_page_dots[d], 0, 0);
+            set_prog_pid(prog_page_dots[d], d);  // page index in user_data
+            lv_obj_add_event_cb(prog_page_dots[d], ev_prog_page_dot,
+                                LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_flag(prog_page_dots[d], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,10 +2050,14 @@ static void build_grid() {
 static void ui_update() {
     if (!g_ps) return;
     const osp::PanelView& v = g_ps->view();
-    char buf[64];
+    char buf[80];
 
     bool show_syncing = g_ps->pending_sync() && !g_ps->sync_stale();
-    const bool running = (v.phase == osp::Phase::Running);
+    const bool running      = (v.phase == osp::Phase::Running);
+    const bool prog_running = (v.phase == osp::Phase::ProgramRunning);
+    const bool any_running  = running || prog_running;
+    const bool show_programs = v.showing_programs_list;
+
     const char* status_text = "Connected";
     uint32_t status_color = CLR_TEAL;
     if (show_syncing) {
@@ -1763,6 +2072,9 @@ static void ui_update() {
     } else if (v.link == osp::LinkState::Reconnecting) {
         status_text = "Reconnecting...";
         status_color = CLR_AMBER;
+    } else if (prog_running) {
+        status_text = "Program running";
+        status_color = CLR_TEAL;
     } else if (running) {
         status_text = "Running";
         status_color = CLR_TEAL;
@@ -1793,12 +2105,18 @@ static void ui_update() {
     update_batt_glyph(batt_glyph, g_batt.percent(), g_batt.tier());
 
     // Phase visibility
-    obj_set_hidden(pnl_idle,    running);
-    obj_set_hidden(pnl_running, !running);
-    obj_set_hidden(btn_advance, !running);
-    obj_set_hidden(btn_stop,    !running);
+    obj_set_hidden(pnl_idle,       any_running || show_programs);
+    obj_set_hidden(pnl_running,    !running);
+    obj_set_hidden(pnl_prog_queue, !prog_running);
+    obj_set_hidden(pnl_programs,   !show_programs);
+    obj_set_hidden(pnl_right,      show_programs || prog_running);
+    obj_set_hidden(btn_advance,    !running);
+    obj_set_hidden(btn_stop,       !running);
+    obj_set_hidden(btn_prog_adv,   !prog_running);
+    obj_set_hidden(btn_prog_pause, !prog_running);
+    obj_set_hidden(btn_prog_stop,  !prog_running);
 
-    if (!running) {
+    if (!any_running && !show_programs) {
         if (show_syncing) {
             snprintf(buf, sizeof(buf), "%s Syncing...", LV_SYMBOL_REFRESH);
             lv_label_set_text(lbl_idle_head, buf);
@@ -1853,7 +2171,130 @@ static void ui_update() {
         lv_label_set_text(lbl_countdown, cd);
     }
 
-    // Run-time value
+    // M9: Program queue view
+    if (prog_running) {
+        const auto& pr = v.prog_run;
+        const auto& progs = g_ps->program_list().programs;
+
+        // Program name eyebrow
+        const char* prog_name = "\xe2\x80\x94";  // em-dash placeholder
+        if (pr.program_index >= 0 &&
+                pr.program_index < static_cast<int>(progs.size())) {
+            prog_name = progs[pr.program_index].name.c_str();
+        }
+        lv_label_set_text(lbl_prog_name, prog_name);
+
+        // Station info: "STATION N/M · name"
+        {
+            const auto& stns = g_model.stations();
+            if (pr.current_sid >= 0) {
+                const char* stn_name =
+                    (pr.current_sid < static_cast<int>(stns.size()))
+                    ? stns[pr.current_sid].name.c_str() : "";
+                if (pr.station_count > 0) {
+                    snprintf(buf, sizeof(buf), "STATION %d/%d  %s",
+                             pr.current_station_number,
+                             pr.station_count, stn_name);
+                } else {
+                    snprintf(buf, sizeof(buf), "STATION %d  %s",
+                             pr.current_station_number, stn_name);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "Finishing...");
+            }
+            lv_label_set_text(lbl_prog_stn, buf);
+        }
+
+        // Countdown
+        {
+            char cd[16];
+            fmt_countdown(cd, v.countdown_s);
+            lv_label_set_text(lbl_prog_cd, cd);
+        }
+
+        // Pause button label
+        if (lbl_prog_pause_txt) {
+            lv_label_set_text(lbl_prog_pause_txt, v.paused ? "Resume" : "Pause");
+        }
+    }
+
+    // M9: Programs list content
+    if (show_programs) {
+        const auto& jp = g_ps->program_list();
+        const int nprogs = static_cast<int>(jp.programs.size());
+        const int page   = v.prog_list_page;
+        const int start  = page * MAX_PROG_ROWS;
+        const int total_pages = (nprogs + MAX_PROG_ROWS - 1) / MAX_PROG_ROWS;
+
+        for (int r = 0; r < MAX_PROG_ROWS; ++r) {
+            const int idx = start + r;
+            if (idx < nprogs) {
+                const auto& prog = jp.programs[idx];
+                const int pid = idx + 1;
+
+                // Program name
+                lv_label_set_text(prog_row_name[r], prog.name.c_str());
+
+                // Enabled/disabled chip
+                const bool en = prog.enabled;
+                lv_label_set_text(prog_row_chip[r], en ? "ENABLED" : "DISABLED");
+                lv_obj_set_style_text_color(prog_row_chip[r],
+                    hex_color(en ? CLR_TEAL : CLR_AMBER), 0);
+
+                // Toggle button label
+                lv_obj_t* tog_lbl =
+                    static_cast<lv_obj_t*>(lv_obj_get_child(prog_row_btn_toggle[r], 0));
+                if (tog_lbl) lv_label_set_text(tog_lbl, en ? "Disable" : "Enable");
+                set_prog_pid(prog_row_btn_toggle[r], pid);
+
+                // Next-run text
+                {
+                    char nr_buf[32];
+                    const long nr = osp::next_run(prog, v.ctrl_devt,
+                                                  v.sunrise_min, v.sunset_min);
+                    if (nr < 0 || !en) {
+                        snprintf(nr_buf, sizeof(nr_buf), "%s",
+                                 en ? "\xe2\x80\x94" : "Not scheduled");
+                    } else {
+                        const long secs_until = nr - v.ctrl_devt;
+                        const long days_until = (secs_until >= 0) ? secs_until / 86400 : 0;
+                        const long tod = nr % 86400;
+                        const int h = static_cast<int>(tod / 3600);
+                        const int m = static_cast<int>((tod % 3600) / 60);
+                        if (days_until == 0) {
+                            snprintf(nr_buf, sizeof(nr_buf), "Today %d:%02d", h, m);
+                        } else if (days_until == 1) {
+                            snprintf(nr_buf, sizeof(nr_buf), "Tomorrow %d:%02d", h, m);
+                        } else {
+                            snprintf(nr_buf, sizeof(nr_buf), "+%ld days %d:%02d",
+                                     days_until, h, m);
+                        }
+                    }
+                    lv_label_set_text(prog_row_next[r], nr_buf);
+                }
+
+                // Run button pid
+                set_prog_pid(prog_row_btn_run[r], pid);
+
+                obj_set_hidden(prog_rows[r], false);
+            } else {
+                obj_set_hidden(prog_rows[r], true);
+            }
+        }
+
+        // Page dots: show only when more than one page; fill active dot
+        for (int d = 0; d < MAX_PROG_PAGES; ++d) {
+            if (!prog_page_dots[d]) continue;
+            const bool need_dots = total_pages > 1;
+            obj_set_hidden(prog_page_dots[d], !need_dots || d >= total_pages);
+            if (need_dots && d < total_pages) {
+                lv_obj_set_style_bg_color(prog_page_dots[d],
+                    hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
+            }
+        }
+    }
+
+    // Run-time value (only meaningful when right panel is visible)
     snprintf(buf, sizeof(buf), "%d:%02d", v.run_time_s / 60, v.run_time_s % 60);
     lv_label_set_text(lbl_rt_value, buf);
 
@@ -1870,7 +2311,9 @@ static void ui_update() {
     // Pill highlights
     for (int i = 0; i < g_pill_count; ++i) {
         if (!stn_pills[i]) continue;
-        const bool active = running && (get_pill_sid(stn_pills[i]) == v.running_sid);
+        const int sid = get_pill_sid(stn_pills[i]);
+        const bool active = (running && sid == v.running_sid) ||
+                            (prog_running && sid == v.prog_run.current_sid);
         lv_obj_set_style_bg_color(stn_pills[i],
             hex_color(active ? CLR_TEAL : CLR_LINE), 0);
         if (stn_pill_lbls[i]) {
@@ -1978,6 +2421,15 @@ static bool deliver_desired(uint32_t now_ms, int* failures) {
         } else {
             ok = g_client->run_station(desired.sid, desired.seconds);
         }
+    } else if (desired.kind == osp::IntentKind::RunProgram) {
+        ok = g_client->run_program(desired.sid);
+    } else if (desired.kind == osp::IntentKind::SetProgramEnabled) {
+        ok = g_client->set_program_enabled(desired.sid, desired.seconds != 0);
+        if (ok) g_jp_needs_refresh = true;
+    } else if (desired.kind == osp::IntentKind::Pause) {
+        ok = g_client->pause(600);
+    } else if (desired.kind == osp::IntentKind::ProgramAdvance) {
+        ok = g_client->skip_station(desired.sid);
     }
 
     if (!ok) {
@@ -2108,9 +2560,28 @@ static void network_task(void* /*arg*/) {
             if (refresh_station_list(now, &link_failures)) {
                 station_list_loaded = true;
                 jn_retry_ms = JN_RETRY_INITIAL_MS;
+
+                // Fetch program list alongside station list.
+                osp::JpData jp;
+                if (g_client->fetch_jp(jp)) {
+                    StateLock lock;
+                    if (lock && g_ps) g_ps->set_program_list(jp);
+                    Serial.printf("Programs: %d loaded\n",
+                                  static_cast<int>(jp.programs.size()));
+                }
             } else {
                 next_jn_attempt_ms = now + jn_retry_ms;
                 jn_retry_ms = std::min<uint32_t>(jn_retry_ms * 2, JN_RETRY_MAX_MS);
+            }
+        }
+
+        // Refresh /jp after a SetProgramEnabled delivery.
+        if (g_jp_needs_refresh && g_client) {
+            g_jp_needs_refresh = false;
+            osp::JpData jp;
+            if (g_client->fetch_jp(jp)) {
+                StateLock lock;
+                if (lock && g_ps) g_ps->set_program_list(jp);
             }
         }
 

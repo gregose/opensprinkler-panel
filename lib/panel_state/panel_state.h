@@ -29,6 +29,7 @@ enum class IntentKind {
   RunProgram,         // run a program now; pid stored in sid field
   SetProgramEnabled,  // enable/disable a program; pid in sid, bool in seconds
   Pause,              // toggle pause (10 min fixed)
+  ProgramAdvance,     // skip current program station (ssta=1); current_sid in sid
 };
 
 struct DesiredIntent {
@@ -95,6 +96,7 @@ class PanelState {
   void run_program_intent(int pid);
   void toggle_program_enabled_intent(int pid, bool en);
   void pause_toggle_intent();
+  void program_advance_intent();  // skip current program station via ssta=1
 
   void select_station(int sid);
   void advance();

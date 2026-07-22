@@ -205,6 +205,17 @@ void PanelState::pause_toggle_intent() {
   desired_at_ms_ = now_ms_;
 }
 
+void PanelState::program_advance_intent() {
+  if (view_.phase != Phase::ProgramRunning) return;
+  if (view_.prog_run.current_sid < 0) return;
+  on_touch(now_ms_);
+  desired_.kind = IntentKind::ProgramAdvance;
+  desired_.sid = view_.prog_run.current_sid;
+  desired_.seconds = 0;
+  desired_delivered_ = false;
+  desired_at_ms_ = now_ms_;
+}
+
 void PanelState::tick(uint32_t now_ms) {
   if (!initialized_) {
     initialized_ = true;
@@ -276,11 +287,12 @@ bool PanelState::desired_matches_confirmed() const {
     return view_.phase == Phase::ProgramRunning;
   }
 
-  // SetProgramEnabled and Pause are confirmed as soon as delivered;
-  // the network task calls mark_desired_delivered(), then the next
-  // reconcile_desired_after_jc() clears them.
+  // SetProgramEnabled, Pause, and ProgramAdvance are confirmed as soon as
+  // delivered; the network task calls mark_desired_delivered(), then the
+  // next reconcile_desired_after_jc() clears them.
   if (desired_.kind == IntentKind::SetProgramEnabled ||
-      desired_.kind == IntentKind::Pause) {
+      desired_.kind == IntentKind::Pause ||
+      desired_.kind == IntentKind::ProgramAdvance) {
     return desired_delivered_;
   }
 
