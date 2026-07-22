@@ -22,6 +22,10 @@ std::string build_jo_url(const std::string& host, const std::string& pw) {
   return host + "/jo?pw=" + pw;
 }
 
+std::string build_jp_url(const std::string& host, const std::string& pw) {
+  return host + "/jp?pw=" + pw;
+}
+
 std::string build_cm_url(const std::string& host, const std::string& pw,
                          int sid, bool en, int t_sec) {
   char buf[256];
@@ -36,6 +40,28 @@ std::string build_cm_url(const std::string& host, const std::string& pw,
 
 std::string build_cv_url(const std::string& host, const std::string& pw) {
   return host + "/cv?pw=" + pw + "&rsn=1";
+}
+
+std::string build_mp_url(const std::string& host, const std::string& pw,
+                         int pid) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "/mp?pw=%s&pid=%d&uwt=0&qo=2", pw.c_str(), pid);
+  return host + buf;
+}
+
+std::string build_cp_url(const std::string& host, const std::string& pw,
+                         int pid, bool en) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "/cp?pw=%s&pid=%d&en=%d",
+           pw.c_str(), pid, en ? 1 : 0);
+  return host + buf;
+}
+
+std::string build_pq_url(const std::string& host, const std::string& pw,
+                         int dur) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "/pq?pw=%s&dur=%d", pw.c_str(), dur);
+  return host + buf;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +102,10 @@ bool parse_jc(const std::string& body, JcData& out) {
   if (!doc["devt"].is<int>()) return false;
   out.devt = doc["devt"].as<int>();
   out.rssi = doc["RSSI"] | 0;
+  out.sunrise = doc["sunrise"] | 0;
+  out.sunset = doc["sunset"] | 0;
+  out.pq = doc["pq"] | 0;
+  out.pt = doc["pt"] | 0;
 
   out.sbits.clear();
   JsonArray sbits = doc["sbits"];
@@ -94,9 +124,67 @@ bool parse_jc(const std::string& body, JcData& out) {
         e.pid = row[0] | 0;
         e.rem = row[1] | 0;
         e.start = row[2] | 0;
+        e.gid = row[3] | 0;
       }
       out.ps.push_back(e);
     }
+  }
+
+  return true;
+}
+
+bool parse_jp(const std::string& body, JpData& out) {
+  JsonDocument doc;
+  if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
+
+  JsonArray pd = doc["pd"];
+  if (!pd) return false;
+
+  out.nprogs = doc["nprogs"] | 0;
+  out.nboards = doc["nboards"] | 0;
+  out.mnp = doc["mnp"] | 0;
+  out.mnst = doc["mnst"] | 0;
+  out.pnsize = doc["pnsize"] | 0;
+  out.programs.clear();
+
+  for (JsonVariant entry : pd) {
+    if (!entry.is<JsonArray>()) return false;
+
+    JsonArray row = entry.as<JsonArray>();
+    std::array<int16_t, 4> starttimes = {0, 0, 0, 0};
+    JsonArray starts = row[3];
+    if (starts) {
+      int i = 0;
+      for (JsonVariant v : starts) {
+        if (i >= static_cast<int>(starttimes.size())) break;
+        starttimes[i++] = static_cast<int16_t>(v.as<int>());
+      }
+    }
+
+    std::vector<int> durations;
+    JsonArray durs = row[4];
+    if (durs) {
+      for (JsonVariant v : durs) durations.push_back(v.as<int>());
+    }
+
+    std::array<int, 3> daterange = {0, 0, 0};
+    JsonArray range = row[6];
+    if (range) {
+      int i = 0;
+      for (JsonVariant v : range) {
+        if (i >= static_cast<int>(daterange.size())) break;
+        daterange[i++] = v.as<int>();
+      }
+    }
+
+    const char* name = row[5] | "";
+    out.programs.push_back(load_program(row[0] | 0,
+                                        row[1] | 0,
+                                        row[2] | 0,
+                                        starttimes,
+                                        durations,
+                                        name,
+                                        daterange));
   }
 
   return true;
@@ -124,6 +212,16 @@ OsResult parse_result(const std::string& body) {
     case 32: return OsResult::NotPermitted;
     default: return OsResult::NetworkError;
   }
+}
+
+std::vector<ProgramPsEntry> to_program_ps(const JcData& jc) {
+  std::vector<ProgramPsEntry> out;
+  out.reserve(jc.ps.size());
+  for (const PsEntry& e : jc.ps) {
+    out.push_back(
+        ProgramPsEntry{e.pid, e.rem, static_cast<long>(e.start), e.gid});
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +283,23 @@ bool OsClient::fetch_jo(JoData& out) {
   return false;
 }
 
+bool OsClient::fetch_jp(JpData& out) {
+  const std::string body = transport_(build_jp_url(host_, pw_hex_));
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  if (parse_jp(body, out)) {
+    connected_ = true;
+    last_result_ = OsResult::Ok;
+    return true;
+  }
+  last_result_ = parse_result(body);
+  connected_ = false;
+  return false;
+}
+
 bool OsClient::run_station(int sid, int t_sec) {
   const std::string url = build_cm_url(host_, pw_hex_, sid, true, t_sec);
   const std::string body = transport_(url);
@@ -201,6 +316,48 @@ bool OsClient::run_station(int sid, int t_sec) {
 
 bool OsClient::stop_station(int sid) {
   const std::string url = build_cm_url(host_, pw_hex_, sid, false);
+  const std::string body = transport_(url);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
+  connected_ = ok;
+  return ok;
+}
+
+bool OsClient::run_program(int pid) {
+  const std::string url = build_mp_url(host_, pw_hex_, pid);
+  const std::string body = transport_(url);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
+  connected_ = ok;
+  return ok;
+}
+
+bool OsClient::set_program_enabled(int pid, bool en) {
+  const std::string url = build_cp_url(host_, pw_hex_, pid, en);
+  const std::string body = transport_(url);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  last_result_ = parse_result(body);
+  const bool ok = (last_result_ == OsResult::Ok);
+  connected_ = ok;
+  return ok;
+}
+
+bool OsClient::pause(int dur_sec) {
+  const std::string url = build_pq_url(host_, pw_hex_, dur_sec);
   const std::string body = transport_(url);
   if (body.empty()) {
     connected_ = false;
