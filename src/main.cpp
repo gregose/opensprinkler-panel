@@ -63,7 +63,7 @@ static constexpr int SCREEN_H = 320;
 static constexpr int DRAW_BUF_LINES = 40;
 static constexpr unsigned long BOOT_HOLD_EDIT_MS    = 3000;
 static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
-static constexpr int           PORTAL_EDIT_TIMEOUT_S = 180;
+static constexpr int           PORTAL_EDIT_TIMEOUT_S = 600;
 static constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
 static constexpr uint32_t UI_TICK_MS = 5;
@@ -111,6 +111,8 @@ static constexpr uint32_t CLR_TEAL  = 0x35d0c3;
 static constexpr uint32_t CLR_AMBER = 0xf2a63b;
 static constexpr uint32_t CLR_RED   = 0xff5b5b;
 static constexpr uint32_t CLR_LINE  = 0x1a2e2b;
+static constexpr uint32_t CLR_TEALDIM = 0x1c6a64;  // accent rule / dim chip border
+static constexpr uint32_t CLR_LEDE    = 0xc3d3cf;  // supporting body text
 
 // Build an lv_color_t from a 0xRRGGBB constant.
 static inline lv_color_t hex_color(uint32_t hex) {
@@ -127,6 +129,20 @@ static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
 // Hardware objects
 // ---------------------------------------------------------------------------
 static TFT_eSPI tft;
+
+// Convert a 0xRRGGBB constant to a TFT_eSPI 16-bit (RGB565) color.
+static inline uint16_t tft565(uint32_t hex) {
+    return tft.color565((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
+}
+
+// Firmware git SHA — injected by CI via -D FW_GIT_SHA (GIT_SHA env var at
+// build time). Falls back to "dev" when unset (empty string from sysenv).
+#ifndef FW_GIT_SHA
+#  define FW_GIT_SHA ""
+#endif
+static inline const char* fw_git_sha() {
+    return (FW_GIT_SHA[0] != '\0') ? FW_GIT_SHA : "dev";
+}
 
 // LVGL draw buffer (static, internal SRAM — no PSRAM on this board).
 // RGB565 render target = 2 bytes/px. Must be aligned to LVGL 9's
@@ -320,26 +336,150 @@ static String md5_hex(const String& plaintext) {
     return md5.toString();
 }
 
-static void draw_boot_message(const char* line1,
-                              const char* line2 = nullptr,
-                              const char* line3 = nullptr) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(8, 12);
-    tft.println("OpenSprinkler panel");
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(8, 52);
-    tft.println(line1);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    if (line2) {
-        tft.setCursor(8, 84);
-        tft.println(line2);
+// ---------------------------------------------------------------------------
+// Boot screens (pre-LVGL, drawn directly via TFT_eSPI).
+//
+// Consistent layout echoing the app: a teal mono eyebrow wordmark + accent
+// rule, a large headline, optional supporting content, and a muted footer.
+// All primitives (text/rects/rules) render with the fonts loaded in
+// platformio.ini (GLCD/FONT2/FONT4). 480x320 landscape.
+// ---------------------------------------------------------------------------
+static constexpr int BOOT_MX = 28;    // left content margin
+static constexpr int BOOT_RW = 424;   // content width (480 - 2*BOOT_MX)
+
+// Fill the background, draw the wordmark eyebrow + muted tag, and the accent
+// rule. `tag` is the muted suffix after the wordmark (git SHA or mode label).
+static void draw_boot_chrome(const char* tag, uint32_t rule_hex) {
+    const uint16_t bg = tft565(CLR_BG);
+    tft.fillScreen(bg);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(2);
+    tft.setTextColor(tft565(CLR_TEAL), bg);
+    const int w = tft.drawString("OPENSPRINKLER PANEL", BOOT_MX, 24);
+    if (tag && tag[0]) {
+        tft.setTextColor(tft565(CLR_MUTED), bg);
+        tft.drawString(String("   ") + tag, BOOT_MX + w, 24);
     }
-    if (line3) {
-        tft.setCursor(8, 108);
-        tft.println(line3);
-    }
+    tft.fillRect(BOOT_MX, 48, 70, 3, tft565(rule_hex));
+}
+
+static void draw_boot_headline(const char* text, uint32_t color_hex) {
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(tft565(color_hex), tft565(CLR_BG));
+    tft.drawString(text, BOOT_MX, 80);
+}
+
+static void draw_boot_lede(const char* text, int y) {
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(2);
+    tft.setTextColor(tft565(CLR_LEDE), tft565(CLR_BG));
+    tft.drawString(text, BOOT_MX, y);
+}
+
+// Prominent value line (SSID / URL / IP).
+static void draw_boot_value(const char* text, int y, uint32_t color_hex) {
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(tft565(color_hex), tft565(CLR_BG));
+    tft.drawString(text, BOOT_MX, y);
+}
+
+static void draw_boot_footer(const char* text, int y = 292) {
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(2);
+    tft.setTextColor(tft565(CLR_MUTED), tft565(CLR_BG));
+    tft.drawString(text, BOOT_MX, y);
+}
+
+// Numbered setup step: a teal-outlined circle + label.
+static void draw_boot_step(int n, const char* text, int y) {
+    const uint16_t bg = tft565(CLR_BG);
+    const int cx = BOOT_MX + 14, cy = y + 14;
+    tft.drawCircle(cx, cy, 14, tft565(CLR_TEALDIM));
+    tft.drawCircle(cx, cy, 13, tft565(CLR_TEALDIM));
+    char ns[4];
+    snprintf(ns, sizeof(ns), "%d", n);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2);
+    tft.setTextColor(tft565(CLR_TEAL), bg);
+    tft.drawString(ns, cx, cy);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(tft565(CLR_LEDE), bg);
+    tft.drawString(text, BOOT_MX + 42, y + 3);
+}
+
+// Boot-hold tier row: a duration chip + label. Highlighted when `active`.
+static void draw_boot_tier(int y, const char* dur, const char* label,
+                           uint32_t accent_hex, bool active) {
+    const uint16_t bg = tft565(CLR_BG);
+    const uint16_t box = active ? tft565(accent_hex) : tft565(CLR_LINE);
+    const uint16_t durc = active ? tft565(accent_hex) : tft565(CLR_MUTED);
+    tft.drawRoundRect(BOOT_MX, y, 66, 30, 6, box);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextFont(2);
+    tft.setTextColor(durc, bg);
+    tft.drawString(dur, BOOT_MX + 33, y + 15);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextFont(4);
+    tft.setTextColor(active ? tft565(accent_hex) : tft565(CLR_LEDE), bg);
+    tft.drawString(label, BOOT_MX + 82, y + 3);
+}
+
+// Static hold-progress bar (fraction of the 10 s factory threshold).
+static void draw_boot_hold_bar(int pct, uint32_t color_hex) {
+    const int x = BOOT_MX, y = 300, h = 8;
+    tft.fillRoundRect(x, y, BOOT_RW, h, 4, tft565(CLR_LINE));
+    const int fw = (BOOT_RW * pct) / 100;
+    if (fw > 3) tft.fillRoundRect(x, y, fw, h, 4, tft565(color_hex));
+}
+
+// ---- Composed boot screens ------------------------------------------------
+static void draw_boot_connecting(const char* ssid) {
+    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_headline("Connecting", CLR_TEXT);
+    draw_boot_lede("Joining", 134);
+    draw_boot_value(ssid, 158, CLR_TEXT);
+    draw_boot_footer("Timeout 15 s, then setup mode");
+}
+
+static void draw_boot_setup(const char* ap_ssid) {
+    draw_boot_chrome("SETUP", CLR_TEALDIM);
+    draw_boot_headline("Set up your panel", CLR_TEXT);
+    draw_boot_step(1, (String("Join Wi-Fi ") + ap_ssid).c_str(), 138);
+    draw_boot_step(2, "Open 192.168.4.1", 186);
+    draw_boot_footer("Waiting for a device to connect");
+}
+
+static void draw_boot_configure(const char* url) {
+    draw_boot_chrome("CONFIGURE", CLR_TEALDIM);
+    draw_boot_headline("Configure", CLR_TEXT);
+    draw_boot_lede("Open on your network:", 134);
+    draw_boot_value(url, 160, CLR_TEAL);
+    draw_boot_footer("Times out in 10 min");
+}
+
+static void draw_boot_hold(BootMode mode) {
+    const bool edit = (mode != BootMode::kNormal);
+    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_headline("Keep holding BOOT", CLR_TEXT);
+    draw_boot_tier(150, "3 s",  "Configure",     CLR_TEAL, edit);
+    draw_boot_tier(192, "10 s", "Factory reset", CLR_RED,  false);
+    draw_boot_footer(edit ? "Release now to configure" : "Hold to reconfigure", 272);
+    draw_boot_hold_bar(edit ? 33 : 0, CLR_TEAL);
+}
+
+static void draw_boot_factory() {
+    draw_boot_chrome("RESET", CLR_RED);
+    draw_boot_headline("Erasing all settings", CLR_RED);
+    draw_boot_lede("Clearing Wi-Fi, OpenSprinkler & touch calibration.", 134);
+    draw_boot_footer("The panel will restart in setup mode");
+}
+
+static void draw_boot_notice(const char* headline) {
+    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_headline(headline, CLR_TEXT);
 }
 
 static void load_config_from_nvs(String* ssid,
@@ -407,9 +547,7 @@ static void save_auto_adv_to_nvs(bool on) {
 static BootMode measure_boot_hold() {
     if (digitalRead(PIN_BOOT_BTN) != LOW) return BootMode::kNormal;
 
-    draw_boot_message("Hold BOOT to reconfigure",
-                      "3 s = edit config",
-                      "10 s = factory reset");
+    draw_boot_hold(BootMode::kNormal);
 
     const unsigned long t0 = millis();
     BootMode mode = BootMode::kNormal;
@@ -418,12 +556,11 @@ static BootMode measure_boot_hold() {
         const unsigned long held = millis() - t0;
         if (mode == BootMode::kNormal && held >= BOOT_HOLD_EDIT_MS) {
             mode = BootMode::kEditConfig;
-            draw_boot_message("Release to edit config",
-                              "Keep holding 10 s to erase all");
+            draw_boot_hold(BootMode::kEditConfig);
         }
         if (mode == BootMode::kEditConfig && held >= BOOT_HOLD_FACTORY_MS) {
             mode = BootMode::kFactoryClear;
-            draw_boot_message("Erasing all config...");
+            draw_boot_factory();
             break;
         }
         delay(10);
@@ -434,7 +571,7 @@ static BootMode measure_boot_hold() {
 static bool connect_wifi(const String& ssid, const String& pass) {
     if (ssid.isEmpty()) return false;
     Serial.printf("Connecting to %s\n", ssid.c_str());
-    draw_boot_message("Connecting Wi-Fi", ssid.c_str());
+    draw_boot_connecting(ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
     const unsigned long t0 = millis();
@@ -495,6 +632,72 @@ static void save_portal_params_to_nvs(const String& ssid,
                   saved_dev_log ? "true" : "false", saved_sleep_s);
 }
 
+// ---------------------------------------------------------------------------
+// Web-portal theming (shared by the AP captive portal and the STA edit portal).
+//
+// WiFiManager injects _customHeadElement into every page's <head> AFTER its own
+// stylesheet, so a trailing <style> block re-skins all pages (menu, wifi, info,
+// exit) to match the app + boot screens. setCustomHeadElement / setCustomMenuHTML
+// keep the POINTER (not a copy), so both are backed by static storage.
+// ---------------------------------------------------------------------------
+
+// #44: replace the stock "Configure WiFi" menu button with "Configure" (the
+// page now covers Wi-Fi + OpenSprinkler + panel options). Links to /wifi.
+static const char PORTAL_MENU_HTML[] =
+    "<form action='/wifi' method='get'><button>Configure</button></form>";
+
+// Built once (embeds the firmware SHA in the brand line) and kept alive for the
+// portal's lifetime.
+static const char* portal_head_css() {
+    static String css;
+    if (css.length() == 0) {
+        css.reserve(1500);
+        css  = F("<style>");
+        css += F("body{background:#07100f!important;color:#e9f2ef!important;font-family:"
+                 "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif!important}");
+        css += F(".wrap{max-width:460px;padding:4px 14px 24px}");
+        // Consistent brand header on every page; hide the stock root <h1> so it
+        // isn't duplicated on the menu page.
+        css += F("h1{display:none}");
+        css += F(".wrap::before{display:block;content:'OpenSprinkler Panel · ");
+        css += fw_git_sha();
+        css += F("';font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;"
+                 "letter-spacing:.14em;color:#35d0c3;text-align:center;padding:16px 0 13px;"
+                 "border-bottom:2px solid #1c6a64;margin:0 0 18px}");
+        css += F("h3{color:#e9f2ef;text-align:left}"
+                 "hr{border:0;border-top:1px solid rgba(233,247,243,.10);margin:14px 0}");
+        css += F("button,input[type=submit],input[type=button]{background:#35d0c3!important;"
+                 "color:#07100f!important;border:0!important;border-radius:10px!important;"
+                 "font-weight:600!important;line-height:2.4rem!important;font-size:1.05rem!important}");
+        css += F("input,select,textarea{background:#131d1c!important;color:#e9f2ef!important;"
+                 "border:1px solid rgba(233,247,243,.12)!important;border-radius:9px!important}");
+        css += F("input[type=checkbox],input[type=radio]{width:auto;accent-color:#35d0c3}");
+        css += F("a{color:#35d0c3!important;font-weight:600}");
+        css += F(".msg{background:#182322!important;color:#c3d3cf!important;"
+                 "border:1px solid rgba(233,247,243,.10)!important;"
+                 "border-left:3px solid #35d0c3!important;border-radius:8px!important}");
+        css += F(".msg.D{border-left-color:#ff5b5b!important}");
+        // Scan-list rows + signal icons (invert the dark PNG sprite for dark bg).
+        css += F(".q{color:#7f938f}.q:before,.q:after{filter:invert(1)}");
+        // /info definition lists + routes table.
+        css += F("dt{color:#7f938f;font-weight:400}"
+                 "dd{color:#e9f2ef;font-family:ui-monospace,Menlo,Consolas,monospace}");
+        css += F("th{color:#35d0c3;text-align:left;border-bottom:1px solid rgba(233,247,243,.10)}"
+                 "td{border-bottom:1px solid rgba(233,247,243,.08)}");
+        css += F("</style>");
+    }
+    return css.c_str();
+}
+
+// Apply the brand title, themed CSS, and #44 menu rename to a portal instance.
+static void apply_portal_theme(WiFiManager& wm) {
+    wm.setTitle("OpenSprinkler Panel");
+    wm.setCustomHeadElement(portal_head_css());
+    static const char* kMenu[] = {"custom", "info", "update", "exit"};
+    wm.setMenu(kMenu, 4);
+    wm.setCustomMenuHTML(PORTAL_MENU_HTML);
+}
+
 // Start the WiFiManager captive-portal (AP mode).
 //
 // current_ssid / current_pass are the NVS-stored WiFi credentials.  They are
@@ -517,9 +720,7 @@ static bool start_provisioning_portal(const String& current_ssid,
                                       int current_sleep_s,
                                       bool non_destructive,
                                       bool* touch_cal_reset_out) {
-    draw_boot_message(non_destructive ? "Edit config" : "Setup mode",
-                      "Join Wi-Fi OSPanel-Setup",
-                      "Open the captive portal");
+    draw_boot_setup(PROVISION_AP_SSID);
 
     char host_buf[65] = {};
     char ota_buf[65] = {};
@@ -531,6 +732,7 @@ static bool start_provisioning_portal(const String& current_ssid,
     snprintf(sleep_buf, sizeof(sleep_buf), "%d", current_sleep_s);
 
     WiFiManager wm;
+    apply_portal_theme(wm);
 
     if (non_destructive) {
         wm.setConfigPortalTimeout(PORTAL_EDIT_TIMEOUT_S);
@@ -561,8 +763,7 @@ static bool start_provisioning_portal(const String& current_ssid,
                                            WFM_LABEL_AFTER);
 
     wm.setAPCallback([](WiFiManager* portal) {
-        draw_boot_message("Setup mode", portal->getConfigPortalSSID().c_str(),
-                          "Open the captive portal");
+        draw_boot_setup(portal->getConfigPortalSSID().c_str());
     });
     wm.addParameter(&os_host_param);
     wm.addParameter(&os_pass_param);
@@ -624,6 +825,7 @@ static bool start_sta_web_portal(const String& current_ssid,
     snprintf(sleep_buf, sizeof(sleep_buf), "%d", current_sleep_s);
 
     WiFiManager wm;
+    apply_portal_theme(wm);
 
     WiFiManagerParameter os_host_param("os_host", "OpenSprinkler host",
                                        host_buf, sizeof(host_buf));
@@ -664,22 +866,27 @@ static bool start_sta_web_portal(const String& current_ssid,
 
     String ip_url = "http://";
     ip_url += WiFi.localIP().toString();
-    ip_url += "/";
     Serial.printf("STA web portal started at %s\n", ip_url.c_str());
-    draw_boot_message("Edit config at:", ip_url.c_str(),
-                      "Save to apply, wait to skip");
+    draw_boot_configure(ip_url.c_str());
 
     const unsigned long t0 = millis();
     const unsigned long timeout_ms = (unsigned long)PORTAL_EDIT_TIMEOUT_S * 1000UL;
     while ((millis() - t0) < timeout_ms) {
         wm.process();
         if (params_saved) break;
+        // "Exit" in the portal calls handleExit() which sets abort=true; on the
+        // next process() WiFiManager clears webPortalActive. Detect that and
+        // break so the caller reboots into normal mode (Exit-doesn't-reboot fix).
+        if (!wm.getWebPortalActive()) {
+            Serial.println("STA edit portal exited by user");
+            break;
+        }
         delay(10);
     }
     wm.stopWebPortal();
 
     if (!params_saved) {
-        Serial.println("STA edit portal timed out without save");
+        Serial.println("STA edit portal closed without save");
         return false;
     }
 
@@ -857,7 +1064,7 @@ static void run_touch_calibration() {
     prefs.putBytes(NVS_TOUCHCAL, calData, sizeof(calData));
     prefs.end();
     Serial.println("Touch: calibration complete and saved to NVS.");
-    draw_boot_message("Calibration saved");
+    draw_boot_notice("Calibration saved");
     delay(CALIBRATION_COMPLETE_DELAY_MS);
 }
 
