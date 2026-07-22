@@ -160,14 +160,15 @@ int decode_starttime(int16_t t, int sunrise_min, int sunset_min) {
   if ((t >> 15) & 1) return -1;
   int offset = t & 0x7FF;
   if ((t >> 12) & 1) offset = -offset;
+  int decoded = t;
   if ((t >> 14) & 1) {
-    t = static_cast<int16_t>(sunrise_min + offset);
-    if (t < 0) t = 0;
+    decoded = sunrise_min + offset;
+    if (decoded < 0) decoded = 0;
   } else if ((t >> 13) & 1) {
-    t = static_cast<int16_t>(sunset_min + offset);
-    if (t >= 1440) t = 1439;
+    decoded = sunset_min + offset;
+    if (decoded >= 1440) decoded = 1439;
   }
-  return t;
+  return decoded;
 }
 
 std::vector<int> day_start_minutes(const Program& p,
