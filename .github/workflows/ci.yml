@@ -67,7 +67,7 @@ jobs:
       # Production firmware (M6 UI). Build + package BEFORE the diag build, which
       # overwrites the shared .pio/build toolchain outputs that merge_bin reads.
       - name: Build production firmware (cyd-35r)
-        run: pio run -e cyd-35r
+        run: GIT_SHA=${{ steps.meta.outputs.sha }} pio run -e cyd-35r
       - name: Package production firmware
         run: tools/package-firmware.sh cyd-35r firmware-artifact/production --web
       - name: Upload production firmware artifact
