@@ -642,6 +642,82 @@ void test_program_running_countdown_does_not_trigger_await_close() {
 }
 
 // ---------------------------------------------------------------------------
+// M9 — paused program / manual-run labeling (UX bug fixes)
+// ---------------------------------------------------------------------------
+
+// While paused, the controller pushes every station's start into the future so
+// none report as "started" (current_sid=-1). The panel must still surface the
+// first pending station and its remaining time instead of a blank 0:00.
+void test_paused_program_shows_pending_station_and_countdown() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;      // paused
+  jc.pt = 600;    // resumes in 10 min
+  // Station 0 belongs to program 1 (pid=1) but its start is in the FUTURE
+  // (paused), rem carries the full duration.
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;  // > devt -> not started
+
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT(600, f.ps.view().pause_remaining_s);
+  // Fallback: show station 0 as current with its full remaining time.
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().prog_run.current_sid);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
+// A paused program must freeze the countdown across ticks.
+void test_paused_program_freezes_countdown() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;
+  jc.pt = 600;
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+
+  f.ps.tick(10000);  // 5s later — but paused, so no decrement.
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
+// A panel-initiated program run reports pid=254 in /jc (program_index=-1). The
+// panel must remember which program it launched so the UI can label it.
+void test_panel_launched_run_remembers_program_index() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(3));
+
+  f.ps.run_program_intent(1);  // 0-based index 1 (program "P2")
+  f.ps.mark_desired_delivered();
+
+  // Controller reports a run-once/manual program run (pid=254).
+  f.ps.on_jc(make_jc_program_running(0, 120, 254), 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  // program_model can't derive the index from pid=254, so the panel restores it.
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
+}
+
+// A scheduled (non-panel) program run reports a real 1-based pid, so the model
+// resolves the index directly and the panel must NOT override it.
+void test_scheduled_run_keeps_model_program_index() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(3));
+  f.ps.on_jc(make_jc_program_running(0, 120, 2), 1000);  // pid=2 -> index 1
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
+}
+
+// ---------------------------------------------------------------------------
 // M9 — set_program_list
 // ---------------------------------------------------------------------------
 
@@ -716,6 +792,12 @@ int main(int, char**) {
   // M9 — countdown dead-reckoning for ProgramRunning
   RUN_TEST(test_program_running_countdown_dead_reckons);
   RUN_TEST(test_program_running_countdown_does_not_trigger_await_close);
+
+  // M9 — paused program / manual-run labeling (UX bug fixes)
+  RUN_TEST(test_paused_program_shows_pending_station_and_countdown);
+  RUN_TEST(test_paused_program_freezes_countdown);
+  RUN_TEST(test_panel_launched_run_remembers_program_index);
+  RUN_TEST(test_scheduled_run_keeps_model_program_index);
 
   // M9 — set_program_list
   RUN_TEST(test_set_program_list_updates_cache);
