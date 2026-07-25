@@ -9,7 +9,7 @@ all work in isolation — that's what keeps debugging tractable.
 `mock_os.py` (in this folder) is a runnable emulator of the OpenSprinkler API.
 
 ```
-python3 mock_os.py          # serves 0.0.0.0:8080, 14 fake stations, 3 programs
+python3 mock_os.py          # serves 0.0.0.0:8080, 24 fake stations, 6 programs
 python3 test_mock_os.py     # contract/connection tests for the emulator
 ```
 

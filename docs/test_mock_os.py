@@ -24,7 +24,14 @@ from urllib.parse import urlencode
 import mock_os
 from mock_os import (
     FLAG_ENABLED, MockController, build_server, default_programs,
+    DEFAULT_NAMES,
 )
+
+# On-device UI capacities the default fixture is designed to exceed. Keep these
+# in sync with src/main.cpp (MAX_PROG_ROWS, MAX_QROWS).
+PANEL_MAX_PROG_ROWS = 4   # programs list rows per page
+PANEL_MAX_QROWS = 9       # visible queue rows on the program-run screen
+QUEUE_NAME_WRAP_CHARS = 16  # ~chars that fit a queue row name before ellipsis
 
 
 class MockServerCase(unittest.TestCase):
@@ -275,7 +282,7 @@ class ModelUnitTests(unittest.TestCase):
     """Pure-model tests that don't need the HTTP server."""
 
     def test_default_programs_have_disjoint_station_sets(self):
-        progs = default_programs(14)
+        progs = default_programs(len(DEFAULT_NAMES))
         sets = [set(p.station_sids()) for p in progs]
         for i in range(len(sets)):
             for j in range(i + 1, len(sets)):
@@ -283,8 +290,41 @@ class ModelUnitTests(unittest.TestCase):
                                  f"programs {i} and {j} share stations")
 
     def test_durations_length_matches_station_count(self):
-        for p in default_programs(14):
-            self.assertEqual(len(p.durations), 14)
+        n = len(DEFAULT_NAMES)
+        for p in default_programs(n):
+            self.assertEqual(len(p.durations), n)
+
+
+class FixtureCoverageTests(unittest.TestCase):
+    """Assert the default fixture exercises the on-device UI edge cases Greg
+    needs to eyeball: list pagination, queue overflow, and name wrapping."""
+
+    def setUp(self):
+        self.progs = default_programs(len(DEFAULT_NAMES))
+
+    def test_enough_programs_to_paginate(self):
+        # More than one page so the pager (‹ N of M ›) has to appear.
+        self.assertGreater(len(self.progs), PANEL_MAX_PROG_ROWS,
+                           "need >MAX_PROG_ROWS programs to test pagination")
+
+    def test_a_program_overflows_the_queue_window(self):
+        biggest = max(len(p.station_sids()) for p in self.progs)
+        self.assertGreater(biggest, PANEL_MAX_QROWS,
+                          "need a program with >MAX_QROWS stations to test "
+                          "queue windowing + fade indicators")
+
+    def test_long_station_name_belongs_to_an_enabled_program(self):
+        # A name long enough to wrap/ellipsize must appear in a program that is
+        # enabled, so it actually renders in a running queue.
+        long_sids = {i for i, nm in enumerate(DEFAULT_NAMES)
+                     if len(nm) > QUEUE_NAME_WRAP_CHARS}
+        self.assertTrue(long_sids, "fixture has no long station name")
+        covered = set()
+        for p in self.progs:
+            if p.enabled:
+                covered |= set(p.station_sids())
+        self.assertTrue(long_sids & covered,
+                        "long station name is not in any enabled program")
 
 
 if __name__ == "__main__":

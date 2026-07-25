@@ -98,11 +98,20 @@ def fixed_start(minutes: int) -> list[int]:
 # Default fake system. Programs are chosen to have DISTINCT station sets so the
 # panel's "identify the running program by its stations" logic can be validated.
 # ---------------------------------------------------------------------------
+#
+# 24 stations (a realistic 3-expansion-board config, nbrd=3). Station 14 has a
+# deliberately LONG name so the queue-row text-wrapping/ellipsis behaviour can be
+# exercised on-device; it belongs to the enabled "Full System Test" program below
+# so it actually shows up in a running queue.
 DEFAULT_NAMES = [
     "Front Lawn", "Driveway Strip", "North Beds", "Back Lawn", "Back Beds",
     "Patio Pots", "Side Yard", "Veg Garden", "Rear Rotors", "Parkway",
     "Front Rotors", "Mailbox Bed", "Pool Deck", "Fence Line",
-]  # 14 stations
+    "Northeast Perimeter Drip Line Extension",  # 14 — intentionally long
+    "Orchard Row", "Greenhouse Mist", "Raised Beds", "Herb Spiral",
+    "Compost Corner", "Rain Garden", "Swale Line", "Berry Patch",
+    "Cutting Garden",
+]  # 24 stations
 
 
 class ProgramDef:
@@ -138,7 +147,17 @@ class ProgramDef:
 
 
 def default_programs(n_stations: int) -> list[ProgramDef]:
-    """Three programs with disjoint station sets (one disabled) for testing."""
+    """Programs with DISJOINT station sets (two disabled) for testing.
+
+    Chosen so the on-device Programs UI can be exercised end-to-end:
+      - 6 programs total  -> more than one list page (MAX_PROG_ROWS == 4).
+      - "Full System Test" has 11 stations -> overflows the queue window
+        (MAX_QROWS == 9) so windowing + fade indicators show.
+      - that program also contains station 14 (the long name) -> queue-row
+        text wrapping/ellipsis is exercised while it runs.
+      - every station set is disjoint so the panel's "identify the running
+        program by its live stations" matcher stays unambiguous.
+    """
 
     def durs(mapping: dict[int, int]) -> list[int]:
         v = [0] * n_stations
@@ -157,6 +176,17 @@ def default_programs(n_stations: int) -> list[ProgramDef]:
         # Evening Patio — DISABLED — 18:30 — pots + pool deck
         ProgramDef("Evening Patio", False, EVERY_DAY, 18 * 60 + 30,
                    durs({5: 120, 12: 180})),
+        # Full System Test — every day 04:00 — 11 stations, overflows the
+        # queue window; includes the long-named station 14.
+        ProgramDef("Full System Test", True, EVERY_DAY, 4 * 60,
+                   durs({1: 300, 6: 240, 9: 360, 10: 300, 11: 180, 13: 240,
+                         14: 600, 15: 300, 16: 420, 17: 240, 18: 180})),
+        # Backyard Soak — Tue/Thu 07:00 — deep soak beds
+        ProgramDef("Backyard Soak", True, TUE | THU, 7 * 60,
+                   durs({19: 900, 20: 720})),
+        # Front Curb Strip — DISABLED — Sat/Sun 06:30 — curb strips
+        ProgramDef("Front Curb Strip", False, SAT | SUN, 6 * 60 + 30,
+                   durs({21: 300, 22: 240})),
     ]
 
 

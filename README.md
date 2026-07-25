@@ -75,7 +75,7 @@ flash/manifest.json
 ### Develop without the controller
 
 ```bash
-python3 docs/mock_os.py            # serves the OpenSprinkler API on :8080 (14 fake stations, 3 programs)
+python3 docs/mock_os.py            # serves the OpenSprinkler API on :8080 (24 fake stations, 6 programs)
 python3 docs/mock_os.py --schedule # also fire programs at their scheduled start times
 python3 docs/test_mock_os.py       # run the emulator's contract/connection tests
 ```
