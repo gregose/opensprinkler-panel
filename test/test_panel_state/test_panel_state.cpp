@@ -66,6 +66,23 @@ static JpData make_jp(int nprogs) {
   return jp;
 }
 
+// Build a JpData whose first program has the given per-station durations
+// (seconds). Any additional programs get all-zero durations.
+static JpData make_jp_durations(const std::vector<int>& durations,
+                                int nprogs = 1) {
+  JpData jp;
+  jp.nprogs = nprogs;
+  for (int i = 0; i < nprogs; ++i) {
+    Program p;
+    p.enabled = true;
+    p.name = "P" + std::to_string(i + 1);
+    if (i == 0) p.durations = durations;
+    else p.durations.assign(durations.size(), 0);
+    jp.programs.push_back(p);
+  }
+  return jp;
+}
+
 struct Fixture {
   StationModel model;
   PanelState ps;
@@ -386,6 +403,70 @@ void test_manual_run_classified_as_running_phase() {
   TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
 }
 
+void test_program_run_counts_up_through_full_station_set() {
+  // Program index 0 (pid=1) with 3 stations. Station 0 already finished
+  // (dropped from ps), station 1 running, station 2 upcoming. The panel should
+  // report "station 2 of 3" — counting up through the fixed total — with the
+  // finished station retained (done) rather than shrinking the total.
+  Fixture f(3);
+  f.ps.set_program_list(make_jp_durations({300, 240, 180}));
+
+  JcData jc = make_jc_idle(3);
+  jc.devt = 1000;
+  jc.sbits[1 / 8] |= static_cast<uint8_t>(1u << (1 % 8));
+  jc.ps[1] = PsEntry{1, 120, 950, 0};   // running
+  jc.ps[2] = PsEntry{1, 180, 1100, 0};  // upcoming (future start)
+
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);
+  TEST_ASSERT_EQUAL_INT(1, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(2, pr.current_station_number);
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);
+}
+
+void test_external_program_run_identified_by_station_set() {
+  // A manual/app-launched run (NOT panel-initiated) reports pid=254 with no
+  // program index. Program index 1 owns stations {1,2,3}; station 1 has already
+  // finished (dropped from ps). The matcher must recover index 1 purely from the
+  // live station set and count up through the fixed M=3 with station 1 marked
+  // done — i.e. the fix works even when the panel didn't start the run.
+  Fixture f(4);
+  JpData jp;
+  jp.nprogs = 2;
+  Program p0;
+  p0.enabled = true;
+  p0.name = "P1";
+  p0.durations = {300, 0, 0, 0};      // program 0 owns only station 0
+  Program p1;
+  p1.enabled = true;
+  p1.name = "P2";
+  p1.durations = {0, 240, 180, 120};  // program 1 owns stations 1,2,3
+  jp.programs = {p0, p1};
+  f.ps.set_program_list(jp);
+
+  JcData jc = make_jc_idle(4);
+  jc.devt = 1000;
+  jc.sbits[2 / 8] |= static_cast<uint8_t>(1u << (2 % 8));
+  jc.ps[2] = PsEntry{254, 100, 950, 0};   // running (station 2)
+  jc.ps[3] = PsEntry{254, 120, 1100, 0};  // upcoming (future start)
+  // station 1 already finished -> absent from ps for pid 254
+
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, pr.program_index);           // recovered P2 by match
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);           // fixed full total M
+  TEST_ASSERT_EQUAL_INT(2, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(2, pr.current_station_number);  // done(1) -> current #2
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);                   // station 1 completed
+}
+
 void test_program_run_classified_as_program_running_phase() {
   Fixture f;
   f.ps.set_program_list(make_jp(2));
@@ -642,6 +723,82 @@ void test_program_running_countdown_does_not_trigger_await_close() {
 }
 
 // ---------------------------------------------------------------------------
+// M9 — paused program / manual-run labeling (UX bug fixes)
+// ---------------------------------------------------------------------------
+
+// While paused, the controller pushes every station's start into the future so
+// none report as "started" (current_sid=-1). The panel must still surface the
+// first pending station and its remaining time instead of a blank 0:00.
+void test_paused_program_shows_pending_station_and_countdown() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;      // paused
+  jc.pt = 600;    // resumes in 10 min
+  // Station 0 belongs to program 1 (pid=1) but its start is in the FUTURE
+  // (paused), rem carries the full duration.
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;  // > devt -> not started
+
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT(600, f.ps.view().pause_remaining_s);
+  // Fallback: show station 0 as current with its full remaining time.
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().prog_run.current_sid);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
+// A paused program must freeze the countdown across ticks.
+void test_paused_program_freezes_countdown() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;
+  jc.pt = 600;
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+
+  f.ps.tick(10000);  // 5s later — but paused, so no decrement.
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
+// A panel-initiated program run reports pid=254 in /jc (program_index=-1). The
+// panel must remember which program it launched so the UI can label it.
+void test_panel_launched_run_remembers_program_index() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(3));
+
+  f.ps.run_program_intent(1);  // 0-based index 1 (program "P2")
+  f.ps.mark_desired_delivered();
+
+  // Controller reports a run-once/manual program run (pid=254).
+  f.ps.on_jc(make_jc_program_running(0, 120, 254), 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  // program_model can't derive the index from pid=254, so the panel restores it.
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
+}
+
+// A scheduled (non-panel) program run reports a real 1-based pid, so the model
+// resolves the index directly and the panel must NOT override it.
+void test_scheduled_run_keeps_model_program_index() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(3));
+  f.ps.on_jc(make_jc_program_running(0, 120, 2), 1000);  // pid=2 -> index 1
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
+}
+
+// ---------------------------------------------------------------------------
 // M9 — set_program_list
 // ---------------------------------------------------------------------------
 
@@ -686,6 +843,8 @@ int main(int, char**) {
   // M9 — program screen classification
   RUN_TEST(test_manual_run_classified_as_running_phase);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
+  RUN_TEST(test_program_run_counts_up_through_full_station_set);
+  RUN_TEST(test_external_program_run_identified_by_station_set);
   RUN_TEST(test_idle_jc_stays_idle_phase);
   RUN_TEST(test_program_run_then_idle_returns_to_idle_phase);
   RUN_TEST(test_jc_fields_stored_in_view);
@@ -716,6 +875,12 @@ int main(int, char**) {
   // M9 — countdown dead-reckoning for ProgramRunning
   RUN_TEST(test_program_running_countdown_dead_reckons);
   RUN_TEST(test_program_running_countdown_does_not_trigger_await_close);
+
+  // M9 — paused program / manual-run labeling (UX bug fixes)
+  RUN_TEST(test_paused_program_shows_pending_station_and_countdown);
+  RUN_TEST(test_paused_program_freezes_countdown);
+  RUN_TEST(test_panel_launched_run_remembers_program_index);
+  RUN_TEST(test_scheduled_run_keeps_model_program_index);
 
   // M9 — set_program_list
   RUN_TEST(test_set_program_list_updates_cache);

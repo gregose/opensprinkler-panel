@@ -5,6 +5,50 @@
 
 namespace osp {
 
+namespace {
+// Identify which saved program a run belongs to by matching the live /jc
+// station set against each program's station definition. A manual or
+// app-launched program run reports pid=254 (no program index in /jc), so this
+// recovers the index regardless of what started the run — matching by station
+// set works for scheduled, panel- and externally-launched runs alike. Picks
+// the program that contains every currently-queued station with the fewest
+// already-completed stations (closest match). Returns -1 if none match.
+int infer_program_index_by_stations(const JpData& jp,
+                                    const std::vector<ProgramPsEntry>& ps,
+                                    int pid) {
+  std::vector<int> live;
+  for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
+    if (ps[sid].pid == pid) live.push_back(sid);
+  }
+  if (live.empty()) return -1;
+
+  int best = -1;
+  int best_extra = -1;
+  for (int i = 0; i < static_cast<int>(jp.programs.size()); ++i) {
+    const auto& durs = jp.programs[i].durations;
+    int setsize = 0;
+    for (int d : durs) {
+      if (d > 0) ++setsize;
+    }
+    bool contains_all = true;
+    for (int sid : live) {
+      if (!(sid >= 0 && sid < static_cast<int>(durs.size()) && durs[sid] > 0)) {
+        contains_all = false;
+        break;
+      }
+    }
+    if (!contains_all) continue;
+    const int extra = setsize - static_cast<int>(live.size());  // completed
+    if (extra < 0) continue;
+    if (best < 0 || extra < best_extra) {
+      best = i;
+      best_extra = extra;
+    }
+  }
+  return best;
+}
+}  // namespace
+
 PanelState::PanelState(StationModel& model, int default_run_time_s)
     : model_(model) {
   view_.run_time_s = clamp_run_time(default_run_time_s);
@@ -55,14 +99,47 @@ void PanelState::enter_program_running(const ProgramRunState& prog_state) {
   view_.prog_run = prog_state;
   // Sync the countdown from the current station for dead-reckoning between polls.
   int cd = 0;
-  for (const auto& q : prog_state.queue) {
-    if (q.sid == prog_state.current_sid) {
-      cd = q.remaining_seconds;
-      break;
+  if (view_.prog_run.current_sid >= 0) {
+    for (const auto& q : view_.prog_run.queue) {
+      if (q.sid == view_.prog_run.current_sid) {
+        cd = q.remaining_seconds;
+        break;
+      }
     }
+  } else if (!view_.prog_run.queue.empty()) {
+    // No station reports as "started" — this happens while the program is
+    // paused (the controller pushes every station's start time into the
+    // future) or in the brief gap between stations. Fall back to the first
+    // station that still has time left so the running screen shows a station
+    // name + its countdown instead of a blank 0:00 "Finishing..." state.
+    const ProgramQueueEntry* pick = nullptr;
+    int pick_number = 0;
+    int n = 0;
+    for (const auto& q : view_.prog_run.queue) {
+      ++n;
+      if (q.remaining_seconds > 0) {
+        pick = &q;
+        pick_number = n;
+        break;
+      }
+    }
+    if (pick == nullptr) {
+      pick = &view_.prog_run.queue.front();
+      pick_number = 1;
+    }
+    view_.prog_run.current_sid = pick->sid;
+    view_.prog_run.current_station_number = pick_number;
+    cd = pick->remaining_seconds;
   }
   view_.countdown_s = std::max(0, cd);
   last_countdown_tick_ms_ = now_ms_;
+  // A manual program run reports pid=254 in /jc, so program_model can't know
+  // which program it is (program_index=-1). If the panel launched it, restore
+  // the remembered index so the UI can label the running screen.
+  if (view_.prog_run.program_index < 0 && run_initiated_by_panel_ &&
+      launched_program_index_ >= 0) {
+    view_.prog_run.program_index = launched_program_index_;
+  }
   // Only force-wake the display if the panel itself initiated this run.
   // External/scheduled runs let the normal sleep timeout apply.
   if (newly_entered && run_initiated_by_panel_) {
@@ -83,6 +160,7 @@ void PanelState::enter_idle() {
   view_.running_sid = -1;
   view_.countdown_s = 0;
   view_.prog_run = ProgramRunState{};
+  launched_program_index_ = -1;
   if (!was_idle) last_touch_ms_ = now_ms_;
 }
 
@@ -178,19 +256,22 @@ void PanelState::set_prog_list_page(int page) {
 void PanelState::run_program_intent(int pid) {
   on_touch(now_ms_);
   desired_.kind = IntentKind::RunProgram;
-  desired_.sid = pid;
+  desired_.sid = pid;  // 0-based program index (as required by /mp?pid=)
   desired_.seconds = 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
   run_initiated_by_panel_ = true;
   view_.run_initiated_by_panel = true;
   view_.showing_programs_list = false;
+  // Remember what we launched so the running screen can show the program name
+  // even though a manual program run reports pid=254 (program_index=-1) in /jc.
+  launched_program_index_ = pid;
 }
 
 void PanelState::toggle_program_enabled_intent(int pid, bool en) {
   on_touch(now_ms_);
   desired_.kind = IntentKind::SetProgramEnabled;
-  desired_.sid = pid;
+  desired_.sid = pid;  // 0-based program index (as required by /cp?pid=)
   desired_.seconds = en ? 1 : 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
@@ -230,27 +311,33 @@ void PanelState::tick(uint32_t now_ms) {
   // Countdown dead-reckoning for both manual and program running phases.
   if ((view_.phase == Phase::Running || view_.phase == Phase::ProgramRunning) &&
       view_.countdown_s > 0) {
-    const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
-    const uint32_t secs = elapsed / 1000u;
-    if (secs > 0u) {
-      last_countdown_tick_ms_ += secs * 1000u;
-      if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
-        view_.countdown_s = 0;
-        if (view_.phase == Phase::Running && !await_close_) {
-          const int finished_sid = view_.running_sid;
-          const int next_sid =
-              view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
-          if (next_sid != -1) {
-            queue_desired_run(next_sid);
-            begin_await_close();
-          } else {
-            begin_await_close();
+    if (view_.paused) {
+      // A paused program freezes its countdown; keep the tick baseline current
+      // so resuming doesn't subtract the whole paused interval at once.
+      last_countdown_tick_ms_ = now_ms;
+    } else {
+      const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
+      const uint32_t secs = elapsed / 1000u;
+      if (secs > 0u) {
+        last_countdown_tick_ms_ += secs * 1000u;
+        if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
+          view_.countdown_s = 0;
+          if (view_.phase == Phase::Running && !await_close_) {
+            const int finished_sid = view_.running_sid;
+            const int next_sid =
+                view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
+            if (next_sid != -1) {
+              queue_desired_run(next_sid);
+              begin_await_close();
+            } else {
+              begin_await_close();
+            }
           }
+          // For ProgramRunning: countdown reaching 0 just holds at 0 until
+          // the next /jc poll updates the state.
+        } else {
+          view_.countdown_s -= static_cast<int>(secs);
         }
-        // For ProgramRunning: countdown reaching 0 just holds at 0 until
-        // the next /jc poll updates the state.
-      } else {
-        view_.countdown_s -= static_cast<int>(secs);
       }
     }
   }
@@ -325,8 +412,40 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
 
   // Classify the controller's current run state using the program model.
   const auto ps = to_program_ps(jc);
-  const ProgramRunState prog_state =
+  ProgramRunState prog_state =
       resolve_program_run_state(ps, jp_cache_.nprogs, static_cast<long>(jc.devt));
+
+  // If a program is running, re-resolve with the program's *full* ordered
+  // station list (from /jp) so the queue includes already-completed stations.
+  // This makes "STATION N OF M" count up through a fixed M and lets finished
+  // stations render as done instead of vanishing. A panel-launched run reports
+  // pid=254 (program_index=-1); fall back to the remembered launched index.
+  if (prog_state.run_class == RunClass::ProgramRun) {
+    // Resolve which saved program this run is, independent of what launched it:
+    //   scheduled run  -> pid=program_index+1 (already set by the resolver)
+    //   manual/app run -> pid=254 (program_index=-1); recover the index by
+    //                     matching the live station set, then fall back to a
+    //                     panel-launched hint if the match is ambiguous.
+    int eff_idx = prog_state.program_index;
+    if (eff_idx < 0) {
+      eff_idx = infer_program_index_by_stations(jp_cache_, ps, 254);
+    }
+    if (eff_idx < 0 && run_initiated_by_panel_ && launched_program_index_ >= 0) {
+      eff_idx = launched_program_index_;
+    }
+    if (eff_idx >= 0 && eff_idx < static_cast<int>(jp_cache_.programs.size())) {
+      const auto& durs = jp_cache_.programs[eff_idx].durations;
+      std::vector<ProgramStation> pstations;
+      for (int sid = 0; sid < static_cast<int>(durs.size()); ++sid) {
+        if (durs[sid] > 0) pstations.push_back(ProgramStation{sid, durs[sid]});
+      }
+      if (!pstations.empty()) {
+        prog_state = resolve_program_run_state(
+            ps, jp_cache_.nprogs, static_cast<long>(jc.devt), &pstations);
+        prog_state.program_index = eff_idx;  // keep name resolvable for pid=254
+      }
+    }
+  }
 
   // Find the running manual-station sid (needed only for ManualRun path).
   int jc_running_sid = -1;

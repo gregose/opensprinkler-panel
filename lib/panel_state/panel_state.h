@@ -143,6 +143,10 @@ class PanelState {
   bool await_close_ = false;
   bool initialized_ = false;
   bool run_initiated_by_panel_ = false;
+  // 0-based index of a program the panel launched via /mp. Manual program runs
+  // report pid=254 in /jc (program_index=-1), so we remember what we started to
+  // label the running screen. Cleared on idle.
+  int launched_program_index_ = -1;
 
   int clamp_run_time(int t_sec) const;
   void queue_desired_run(int sid);

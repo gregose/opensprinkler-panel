@@ -228,9 +228,11 @@ long next_run(const Program& p,
   return sentinel;
 }
 
-ProgramRunState resolve_program_run_state(const std::vector<ProgramPsEntry>& ps,
-                                          int nprogs,
-                                          long now_local_epoch) {
+ProgramRunState resolve_program_run_state(
+    const std::vector<ProgramPsEntry>& ps,
+    int nprogs,
+    long now_local_epoch,
+    const std::vector<ProgramStation>* program_stations) {
   ProgramRunState state;
   RunClass cls = RunClass::Idle;
   const int pid = pick_pid(ps, nprogs, cls);
@@ -239,6 +241,62 @@ ProgramRunState resolve_program_run_state(const std::vector<ProgramPsEntry>& ps,
   if (cls != RunClass::ProgramRun) return state;
 
   state.program_index = (pid == 254) ? -1 : (pid - 1);
+
+  // ---- Full-set path: reconstruct the whole program, including stations
+  // that have already finished (and were dropped from the live ps[]). -------
+  if (program_stations != nullptr && !program_stations->empty()) {
+    int current_idx = -1;
+    for (const auto& def : *program_stations) {
+      ProgramQueueEntry q;
+      q.sid = def.sid;
+      q.total_seconds = def.total_seconds;
+
+      const ProgramPsEntry* in = nullptr;
+      if (def.sid >= 0 && def.sid < static_cast<int>(ps.size()) &&
+          ps[def.sid].pid == pid) {
+        in = &ps[def.sid];
+      }
+
+      if (in != nullptr && in->rem > 0) {
+        q.remaining_seconds = in->rem;
+        q.started = in->start != 0 && in->start <= now_local_epoch;
+        q.done = false;
+      } else {
+        // Not in the live queue for this pid (or drained) → already ran.
+        q.remaining_seconds = 0;
+        q.started = true;
+        q.done = true;
+      }
+
+      state.total_remaining_seconds += q.remaining_seconds;
+      state.queue.push_back(q);
+    }
+
+    // Current station = the running one (started, time left). While paused the
+    // controller pushes all starts into the future, so nothing reports as
+    // started; fall back to the first not-yet-done station with time left.
+    for (int i = 0; i < static_cast<int>(state.queue.size()); ++i) {
+      const auto& q = state.queue[i];
+      if (q.started && !q.done && q.remaining_seconds > 0) { current_idx = i; break; }
+    }
+    if (current_idx < 0) {
+      for (int i = 0; i < static_cast<int>(state.queue.size()); ++i) {
+        if (!state.queue[i].done && state.queue[i].remaining_seconds > 0) {
+          current_idx = i;
+          break;
+        }
+      }
+    }
+
+    state.station_count = static_cast<int>(state.queue.size());
+    if (current_idx >= 0) {
+      state.current_sid = state.queue[current_idx].sid;
+      state.current_station_number = current_idx + 1;
+    }
+    return state;
+  }
+
+  // ---- Legacy path: reconstruct only from the live ps[] entries. ----------
   struct Ordered {
     ProgramQueueEntry e;
     long start;

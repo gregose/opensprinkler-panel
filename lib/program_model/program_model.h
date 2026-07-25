@@ -85,6 +85,15 @@ struct ProgramQueueEntry {
   int total_seconds = 0;
   int remaining_seconds = 0;
   bool started = false;
+  bool done = false;  // station already completed (no longer in the live /jc queue)
+};
+
+// One station of a program's definition (from /jp durations), in station-id
+// order. Used to reconstruct the *full* run queue — including already-completed
+// stations, which the controller drops from /jc `ps[]` as they finish.
+struct ProgramStation {
+  int sid = 0;
+  int total_seconds = 0;
 };
 
 struct ProgramRunState {
@@ -97,8 +106,18 @@ struct ProgramRunState {
   int total_remaining_seconds = 0;
 };
 
-ProgramRunState resolve_program_run_state(const std::vector<ProgramPsEntry>& ps,
-                                          int nprogs,
-                                          long now_local_epoch);
+// Resolve the controller's current run state from /jc `ps[]`.
+//
+// When `program_stations` is supplied (the running program's full ordered
+// station list, from /jp), the returned queue spans *every* station in the
+// program — completed ones (dropped from `ps`) are included with done=true —
+// so `station_count` is the fixed total M and `current_station_number` counts
+// up 1..M as the run progresses. When null, the queue is reconstructed from
+// the live `ps[]` entries only (legacy behaviour).
+ProgramRunState resolve_program_run_state(
+    const std::vector<ProgramPsEntry>& ps,
+    int nprogs,
+    long now_local_epoch,
+    const std::vector<ProgramStation>* program_stations = nullptr);
 
 }  // namespace osp

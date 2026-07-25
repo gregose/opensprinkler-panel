@@ -120,8 +120,6 @@ static inline lv_color_t hex_color(uint32_t hex) {
     return lv_color_make((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
 }
 
-// UTF-8 em-dash used as a "no value" placeholder in labels.
-static constexpr const char* EM_DASH = "\xe2\x80\x94";
 static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
     if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
     else        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
@@ -1214,17 +1212,16 @@ static constexpr int MAX_PROG_ROWS  = 4;
 static constexpr int MAX_PROG_PAGES = 6;
 static lv_obj_t* prog_rows[MAX_PROG_ROWS]          = {};
 static lv_obj_t* prog_row_name[MAX_PROG_ROWS]      = {};
-static lv_obj_t* prog_row_chip[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_next[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_btn_toggle[MAX_PROG_ROWS] = {};
 static lv_obj_t* prog_row_btn_run[MAX_PROG_ROWS]   = {};
 static lv_obj_t* prog_page_dots[MAX_PROG_PAGES]    = {};
+static lv_obj_t* lbl_prog_page                     = nullptr;  // "Page N of M"
 
 // M9: Program-run queue view panel
 static lv_obj_t* pnl_prog_queue  = nullptr;
 static lv_obj_t* lbl_prog_eyebrow = nullptr;
 static lv_obj_t* lbl_prog_name   = nullptr;
-static lv_obj_t* lbl_prog_stn    = nullptr;
 static lv_obj_t* lbl_prog_cd     = nullptr;
 
 // M9: Program queue action buttons (at ACTION_Y, same row as btn_advance/btn_stop)
@@ -1232,6 +1229,20 @@ static lv_obj_t* btn_prog_adv    = nullptr;
 static lv_obj_t* btn_prog_pause  = nullptr;
 static lv_obj_t* lbl_prog_pause_txt = nullptr;
 static lv_obj_t* btn_prog_stop   = nullptr;
+
+// M9: "Resumes in M:SS" line shown on the queue view while paused.
+static lv_obj_t* lbl_prog_resume = nullptr;
+
+// M9: Right-side program queue LIST (station rows) shown during a program run.
+static lv_obj_t* pnl_prog_qlist   = nullptr;
+static lv_obj_t* lbl_qlist_hdr    = nullptr;  // program name header
+static lv_obj_t* lbl_qlist_total  = nullptr;  // total time remaining
+static lv_obj_t* qfade_top        = nullptr;  // top fade mask ("more above")
+static lv_obj_t* qfade_bottom     = nullptr;  // bottom fade mask ("more below")
+static constexpr int MAX_QROWS = 9;
+static lv_obj_t* qrow_mark[MAX_QROWS] = {};
+static lv_obj_t* qrow_name[MAX_QROWS] = {};
+static lv_obj_t* qrow_dur[MAX_QROWS]  = {};
 
 // M9: signal that /jp should be re-fetched after a SetProgramEnabled delivery
 static volatile bool g_jp_needs_refresh = false;
@@ -1354,7 +1365,8 @@ static void ev_prog_toggle_enabled(lv_event_t* e) {
     const auto& progs = g_ps->program_list().programs;
     const int idx = pid - 1;
     if (idx >= static_cast<int>(progs.size())) return;
-    g_ps->toggle_program_enabled_intent(pid, !progs[idx].enabled);
+    // Intents take a 0-based program index (/cp?pid= is 0-based in the API).
+    g_ps->toggle_program_enabled_intent(idx, !progs[idx].enabled);
 }
 static void ev_prog_run(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -1362,7 +1374,8 @@ static void ev_prog_run(lv_event_t* e) {
     if (!(lock && g_ps)) return;
     lv_obj_t* btn = static_cast<lv_obj_t*>(lv_event_get_target(e));
     const int pid = get_prog_pid(btn);
-    if (pid >= 1) g_ps->run_program_intent(pid);
+    // Intents take a 0-based program index (/mp?pid= is 0-based in the API).
+    if (pid >= 1) g_ps->run_program_intent(pid - 1);
 }
 
 // M9: Program queue actions
@@ -1406,6 +1419,16 @@ static constexpr int CONTENT_H = SCREEN_H - CONTENT_Y - GRID_H;
 static constexpr int PANEL_H   = CONTENT_H - ACTION_H;
 static constexpr int ACTION_Y  = CONTENT_Y + PANEL_H;
 static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
+
+// Full-height layout, used when the station grid is hidden (programs list and
+// program-run screens). These surfaces have their own widgets, so they simply
+// build at the taller geometry — no runtime resize needed.
+static constexpr int FULL_BOTTOM   = SCREEN_H - 4;                  // 316
+static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H;        // 264
+static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left panel above the action row
+static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
+static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
+
 
 // ---------------------------------------------------------------------------
 // Signal-meter helpers (Part 3)
@@ -1638,12 +1661,8 @@ static void build_ui() {
     lv_obj_set_width(lbl_idle_sub, LEFT_W - 28);  // honour pad_all=14 each side
     lv_obj_align(lbl_idle_sub, LV_ALIGN_TOP_LEFT, 0, 50);
 
-    // "Programs" entry button — bottom-left of idle panel.
-    btn_programs = make_btn(pnl_idle, "Programs " LV_SYMBOL_RIGHT,
-                            CLR_LINE, CLR_TEAL, &lv_font_montserrat_16, 8);
-    lv_obj_set_size(btn_programs, 150, 34);
-    lv_obj_align(btn_programs, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_add_event_cb(btn_programs, ev_open_programs, LV_EVENT_CLICKED, nullptr);
+    // NOTE: the "Programs" entry button lives in the right settings panel,
+    // below Auto-advance (built further down), to match the mockup.
 
     // ---- Left panel: Running ------------------------------------------
     pnl_running = lv_obj_create(scr);
@@ -1680,8 +1699,10 @@ static void build_ui() {
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 66);
 
     // ---- Left panel: Program queue view (M9) ---------------------------
+    // The station grid is hidden during a program run, so this panel uses the
+    // full height down to the action row.
     pnl_prog_queue = lv_obj_create(scr);
-    lv_obj_set_size(pnl_prog_queue, LEFT_W, PANEL_H);
+    lv_obj_set_size(pnl_prog_queue, LEFT_W, FULL_PANEL_H);
     lv_obj_set_pos(pnl_prog_queue, 0, CONTENT_Y);
     lv_obj_set_style_bg_color(pnl_prog_queue, hex_color(CLR_BG), 0);
     lv_obj_set_style_border_width(pnl_prog_queue, 0, 0);
@@ -1690,32 +1711,35 @@ static void build_ui() {
     lv_obj_add_flag(pnl_prog_queue, LV_OBJ_FLAG_HIDDEN);
 
     lbl_prog_eyebrow = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_eyebrow, "PROGRAM");
+    lv_label_set_text(lbl_prog_eyebrow, "STATION");
     lv_obj_set_style_text_font(lbl_prog_eyebrow, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_prog_eyebrow, hex_color(CLR_TEAL), 0);
-    lv_obj_align(lbl_prog_eyebrow, LV_ALIGN_TOP_LEFT, 0, 2);
+    lv_obj_align(lbl_prog_eyebrow, LV_ALIGN_TOP_LEFT, 0, 6);
 
+    // Current station name (repurposed: the running zone, not the program name).
+    // The program name is shown only above the queue (right panel) per the
+    // mockup — the status column mirrors the manual-run layout.
     lbl_prog_name = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_name, "");
     lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
     lv_label_set_long_mode(lbl_prog_name, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
-    lv_obj_align(lbl_prog_name, LV_ALIGN_TOP_LEFT, 0, 20);
-
-    lbl_prog_stn = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_stn, "");
-    lv_obj_set_width(lbl_prog_stn, LEFT_W - 28);
-    lv_label_set_long_mode(lbl_prog_stn, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl_prog_stn, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_prog_stn, hex_color(CLR_TEAL), 0);
-    lv_obj_align(lbl_prog_stn, LV_ALIGN_TOP_LEFT, 0, 46);
+    lv_obj_align(lbl_prog_name, LV_ALIGN_TOP_LEFT, 0, 28);
 
     lbl_prog_cd = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_cd, "0:00");
     lv_obj_set_style_text_font(lbl_prog_cd, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_prog_cd, hex_color(CLR_AMBER), 0);
-    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 66);
+    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 70);
+
+    // "Resumes in M:SS" — a second line below the countdown while paused.
+    lbl_prog_resume = lv_label_create(pnl_prog_queue);
+    lv_label_set_text(lbl_prog_resume, "");
+    lv_obj_set_style_text_font(lbl_prog_resume, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_prog_resume, hex_color(CLR_AMBER), 0);
+    lv_obj_add_flag(lbl_prog_resume, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(lbl_prog_resume, LV_ALIGN_TOP_LEFT, 0, 132);
 
     // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_SIDE_PAD = 10;
@@ -1737,6 +1761,7 @@ static void build_ui() {
     lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
 
     // ---- Program queue action row (M9): Advance / Pause / Stop ---------
+    // Anchored at the full-height action row (the grid is hidden during runs).
     {
         static constexpr int PROG_SIDE_PAD = 8;
         static constexpr int PROG_BTN_GAP  = 8;
@@ -1745,14 +1770,14 @@ static void build_ui() {
         btn_prog_adv = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
                                 CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
         lv_obj_set_size(btn_prog_adv, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, ACTION_Y);
+        lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, PROG_ACTION_Y);
         lv_obj_add_flag(btn_prog_adv, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_event_cb(btn_prog_adv, ev_prog_advance, LV_EVENT_CLICKED, nullptr);
 
         btn_prog_pause = make_btn(scr, "Pause",
                                   CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 10);
         lv_obj_set_size(btn_prog_pause, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_pause, PROG_SIDE_PAD + prog_btn_w + PROG_BTN_GAP, ACTION_Y);
+        lv_obj_set_pos(btn_prog_pause, PROG_SIDE_PAD + prog_btn_w + PROG_BTN_GAP, PROG_ACTION_Y);
         lv_obj_add_flag(btn_prog_pause, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_event_cb(btn_prog_pause, ev_prog_pause, LV_EVENT_CLICKED, nullptr);
         lbl_prog_pause_txt = static_cast<lv_obj_t*>(lv_obj_get_child(btn_prog_pause, 0));
@@ -1760,7 +1785,7 @@ static void build_ui() {
         btn_prog_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
                                  CLR_RED, CLR_BG, &lv_font_montserrat_16, 10);
         lv_obj_set_size(btn_prog_stop, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_stop, PROG_SIDE_PAD + 2*(prog_btn_w + PROG_BTN_GAP), ACTION_Y);
+        lv_obj_set_pos(btn_prog_stop, PROG_SIDE_PAD + 2*(prog_btn_w + PROG_BTN_GAP), PROG_ACTION_Y);
         lv_obj_add_flag(btn_prog_stop, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_event_cb(btn_prog_stop, ev_prog_stop, LV_EVENT_CLICKED, nullptr);
     }
@@ -1808,16 +1833,14 @@ static void build_ui() {
         lv_obj_align(btn_rt_plus, LV_ALIGN_TOP_RIGHT, 0, STEP_Y);
         lv_obj_add_event_cb(btn_rt_plus, ev_rt_plus, LV_EVENT_CLICKED, nullptr);
 
-        lv_obj_t* divider = lv_obj_create(pnl);
-        lv_obj_remove_style_all(divider);
-        lv_obj_set_size(divider, PANEL_CONTENT_W, 1);
-        lv_obj_set_style_bg_color(divider, hex_color(CLR_LINE), 0);
-        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
-        lv_obj_align(divider, LV_ALIGN_TOP_LEFT, 0, 80);
-
+        // Auto-advance row sits directly under the stepper (no divider) so the
+        // two run-time controls read as a group. ~8 px gap keeps touch targets
+        // from colliding.
+        static constexpr int AA_Y = STEP_Y + STEP_H + 8;  // just below stepper
+        static constexpr int AA_H = 38;
         lv_obj_t* row_auto_adv = lv_obj_create(pnl);
-        lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, 40);
-        lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, 94);
+        lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, AA_H);
+        lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, AA_Y);
         lv_obj_set_style_bg_opa(row_auto_adv, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(row_auto_adv, 0, 0);
         lv_obj_set_style_pad_all(row_auto_adv, 0, 0);
@@ -1837,6 +1860,115 @@ static void build_ui() {
         lv_obj_set_style_bg_color(sw_auto_adv, hex_color(CLR_TEAL),
                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_clear_flag(sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
+
+        // "Programs" entry button — vertically centred in the space between the
+        // Auto-advance row and the panel's bottom edge (biased a few px lower so
+        // it reads as centred in the column rather than hugging Auto-advance).
+        static constexpr int PROG_BTN_H = 38;
+        static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
+        const int aa_bottom = AA_Y + AA_H;
+        int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
+        if (prog_btn_y > PANEL_USABLE_H - PROG_BTN_H) {
+            prog_btn_y = PANEL_USABLE_H - PROG_BTN_H;
+        }
+        btn_programs = make_btn(pnl, "Programs " LV_SYMBOL_RIGHT,
+                                CLR_LINE, CLR_TEAL, &lv_font_montserrat_16, 8);
+        lv_obj_set_size(btn_programs, PANEL_CONTENT_W, PROG_BTN_H);
+        lv_obj_align(btn_programs, LV_ALIGN_TOP_LEFT, 0, prog_btn_y);
+        lv_obj_add_event_cb(btn_programs, ev_open_programs, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // ---- Right-side program QUEUE list (M9) ----------------------------
+    // Shown during a program run in place of the settings panel (full height,
+    // since the grid is hidden). Lists the program's stations (done / current /
+    // upcoming) reconstructed from the program definition + live /jc ps[].
+    {
+        pnl_prog_qlist = lv_obj_create(scr);
+        lv_obj_set_size(pnl_prog_qlist, RIGHT_W, FULL_RIGHT_H);
+        lv_obj_set_pos(pnl_prog_qlist, LEFT_W, CONTENT_Y);
+        lv_obj_set_style_bg_color(pnl_prog_qlist, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(pnl_prog_qlist, 0, 0);
+        lv_obj_set_style_pad_all(pnl_prog_qlist, 10, 0);
+        lv_obj_clear_flag(pnl_prog_qlist, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(pnl_prog_qlist, LV_OBJ_FLAG_HIDDEN);
+
+        const int qcontent_w = RIGHT_W - 20;
+
+        lbl_qlist_hdr = lv_label_create(pnl_prog_qlist);
+        lv_label_set_text(lbl_qlist_hdr, "");
+        lv_obj_set_width(lbl_qlist_hdr, qcontent_w);
+        lv_label_set_long_mode(lbl_qlist_hdr, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(lbl_qlist_hdr, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl_qlist_hdr, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_qlist_hdr, LV_ALIGN_TOP_LEFT, 0, 0);
+
+        lbl_qlist_total = lv_label_create(pnl_prog_qlist);
+        lv_label_set_text(lbl_qlist_total, "");
+        lv_obj_set_width(lbl_qlist_total, qcontent_w);
+        lv_label_set_long_mode(lbl_qlist_total, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(lbl_qlist_total, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_qlist_total, hex_color(CLR_MUTED), 0);
+        lv_obj_align(lbl_qlist_total, LV_ALIGN_TOP_LEFT, 0, 22);
+
+        static constexpr int QROW_Y0 = 50;
+        static constexpr int QROW_H  = 24;
+
+        for (int i = 0; i < MAX_QROWS; ++i) {
+            const int y = QROW_Y0 + i * QROW_H;
+
+            qrow_mark[i] = lv_label_create(pnl_prog_qlist);
+            lv_label_set_text(qrow_mark[i], "");
+            lv_obj_set_style_text_font(qrow_mark[i], &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(qrow_mark[i], hex_color(CLR_MUTED), 0);
+            lv_obj_set_pos(qrow_mark[i], 0, y);
+
+            qrow_name[i] = lv_label_create(pnl_prog_qlist);
+            lv_label_set_text(qrow_name[i], "");
+            lv_obj_set_width(qrow_name[i], qcontent_w - 22 - 48);
+            lv_label_set_long_mode(qrow_name[i], LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_font(qrow_name[i], &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(qrow_name[i], hex_color(CLR_TEXT), 0);
+            lv_obj_set_pos(qrow_name[i], 22, y);
+
+            qrow_dur[i] = lv_label_create(pnl_prog_qlist);
+            lv_label_set_text(qrow_dur[i], "");
+            lv_obj_set_width(qrow_dur[i], 44);
+            lv_obj_set_style_text_align(qrow_dur[i], LV_TEXT_ALIGN_RIGHT, 0);
+            lv_obj_set_style_text_font(qrow_dur[i], &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_color(qrow_dur[i], hex_color(CLR_MUTED), 0);
+            lv_obj_align(qrow_dur[i], LV_ALIGN_TOP_RIGHT, 0, y);
+        }
+
+        // Fade masks (created last so they render on top of the rows). A short
+        // vertical gradient of the panel background, opaque at the list edge
+        // fading to transparent, signals there are more rows above/below — the
+        // LVGL equivalent of the mockup's CSS mask. Toggled per frame.
+        const int qfade_h = 16;
+        qfade_top = lv_obj_create(pnl_prog_qlist);
+        lv_obj_remove_style_all(qfade_top);
+        lv_obj_set_size(qfade_top, qcontent_w, qfade_h);
+        lv_obj_set_pos(qfade_top, 0, QROW_Y0 - 3);
+        lv_obj_set_style_bg_color(qfade_top, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_color(qfade_top, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_dir(qfade_top, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_main_opa(qfade_top, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_grad_opa(qfade_top, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(qfade_top, LV_OBJ_FLAG_HIDDEN);
+
+        qfade_bottom = lv_obj_create(pnl_prog_qlist);
+        lv_obj_remove_style_all(qfade_bottom);
+        lv_obj_set_size(qfade_bottom, qcontent_w, qfade_h);
+        lv_obj_set_pos(qfade_bottom, 0, QROW_Y0 + MAX_QROWS * QROW_H - qfade_h - 2);
+        lv_obj_set_style_bg_color(qfade_bottom, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_color(qfade_bottom, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_dir(qfade_bottom, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_main_opa(qfade_bottom, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_grad_opa(qfade_bottom, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(qfade_bottom, LV_OBJ_FLAG_HIDDEN);
     }
 
     // ---- Grid area -----------------------------------------------------
@@ -1871,26 +2003,28 @@ static void build_ui() {
     lv_obj_add_flag(sleep_overlay, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     // ---- Programs list panel (M9) — full-width overlay -----------------
-    // Layout (height = CONTENT_H = 181 px):
-    //   Header: PROG_HDR_H=26 px
-    //   4 rows:  PROG_ROW_H=38 px each (= 152 px)
-    //   Dots:    3 px
-    static constexpr int PROG_HDR_H  = 26;
-    static constexpr int PROG_ROW_H  = 38;
-    static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H;
+    // The station grid is hidden here, so the panel uses the full height.
+    //   Header: PROG_HDR_H px (larger Back target)
+    //   4 rows:  PROG_ROW_H px each
+    //   Pager:   below the rows
+    static constexpr int PROG_HDR_H  = 44;
+    static constexpr int PROG_ROW_H  = 48;
+    static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H + 6;
     // Right-side button metrics within each row.
     static constexpr int PROG_RUN_W  = 80;   // Run button width
     static constexpr int PROG_TOG_W  = 86;   // Toggle (Enable/Disable) button width
     static constexpr int PROG_BTN_RP = 4;    // right padding from row edge
     static constexpr int PROG_BTN_G  = 4;    // gap between toggle and run
+    static constexpr int PROG_BTN_H  = PROG_ROW_H - 12;
+    static constexpr int PROG_BTN_Y  = (PROG_ROW_H - PROG_BTN_H) / 2;
     // x position of toggle and run buttons (within row, row width = SCREEN_W)
     static constexpr int PROG_RUN_X  = SCREEN_W - PROG_BTN_RP - PROG_RUN_W;
     static constexpr int PROG_TOG_X  = PROG_RUN_X - PROG_BTN_G - PROG_TOG_W;
-    // Left content area: name label width
+    // Left content area: name / next-run label width
     static constexpr int PROG_NAME_W = PROG_TOG_X - 8 - 8;  // x=8, gap=8
 
     pnl_programs = lv_obj_create(scr);
-    lv_obj_set_size(pnl_programs, SCREEN_W, CONTENT_H);
+    lv_obj_set_size(pnl_programs, SCREEN_W, PROG_LIST_H);
     lv_obj_set_pos(pnl_programs, 0, CONTENT_Y);
     lv_obj_set_style_bg_color(pnl_programs, hex_color(CLR_BG), 0);
     lv_obj_set_style_border_width(pnl_programs, 0, 0);
@@ -1910,15 +2044,15 @@ static void build_ui() {
 
         lv_obj_t* lbl_title = lv_label_create(hdr);
         lv_label_set_text(lbl_title, "PROGRAMS");
-        lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl_title, hex_color(CLR_TEXT), 0);
         lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 10, 0);
 
         lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
                                       CLR_LINE, CLR_TEXT,
-                                      &lv_font_montserrat_14, 6);
-        lv_obj_set_size(btn_back, 72, 22);
-        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -6, 0);
+                                      &lv_font_montserrat_20, 8);
+        lv_obj_set_size(btn_back, 128, PROG_HDR_H - 8);
+        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_add_event_cb(btn_back, ev_close_programs, LV_EVENT_CLICKED, nullptr);
     }
 
@@ -1934,37 +2068,31 @@ static void build_ui() {
         lv_obj_set_style_pad_all(prog_rows[r], 0, 0);
         lv_obj_clear_flag(prog_rows[r], LV_OBJ_FLAG_SCROLLABLE);
 
-        // Program name (top line)
+        // Program name (top line). Colour conveys enabled state (dimmed when
+        // disabled) — no separate ENABLED/DISABLED chip.
         prog_row_name[r] = lv_label_create(prog_rows[r]);
         lv_label_set_text(prog_row_name[r], "");
         lv_obj_set_width(prog_row_name[r], PROG_NAME_W);
         lv_label_set_long_mode(prog_row_name[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_name[r], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(prog_row_name[r], hex_color(CLR_TEXT), 0);
-        lv_obj_set_pos(prog_row_name[r], 8, 3);
+        lv_obj_set_pos(prog_row_name[r], 8, 6);
 
-        // ENABLED/DISABLED chip (bottom line, left)
-        prog_row_chip[r] = lv_label_create(prog_rows[r]);
-        lv_label_set_text(prog_row_chip[r], "ENABLED");
-        lv_obj_set_style_text_font(prog_row_chip[r], &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(prog_row_chip[r], hex_color(CLR_TEAL), 0);
-        lv_obj_set_pos(prog_row_chip[r], 8, 22);
-
-        // Next-run text (bottom line, after chip)
+        // Next-run + zones/runtime meta (bottom line, full width up to buttons).
         prog_row_next[r] = lv_label_create(prog_rows[r]);
         lv_label_set_text(prog_row_next[r], "");
-        lv_obj_set_width(prog_row_next[r], 160);
+        lv_obj_set_width(prog_row_next[r], PROG_NAME_W);
         lv_label_set_long_mode(prog_row_next[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_next[r], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(prog_row_next[r], hex_color(CLR_MUTED), 0);
-        lv_obj_set_pos(prog_row_next[r], 76, 22);
+        lv_obj_set_pos(prog_row_next[r], 8, 28);
 
         // Toggle (Enable/Disable) button
         prog_row_btn_toggle[r] = make_btn(prog_rows[r], "Disable",
                                           CLR_LINE, CLR_TEXT,
                                           &lv_font_montserrat_12, 6);
-        lv_obj_set_size(prog_row_btn_toggle[r], PROG_TOG_W, PROG_ROW_H - 4);
-        lv_obj_set_pos(prog_row_btn_toggle[r], PROG_TOG_X, 2);
+        lv_obj_set_size(prog_row_btn_toggle[r], PROG_TOG_W, PROG_BTN_H);
+        lv_obj_set_pos(prog_row_btn_toggle[r], PROG_TOG_X, PROG_BTN_Y);
         lv_obj_add_event_cb(prog_row_btn_toggle[r], ev_prog_toggle_enabled,
                             LV_EVENT_CLICKED, nullptr);
 
@@ -1972,14 +2100,22 @@ static void build_ui() {
         prog_row_btn_run[r] = make_btn(prog_rows[r], "Run " LV_SYMBOL_RIGHT,
                                        CLR_TEAL, CLR_BG,
                                        &lv_font_montserrat_12, 6);
-        lv_obj_set_size(prog_row_btn_run[r], PROG_RUN_W, PROG_ROW_H - 4);
-        lv_obj_set_pos(prog_row_btn_run[r], PROG_RUN_X, 2);
+        lv_obj_set_size(prog_row_btn_run[r], PROG_RUN_W, PROG_BTN_H);
+        lv_obj_set_pos(prog_row_btn_run[r], PROG_RUN_X, PROG_BTN_Y);
         lv_obj_add_event_cb(prog_row_btn_run[r], ev_prog_run,
                             LV_EVENT_CLICKED, nullptr);
     }
 
-    // Page dots (centered, below rows)
+    // Page indicator + dots (centered, below rows)
     {
+        // "Page N of M" text centered above the dots.
+        lbl_prog_page = lv_label_create(pnl_programs);
+        lv_label_set_text(lbl_prog_page, "");
+        lv_obj_set_style_text_font(lbl_prog_page, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_prog_page, hex_color(CLR_MUTED), 0);
+        lv_obj_align(lbl_prog_page, LV_ALIGN_TOP_MID, 0, PROG_DOT_Y - 12);
+        lv_obj_add_flag(lbl_prog_page, LV_OBJ_FLAG_HIDDEN);
+
         // Dots are 10×10 buttons; draw them centred on the panel.
         static constexpr int DOT_W = 10, DOT_H = 10, DOT_GAP = 8;
         const int total_w = MAX_PROG_PAGES * DOT_W + (MAX_PROG_PAGES - 1) * DOT_GAP;
@@ -2074,8 +2210,13 @@ static void ui_update() {
         status_text = "Reconnecting...";
         status_color = CLR_AMBER;
     } else if (prog_running) {
-        status_text = "Program running";
-        status_color = CLR_TEAL;
+        if (v.paused) {
+            status_text = "Program paused";
+            status_color = CLR_AMBER;
+        } else {
+            status_text = "Program running";
+            status_color = CLR_TEAL;
+        }
     } else if (running) {
         status_text = "Running";
         status_color = CLR_TEAL;
@@ -2109,13 +2250,21 @@ static void ui_update() {
     obj_set_hidden(pnl_idle,       any_running || show_programs);
     obj_set_hidden(pnl_running,    !running);
     obj_set_hidden(pnl_prog_queue, !prog_running);
+    obj_set_hidden(pnl_prog_qlist, !prog_running);
     obj_set_hidden(pnl_programs,   !show_programs);
     obj_set_hidden(pnl_right,      show_programs || prog_running);
+    // The Programs entry button lives in the right panel; hide it while a
+    // manual station is running (open_programs_list only works from idle).
+    obj_set_hidden(btn_programs,   any_running);
     obj_set_hidden(btn_advance,    !running);
     obj_set_hidden(btn_stop,       !running);
     obj_set_hidden(btn_prog_adv,   !prog_running);
     obj_set_hidden(btn_prog_pause, !prog_running);
     obj_set_hidden(btn_prog_stop,  !prog_running);
+    // Station grid is only useful for idle (start a station) and manual runs
+    // (jump to a station). Hide it on the programs list and during program runs.
+    obj_set_hidden(grid_cont,      show_programs || prog_running);
+    obj_set_hidden(lbl_grid_title, show_programs || prog_running);
 
     if (!any_running && !show_programs) {
         if (show_syncing) {
@@ -2163,7 +2312,7 @@ static void ui_update() {
         const auto& stns = g_model.stations();
         const char* name = (v.running_sid >= 0 &&
                             v.running_sid < static_cast<int>(stns.size()))
-                            ? stns[v.running_sid].name.c_str() : EM_DASH;
+                            ? stns[v.running_sid].name.c_str() : "Station";
         lv_label_set_text(lbl_stn_name, name);
 
         // Countdown (MM:SS)
@@ -2176,46 +2325,121 @@ static void ui_update() {
     if (prog_running) {
         const auto& pr = v.prog_run;
         const auto& progs = g_ps->program_list().programs;
+        const auto& stns = g_model.stations();
 
-        // Program name eyebrow
-        const char* prog_name = EM_DASH;  // shown when JP data not yet loaded
+        // Program name — shown only as the queue-list header (right panel),
+        // not on the status column (matches the mockup).
+        const char* prog_name = "Program";  // safe ASCII until /jp loads
         if (pr.program_index >= 0 &&
                 pr.program_index < static_cast<int>(progs.size())) {
             prog_name = progs[pr.program_index].name.c_str();
         }
-        lv_label_set_text(lbl_prog_name, prog_name);
 
-        // Station info: "STATION N/M · name"
-        {
-            const auto& stns = g_model.stations();
-            if (pr.current_sid >= 0) {
-                const char* stn_name =
-                    (pr.current_sid < static_cast<int>(stns.size()))
-                    ? stns[pr.current_sid].name.c_str() : "";
-                if (pr.station_count > 0) {
-                    snprintf(buf, sizeof(buf), "STATION %d/%d  %s",
-                             pr.current_station_number,
-                             pr.station_count, stn_name);
-                } else {
-                    snprintf(buf, sizeof(buf), "STATION %d  %s",
-                             pr.current_station_number, stn_name);
-                }
-            } else {
-                snprintf(buf, sizeof(buf), "Finishing...");
-            }
-            lv_label_set_text(lbl_prog_stn, buf);
+        // Eyebrow: "STATION N OF M"
+        if (pr.station_count > 0 && pr.current_station_number > 0) {
+            snprintf(buf, sizeof(buf), "STATION %d OF %d",
+                     pr.current_station_number, pr.station_count);
+        } else if (pr.station_count > 0) {
+            snprintf(buf, sizeof(buf), "FINISHING");
+        } else {
+            snprintf(buf, sizeof(buf), "STATION");
+        }
+        lv_label_set_text(lbl_prog_eyebrow, buf);
+
+        // Headline: current station name.
+        if (pr.current_sid >= 0 &&
+                pr.current_sid < static_cast<int>(stns.size())) {
+            lv_label_set_text(lbl_prog_name, stns[pr.current_sid].name.c_str());
+        } else {
+            lv_label_set_text(lbl_prog_name, "Finishing...");
         }
 
-        // Countdown
+        // Countdown (station remaining).
         {
             char cd[16];
             fmt_countdown(cd, v.countdown_s);
             lv_label_set_text(lbl_prog_cd, cd);
         }
 
-        // Pause button label
+        // Resume line: only while paused.
+        if (v.paused) {
+            int rs = v.pause_remaining_s;
+            if (rs < 0) rs = 0;
+            snprintf(buf, sizeof(buf), "Resumes in %d:%02d", rs / 60, rs % 60);
+            lv_label_set_text(lbl_prog_resume, buf);
+            obj_set_hidden(lbl_prog_resume, false);
+        } else {
+            obj_set_hidden(lbl_prog_resume, true);
+        }
+
+        // Pause button label.
         if (lbl_prog_pause_txt) {
             lv_label_set_text(lbl_prog_pause_txt, v.paused ? "Resume" : "Pause");
+        }
+
+        // ---- Right-side queue list -------------------------------------
+        lv_label_set_text(lbl_qlist_hdr, prog_name);
+        {
+            int tr = pr.total_remaining_seconds;
+            if (tr < 0) tr = 0;
+            snprintf(buf, sizeof(buf), "%d:%02d left", tr / 60, tr % 60);
+            lv_label_set_text(lbl_qlist_total, buf);
+        }
+
+        // Window the queue around the current station, keeping ~2 completed
+        // rows visible above it for context. Chevron hints flag hidden rows.
+        const auto& q = pr.queue;
+        const int qn = static_cast<int>(q.size());
+        int cur = 0;
+        for (int i = 0; i < qn; ++i) {
+            if (q[i].sid == pr.current_sid) { cur = i; break; }
+        }
+        int win_start = 0;
+        if (qn > MAX_QROWS) {
+            win_start = cur - 2;  // keep two done rows visible above current
+            if (win_start < 0) win_start = 0;
+            if (win_start > qn - MAX_QROWS) win_start = qn - MAX_QROWS;
+        }
+        const bool more_above = win_start > 0;
+        const bool more_below = (win_start + MAX_QROWS) < qn;
+        obj_set_hidden(qfade_top, !more_above);
+        obj_set_hidden(qfade_bottom, !more_below);
+
+        for (int r = 0; r < MAX_QROWS; ++r) {
+            const int qi = win_start + r;
+            if (qi < qn) {
+                const auto& e = q[qi];
+                const bool is_current = (e.sid == pr.current_sid);
+                const bool is_done = e.done;
+
+                const char* mark = is_current ? LV_SYMBOL_PLAY
+                                   : (is_done ? LV_SYMBOL_OK : "");
+                lv_label_set_text(qrow_mark[r], mark);
+                lv_obj_set_style_text_color(qrow_mark[r],
+                    hex_color(is_current ? CLR_TEAL : CLR_MUTED), 0);
+
+                const char* nm =
+                    (e.sid >= 0 && e.sid < static_cast<int>(stns.size()))
+                    ? stns[e.sid].name.c_str() : "Station";
+                lv_label_set_text(qrow_name[r], nm);
+                lv_obj_set_style_text_color(qrow_name[r],
+                    hex_color(is_done ? CLR_MUTED : CLR_TEXT), 0);
+
+                int secs = is_current ? e.remaining_seconds : e.total_seconds;
+                if (secs < 0) secs = 0;
+                snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
+                lv_label_set_text(qrow_dur[r], buf);
+                lv_obj_set_style_text_color(qrow_dur[r],
+                    hex_color(is_current ? CLR_TEAL : CLR_MUTED), 0);
+
+                obj_set_hidden(qrow_mark[r], false);
+                obj_set_hidden(qrow_name[r], false);
+                obj_set_hidden(qrow_dur[r], false);
+            } else {
+                obj_set_hidden(qrow_mark[r], true);
+                obj_set_hidden(qrow_name[r], true);
+                obj_set_hidden(qrow_dur[r], true);
+            }
         }
     }
 
@@ -2232,15 +2456,12 @@ static void ui_update() {
             if (idx < nprogs) {
                 const auto& prog = jp.programs[idx];
                 const int pid = idx + 1;
-
-                // Program name
-                lv_label_set_text(prog_row_name[r], prog.name.c_str());
-
-                // Enabled/disabled chip
                 const bool en = prog.enabled;
-                lv_label_set_text(prog_row_chip[r], en ? "ENABLED" : "DISABLED");
-                lv_obj_set_style_text_color(prog_row_chip[r],
-                    hex_color(en ? CLR_TEAL : CLR_AMBER), 0);
+
+                // Program name — dimmed when disabled (conveys state; no chip).
+                lv_label_set_text(prog_row_name[r], prog.name.c_str());
+                lv_obj_set_style_text_color(prog_row_name[r],
+                    hex_color(en ? CLR_TEXT : CLR_MUTED), 0);
 
                 // Toggle button label
                 lv_obj_t* tog_lbl =
@@ -2248,28 +2469,64 @@ static void ui_update() {
                 if (tog_lbl) lv_label_set_text(tog_lbl, en ? "Disable" : "Enable");
                 set_prog_pid(prog_row_btn_toggle[r], pid);
 
-                // Next-run text
+                // Next-run + zones/runtime meta line.
                 {
-                    char nr_buf[32];
-                    const long nr = osp::next_run(prog, v.ctrl_devt,
+                    char nr_buf[64];
+                    char meta[32];
+                    // "N zones • MM min" summary from /jp durations.
+                    const int zones = prog.station_count();
+                    const int mins  = (prog.total_seconds() + 59) / 60;
+                    snprintf(meta, sizeof(meta),
+                             "%d zones " LV_SYMBOL_BULLET " %d min", zones, mins);
+
+                    // Compute the next run from the schedule regardless of the
+                    // enabled flag (next_run() short-circuits on disabled, so
+                    // evaluate an enabled copy to show *when it would run*).
+                    auto sched = prog;
+                    sched.enabled = true;
+                    const long nr = osp::next_run(sched, v.ctrl_devt,
                                                   v.sunrise_min, v.sunset_min);
-                    if (nr < 0 || !en) {
-                        snprintf(nr_buf, sizeof(nr_buf), "%s",
-                                 en ? EM_DASH : "Not scheduled");
+                    char when[32];
+                    if (nr < 0) {
+                        snprintf(when, sizeof(when), "Not scheduled");
                     } else {
-                        const long secs_until = nr - v.ctrl_devt;
-                        const long days_until = (secs_until >= 0) ? secs_until / 86400 : 0;
+                        // Calendar-day delta (not elapsed 24h periods).
+                        const long nr_day   = nr / 86400;
+                        const long dev_day  = v.ctrl_devt / 86400;
+                        const long days_until = nr_day - dev_day;
                         const long tod = nr % 86400;
-                        const int h = static_cast<int>(tod / 3600);
+                        int h = static_cast<int>(tod / 3600);
                         const int m = static_cast<int>((tod % 3600) / 60);
-                        if (days_until == 0) {
-                            snprintf(nr_buf, sizeof(nr_buf), "Today %d:%02d", h, m);
+                        const char* ap = (h < 12) ? "AM" : "PM";
+                        int h12 = h % 12; if (h12 == 0) h12 = 12;
+
+                        if (days_until <= 0) {
+                            snprintf(when, sizeof(when), "Today %d:%02d %s",
+                                     h12, m, ap);
                         } else if (days_until == 1) {
-                            snprintf(nr_buf, sizeof(nr_buf), "Tomorrow %d:%02d", h, m);
+                            snprintf(when, sizeof(when), "Tomorrow %d:%02d %s",
+                                     h12, m, ap);
+                        } else if (days_until < 7) {
+                            // Weekday abbrev; 1970-01-01 was a Thursday (=4).
+                            static const char* kWd[7] =
+                                {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+                            const int wd = static_cast<int>((nr_day + 4) % 7);
+                            snprintf(when, sizeof(when), "%s %d:%02d %s",
+                                     kWd[wd], h12, m, ap);
                         } else {
-                            snprintf(nr_buf, sizeof(nr_buf), "+%ld days %d:%02d",
-                                     days_until, h, m);
+                            snprintf(when, sizeof(when), "+%ld days %d:%02d %s",
+                                     days_until, h12, m, ap);
                         }
+                    }
+
+                    if (en) {
+                        snprintf(nr_buf, sizeof(nr_buf),
+                                 "%s " LV_SYMBOL_BULLET " %s", when, meta);
+                    } else {
+                        // Disabled: still show when it *would* run, tagged.
+                        snprintf(nr_buf, sizeof(nr_buf),
+                                 "Disabled " LV_SYMBOL_BULLET " %s " LV_SYMBOL_BULLET " %s",
+                                 when, meta);
                     }
                     lv_label_set_text(prog_row_next[r], nr_buf);
                 }
@@ -2283,12 +2540,19 @@ static void ui_update() {
             }
         }
 
-        // Page dots: show only when more than one page; fill active dot
+        // Page indicator label + dots: only when more than one page.
+        const bool need_pager = total_pages > 1;
+        if (lbl_prog_page) {
+            obj_set_hidden(lbl_prog_page, !need_pager);
+            if (need_pager) {
+                snprintf(buf, sizeof(buf), "Page %d of %d", page + 1, total_pages);
+                lv_label_set_text(lbl_prog_page, buf);
+            }
+        }
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
             if (!prog_page_dots[d]) continue;
-            const bool need_dots = total_pages > 1;
-            obj_set_hidden(prog_page_dots[d], !need_dots || d >= total_pages);
-            if (need_dots && d < total_pages) {
+            obj_set_hidden(prog_page_dots[d], !need_pager || d >= total_pages);
+            if (need_pager && d < total_pages) {
                 lv_obj_set_style_bg_color(prog_page_dots[d],
                     hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
             }
