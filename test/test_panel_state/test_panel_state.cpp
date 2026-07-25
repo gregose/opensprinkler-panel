@@ -466,6 +466,8 @@ void test_external_program_run_identified_by_station_set() {
   TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
   TEST_ASSERT_TRUE(pr.queue[0].done);                   // station 1 completed
 }
+
+void test_program_run_classified_as_program_running_phase() {
   Fixture f;
   f.ps.set_program_list(make_jp(2));
   f.ps.on_jc(make_jc_program_running(0, 45, 2), 1000);
