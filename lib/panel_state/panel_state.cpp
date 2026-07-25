@@ -5,6 +5,50 @@
 
 namespace osp {
 
+namespace {
+// Identify which saved program a run belongs to by matching the live /jc
+// station set against each program's station definition. A manual or
+// app-launched program run reports pid=254 (no program index in /jc), so this
+// recovers the index regardless of what started the run — matching by station
+// set works for scheduled, panel- and externally-launched runs alike. Picks
+// the program that contains every currently-queued station with the fewest
+// already-completed stations (closest match). Returns -1 if none match.
+int infer_program_index_by_stations(const JpData& jp,
+                                    const std::vector<ProgramPsEntry>& ps,
+                                    int pid) {
+  std::vector<int> live;
+  for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
+    if (ps[sid].pid == pid) live.push_back(sid);
+  }
+  if (live.empty()) return -1;
+
+  int best = -1;
+  int best_extra = -1;
+  for (int i = 0; i < static_cast<int>(jp.programs.size()); ++i) {
+    const auto& durs = jp.programs[i].durations;
+    int setsize = 0;
+    for (int d : durs) {
+      if (d > 0) ++setsize;
+    }
+    bool contains_all = true;
+    for (int sid : live) {
+      if (!(sid >= 0 && sid < static_cast<int>(durs.size()) && durs[sid] > 0)) {
+        contains_all = false;
+        break;
+      }
+    }
+    if (!contains_all) continue;
+    const int extra = setsize - static_cast<int>(live.size());  // completed
+    if (extra < 0) continue;
+    if (best < 0 || extra < best_extra) {
+      best = i;
+      best_extra = extra;
+    }
+  }
+  return best;
+}
+}  // namespace
+
 PanelState::PanelState(StationModel& model, int default_run_time_s)
     : model_(model) {
   view_.run_time_s = clamp_run_time(default_run_time_s);
@@ -377,7 +421,15 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
   // stations render as done instead of vanishing. A panel-launched run reports
   // pid=254 (program_index=-1); fall back to the remembered launched index.
   if (prog_state.run_class == RunClass::ProgramRun) {
+    // Resolve which saved program this run is, independent of what launched it:
+    //   scheduled run  -> pid=program_index+1 (already set by the resolver)
+    //   manual/app run -> pid=254 (program_index=-1); recover the index by
+    //                     matching the live station set, then fall back to a
+    //                     panel-launched hint if the match is ambiguous.
     int eff_idx = prog_state.program_index;
+    if (eff_idx < 0) {
+      eff_idx = infer_program_index_by_stations(jp_cache_, ps, 254);
+    }
     if (eff_idx < 0 && run_initiated_by_panel_ && launched_program_index_ >= 0) {
       eff_idx = launched_program_index_;
     }

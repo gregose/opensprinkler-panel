@@ -1222,7 +1222,6 @@ static lv_obj_t* lbl_prog_page                     = nullptr;  // "Page N of M"
 static lv_obj_t* pnl_prog_queue  = nullptr;
 static lv_obj_t* lbl_prog_eyebrow = nullptr;
 static lv_obj_t* lbl_prog_name   = nullptr;
-static lv_obj_t* lbl_prog_stn    = nullptr;
 static lv_obj_t* lbl_prog_cd     = nullptr;
 
 // M9: Program queue action buttons (at ACTION_Y, same row as btn_advance/btn_stop)
@@ -1238,8 +1237,8 @@ static lv_obj_t* lbl_prog_resume = nullptr;
 static lv_obj_t* pnl_prog_qlist   = nullptr;
 static lv_obj_t* lbl_qlist_hdr    = nullptr;  // program name header
 static lv_obj_t* lbl_qlist_total  = nullptr;  // total time remaining
-static lv_obj_t* lbl_qlist_up     = nullptr;  // "more above" hint
-static lv_obj_t* lbl_qlist_dn     = nullptr;  // "more below" hint
+static lv_obj_t* qfade_top        = nullptr;  // top fade mask ("more above")
+static lv_obj_t* qfade_bottom     = nullptr;  // bottom fade mask ("more below")
 static constexpr int MAX_QROWS = 9;
 static lv_obj_t* qrow_mark[MAX_QROWS] = {};
 static lv_obj_t* qrow_name[MAX_QROWS] = {};
@@ -1718,6 +1717,8 @@ static void build_ui() {
     lv_obj_align(lbl_prog_eyebrow, LV_ALIGN_TOP_LEFT, 0, 6);
 
     // Current station name (repurposed: the running zone, not the program name).
+    // The program name is shown only above the queue (right panel) per the
+    // mockup — the status column mirrors the manual-run layout.
     lbl_prog_name = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_name, "");
     lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
@@ -1726,20 +1727,11 @@ static void build_ui() {
     lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
     lv_obj_align(lbl_prog_name, LV_ALIGN_TOP_LEFT, 0, 28);
 
-    // Program-name subtitle (which program this run belongs to).
-    lbl_prog_stn = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_stn, "");
-    lv_obj_set_width(lbl_prog_stn, LEFT_W - 28);
-    lv_label_set_long_mode(lbl_prog_stn, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl_prog_stn, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_prog_stn, hex_color(CLR_MUTED), 0);
-    lv_obj_align(lbl_prog_stn, LV_ALIGN_TOP_LEFT, 0, 62);
-
     lbl_prog_cd = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_cd, "0:00");
     lv_obj_set_style_text_font(lbl_prog_cd, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_prog_cd, hex_color(CLR_AMBER), 0);
-    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 96);
+    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 70);
 
     // "Resumes in M:SS" — a second line below the countdown while paused.
     lbl_prog_resume = lv_label_create(pnl_prog_queue);
@@ -1747,7 +1739,7 @@ static void build_ui() {
     lv_obj_set_style_text_font(lbl_prog_resume, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_prog_resume, hex_color(CLR_AMBER), 0);
     lv_obj_add_flag(lbl_prog_resume, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_align(lbl_prog_resume, LV_ALIGN_TOP_LEFT, 0, 158);
+    lv_obj_align(lbl_prog_resume, LV_ALIGN_TOP_LEFT, 0, 132);
 
     // ---- Action row (Advance / Stop) -----------------------------------
     static constexpr int ACTION_SIDE_PAD = 10;
@@ -1869,12 +1861,16 @@ static void build_ui() {
                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_clear_flag(sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
 
-        // "Programs" entry button — centred in the space between the
-        // Auto-advance row and the panel's bottom edge (above the station grid).
-        static constexpr int PROG_BTN_H = 36;
+        // "Programs" entry button — vertically centred in the space between the
+        // Auto-advance row and the panel's bottom edge (biased a few px lower so
+        // it reads as centred in the column rather than hugging Auto-advance).
+        static constexpr int PROG_BTN_H = 38;
         static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
         const int aa_bottom = AA_Y + AA_H;
-        const int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2;
+        int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
+        if (prog_btn_y > PANEL_USABLE_H - PROG_BTN_H) {
+            prog_btn_y = PANEL_USABLE_H - PROG_BTN_H;
+        }
         btn_programs = make_btn(pnl, "Programs " LV_SYMBOL_RIGHT,
                                 CLR_LINE, CLR_TEAL, &lv_font_montserrat_16, 8);
         lv_obj_set_size(btn_programs, PANEL_CONTENT_W, PROG_BTN_H);
@@ -1908,20 +1904,14 @@ static void build_ui() {
 
         lbl_qlist_total = lv_label_create(pnl_prog_qlist);
         lv_label_set_text(lbl_qlist_total, "");
+        lv_obj_set_width(lbl_qlist_total, qcontent_w);
+        lv_label_set_long_mode(lbl_qlist_total, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(lbl_qlist_total, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(lbl_qlist_total, hex_color(CLR_MUTED), 0);
         lv_obj_align(lbl_qlist_total, LV_ALIGN_TOP_LEFT, 0, 22);
 
         static constexpr int QROW_Y0 = 50;
         static constexpr int QROW_H  = 24;
-
-        // "more above" hint (chevron) shown when the window is scrolled down.
-        lbl_qlist_up = lv_label_create(pnl_prog_qlist);
-        lv_label_set_text(lbl_qlist_up, LV_SYMBOL_UP);
-        lv_obj_set_style_text_font(lbl_qlist_up, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_qlist_up, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_qlist_up, LV_ALIGN_TOP_MID, 0, QROW_Y0 - 14);
-        lv_obj_add_flag(lbl_qlist_up, LV_OBJ_FLAG_HIDDEN);
 
         for (int i = 0; i < MAX_QROWS; ++i) {
             const int y = QROW_Y0 + i * QROW_H;
@@ -1934,11 +1924,11 @@ static void build_ui() {
 
             qrow_name[i] = lv_label_create(pnl_prog_qlist);
             lv_label_set_text(qrow_name[i], "");
-            lv_obj_set_width(qrow_name[i], qcontent_w - 20 - 44);
+            lv_obj_set_width(qrow_name[i], qcontent_w - 22 - 48);
             lv_label_set_long_mode(qrow_name[i], LV_LABEL_LONG_DOT);
             lv_obj_set_style_text_font(qrow_name[i], &lv_font_montserrat_14, 0);
             lv_obj_set_style_text_color(qrow_name[i], hex_color(CLR_TEXT), 0);
-            lv_obj_set_pos(qrow_name[i], 20, y);
+            lv_obj_set_pos(qrow_name[i], 22, y);
 
             qrow_dur[i] = lv_label_create(pnl_prog_qlist);
             lv_label_set_text(qrow_dur[i], "");
@@ -1949,13 +1939,36 @@ static void build_ui() {
             lv_obj_align(qrow_dur[i], LV_ALIGN_TOP_RIGHT, 0, y);
         }
 
-        // "more below" hint (chevron) shown when rows are clipped at the bottom.
-        lbl_qlist_dn = lv_label_create(pnl_prog_qlist);
-        lv_label_set_text(lbl_qlist_dn, LV_SYMBOL_DOWN);
-        lv_obj_set_style_text_font(lbl_qlist_dn, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_qlist_dn, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_qlist_dn, LV_ALIGN_TOP_MID, 0, QROW_Y0 + MAX_QROWS * QROW_H - 2);
-        lv_obj_add_flag(lbl_qlist_dn, LV_OBJ_FLAG_HIDDEN);
+        // Fade masks (created last so they render on top of the rows). A short
+        // vertical gradient of the panel background, opaque at the list edge
+        // fading to transparent, signals there are more rows above/below — the
+        // LVGL equivalent of the mockup's CSS mask. Toggled per frame.
+        const int qfade_h = 16;
+        qfade_top = lv_obj_create(pnl_prog_qlist);
+        lv_obj_remove_style_all(qfade_top);
+        lv_obj_set_size(qfade_top, qcontent_w, qfade_h);
+        lv_obj_set_pos(qfade_top, 0, QROW_Y0 - 3);
+        lv_obj_set_style_bg_color(qfade_top, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_color(qfade_top, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_dir(qfade_top, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_main_opa(qfade_top, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_grad_opa(qfade_top, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(qfade_top, LV_OBJ_FLAG_HIDDEN);
+
+        qfade_bottom = lv_obj_create(pnl_prog_qlist);
+        lv_obj_remove_style_all(qfade_bottom);
+        lv_obj_set_size(qfade_bottom, qcontent_w, qfade_h);
+        lv_obj_set_pos(qfade_bottom, 0, QROW_Y0 + MAX_QROWS * QROW_H - qfade_h - 2);
+        lv_obj_set_style_bg_color(qfade_bottom, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_color(qfade_bottom, hex_color(CLR_BG), 0);
+        lv_obj_set_style_bg_grad_dir(qfade_bottom, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_main_opa(qfade_bottom, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_grad_opa(qfade_bottom, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(qfade_bottom, LV_OBJ_FLAG_HIDDEN);
     }
 
     // ---- Grid area -----------------------------------------------------
@@ -1994,7 +2007,7 @@ static void build_ui() {
     //   Header: PROG_HDR_H px (larger Back target)
     //   4 rows:  PROG_ROW_H px each
     //   Pager:   below the rows
-    static constexpr int PROG_HDR_H  = 34;
+    static constexpr int PROG_HDR_H  = 44;
     static constexpr int PROG_ROW_H  = 48;
     static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H + 6;
     // Right-side button metrics within each row.
@@ -2037,9 +2050,9 @@ static void build_ui() {
 
         lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
                                       CLR_LINE, CLR_TEXT,
-                                      &lv_font_montserrat_16, 8);
-        lv_obj_set_size(btn_back, 100, PROG_HDR_H - 6);
-        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -6, 0);
+                                      &lv_font_montserrat_20, 8);
+        lv_obj_set_size(btn_back, 128, PROG_HDR_H - 8);
+        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_add_event_cb(btn_back, ev_close_programs, LV_EVENT_CLICKED, nullptr);
     }
 
@@ -2314,7 +2327,8 @@ static void ui_update() {
         const auto& progs = g_ps->program_list().programs;
         const auto& stns = g_model.stations();
 
-        // Program name (used as a muted subtitle + queue-list header).
+        // Program name — shown only as the queue-list header (right panel),
+        // not on the status column (matches the mockup).
         const char* prog_name = "Program";  // safe ASCII until /jp loads
         if (pr.program_index >= 0 &&
                 pr.program_index < static_cast<int>(progs.size())) {
@@ -2339,9 +2353,6 @@ static void ui_update() {
         } else {
             lv_label_set_text(lbl_prog_name, "Finishing...");
         }
-
-        // Subtitle: which program is running.
-        lv_label_set_text(lbl_prog_stn, prog_name);
 
         // Countdown (station remaining).
         {
@@ -2391,8 +2402,8 @@ static void ui_update() {
         }
         const bool more_above = win_start > 0;
         const bool more_below = (win_start + MAX_QROWS) < qn;
-        obj_set_hidden(lbl_qlist_up, !more_above);
-        obj_set_hidden(lbl_qlist_dn, !more_below);
+        obj_set_hidden(qfade_top, !more_above);
+        obj_set_hidden(qfade_bottom, !more_below);
 
         for (int r = 0; r < MAX_QROWS; ++r) {
             const int qi = win_start + r;

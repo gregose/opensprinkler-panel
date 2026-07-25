@@ -428,7 +428,44 @@ void test_program_run_counts_up_through_full_station_set() {
   TEST_ASSERT_TRUE(pr.queue[0].done);
 }
 
-void test_program_run_classified_as_program_running_phase() {
+void test_external_program_run_identified_by_station_set() {
+  // A manual/app-launched run (NOT panel-initiated) reports pid=254 with no
+  // program index. Program index 1 owns stations {1,2,3}; station 1 has already
+  // finished (dropped from ps). The matcher must recover index 1 purely from the
+  // live station set and count up through the fixed M=3 with station 1 marked
+  // done — i.e. the fix works even when the panel didn't start the run.
+  Fixture f(4);
+  JpData jp;
+  jp.nprogs = 2;
+  Program p0;
+  p0.enabled = true;
+  p0.name = "P1";
+  p0.durations = {300, 0, 0, 0};      // program 0 owns only station 0
+  Program p1;
+  p1.enabled = true;
+  p1.name = "P2";
+  p1.durations = {0, 240, 180, 120};  // program 1 owns stations 1,2,3
+  jp.programs = {p0, p1};
+  f.ps.set_program_list(jp);
+
+  JcData jc = make_jc_idle(4);
+  jc.devt = 1000;
+  jc.sbits[2 / 8] |= static_cast<uint8_t>(1u << (2 % 8));
+  jc.ps[2] = PsEntry{254, 100, 950, 0};   // running (station 2)
+  jc.ps[3] = PsEntry{254, 120, 1100, 0};  // upcoming (future start)
+  // station 1 already finished -> absent from ps for pid 254
+
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, pr.program_index);           // recovered P2 by match
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);           // fixed full total M
+  TEST_ASSERT_EQUAL_INT(2, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(2, pr.current_station_number);  // done(1) -> current #2
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);                   // station 1 completed
+}
   Fixture f;
   f.ps.set_program_list(make_jp(2));
   f.ps.on_jc(make_jc_program_running(0, 45, 2), 1000);
@@ -805,6 +842,7 @@ int main(int, char**) {
   RUN_TEST(test_manual_run_classified_as_running_phase);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
+  RUN_TEST(test_external_program_run_identified_by_station_set);
   RUN_TEST(test_idle_jc_stays_idle_phase);
   RUN_TEST(test_program_run_then_idle_returns_to_idle_phase);
   RUN_TEST(test_jc_fields_stored_in_view);
