@@ -315,6 +315,66 @@ void test_run_state_classification_idle_manual_program_and_run_once() {
   TEST_ASSERT_EQUAL_INT(-1, s_run_once.program_index);
 }
 
+// With the program's full ordered station list supplied, the queue spans every
+// station (including finished ones dropped from ps), station_count is the fixed
+// total, and current_station_number counts up through it.
+void test_run_state_full_station_set_counts_up_and_marks_done() {
+  // Program index 1 (pid=2), 4 stations. Stations 0,1 finished (dropped from
+  // ps); station 2 running; station 3 upcoming (future start).
+  std::vector<ProgramPsEntry> ps(4);
+  ps[2] = ProgramPsEntry{2, 120, 950, 0};   // started (start<=now)
+  ps[3] = ProgramPsEntry{2, 180, 1070, 0};  // not started yet
+
+  std::vector<ProgramStation> stations = {
+      {0, 300}, {1, 300}, {2, 240}, {3, 180}};
+
+  ProgramRunState s =
+      resolve_program_run_state(ps, 4, 1000, &stations);
+
+  TEST_ASSERT_EQUAL_INT((int)RunClass::ProgramRun, (int)s.run_class);
+  TEST_ASSERT_EQUAL_INT(4, s.station_count);
+  TEST_ASSERT_EQUAL_INT(4, (int)s.queue.size());
+
+  // Finished stations included and flagged done.
+  TEST_ASSERT_TRUE(s.queue[0].done);
+  TEST_ASSERT_TRUE(s.queue[1].done);
+  TEST_ASSERT_EQUAL_INT(0, s.queue[0].remaining_seconds);
+  TEST_ASSERT_EQUAL_INT(300, s.queue[0].total_seconds);
+
+  // Current is the running station, counted at its absolute position (3 of 4).
+  TEST_ASSERT_FALSE(s.queue[2].done);
+  TEST_ASSERT_TRUE(s.queue[2].started);
+  TEST_ASSERT_EQUAL_INT(2, s.current_sid);
+  TEST_ASSERT_EQUAL_INT(3, s.current_station_number);
+
+  // Upcoming station present, not started, not done.
+  TEST_ASSERT_FALSE(s.queue[3].done);
+  TEST_ASSERT_FALSE(s.queue[3].started);
+  TEST_ASSERT_EQUAL_INT(180, s.queue[3].remaining_seconds);
+
+  TEST_ASSERT_EQUAL_INT(300, s.total_remaining_seconds);  // 120 + 180
+}
+
+// While paused, the controller pushes every start time into the future so no
+// station reports as started; the current station falls back to the first
+// not-yet-done station with time left, at its absolute position.
+void test_run_state_full_station_set_paused_picks_pending_station() {
+  std::vector<ProgramPsEntry> ps(4);
+  ps[2] = ProgramPsEntry{2, 120, 1200, 0};  // paused → start in the future
+  ps[3] = ProgramPsEntry{2, 180, 1380, 0};
+
+  std::vector<ProgramStation> stations = {
+      {0, 300}, {1, 300}, {2, 240}, {3, 180}};
+
+  ProgramRunState s =
+      resolve_program_run_state(ps, 4, 1000, &stations);
+
+  TEST_ASSERT_EQUAL_INT(4, s.station_count);
+  TEST_ASSERT_FALSE(s.queue[2].started);
+  TEST_ASSERT_EQUAL_INT(2, s.current_sid);
+  TEST_ASSERT_EQUAL_INT(3, s.current_station_number);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_load_program_decodes_flags_and_helpers);
@@ -328,5 +388,7 @@ int main(int, char**) {
   RUN_TEST(test_next_run_weekly_and_today_tomorrow_boundary);
   RUN_TEST(test_next_run_interval_disabled_and_daterange_wrap);
   RUN_TEST(test_run_state_classification_idle_manual_program_and_run_once);
+  RUN_TEST(test_run_state_full_station_set_counts_up_and_marks_done);
+  RUN_TEST(test_run_state_full_station_set_paused_picks_pending_station);
   return UNITY_END();
 }

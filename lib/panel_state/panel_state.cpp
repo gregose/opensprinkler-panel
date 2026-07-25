@@ -368,8 +368,32 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
 
   // Classify the controller's current run state using the program model.
   const auto ps = to_program_ps(jc);
-  const ProgramRunState prog_state =
+  ProgramRunState prog_state =
       resolve_program_run_state(ps, jp_cache_.nprogs, static_cast<long>(jc.devt));
+
+  // If a program is running, re-resolve with the program's *full* ordered
+  // station list (from /jp) so the queue includes already-completed stations.
+  // This makes "STATION N OF M" count up through a fixed M and lets finished
+  // stations render as done instead of vanishing. A panel-launched run reports
+  // pid=254 (program_index=-1); fall back to the remembered launched index.
+  if (prog_state.run_class == RunClass::ProgramRun) {
+    int eff_idx = prog_state.program_index;
+    if (eff_idx < 0 && run_initiated_by_panel_ && launched_program_index_ >= 0) {
+      eff_idx = launched_program_index_;
+    }
+    if (eff_idx >= 0 && eff_idx < static_cast<int>(jp_cache_.programs.size())) {
+      const auto& durs = jp_cache_.programs[eff_idx].durations;
+      std::vector<ProgramStation> pstations;
+      for (int sid = 0; sid < static_cast<int>(durs.size()); ++sid) {
+        if (durs[sid] > 0) pstations.push_back(ProgramStation{sid, durs[sid]});
+      }
+      if (!pstations.empty()) {
+        prog_state = resolve_program_run_state(
+            ps, jp_cache_.nprogs, static_cast<long>(jc.devt), &pstations);
+        prog_state.program_index = eff_idx;  // keep name resolvable for pid=254
+      }
+    }
+  }
 
   // Find the running manual-station sid (needed only for ManualRun path).
   int jc_running_sid = -1;

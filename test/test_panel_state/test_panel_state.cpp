@@ -66,6 +66,23 @@ static JpData make_jp(int nprogs) {
   return jp;
 }
 
+// Build a JpData whose first program has the given per-station durations
+// (seconds). Any additional programs get all-zero durations.
+static JpData make_jp_durations(const std::vector<int>& durations,
+                                int nprogs = 1) {
+  JpData jp;
+  jp.nprogs = nprogs;
+  for (int i = 0; i < nprogs; ++i) {
+    Program p;
+    p.enabled = true;
+    p.name = "P" + std::to_string(i + 1);
+    if (i == 0) p.durations = durations;
+    else p.durations.assign(durations.size(), 0);
+    jp.programs.push_back(p);
+  }
+  return jp;
+}
+
 struct Fixture {
   StationModel model;
   PanelState ps;
@@ -384,6 +401,31 @@ void test_manual_run_classified_as_running_phase() {
   f.ps.on_jc(make_jc_running(0, 45), 1000);
   TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
   TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+}
+
+void test_program_run_counts_up_through_full_station_set() {
+  // Program index 0 (pid=1) with 3 stations. Station 0 already finished
+  // (dropped from ps), station 1 running, station 2 upcoming. The panel should
+  // report "station 2 of 3" — counting up through the fixed total — with the
+  // finished station retained (done) rather than shrinking the total.
+  Fixture f(3);
+  f.ps.set_program_list(make_jp_durations({300, 240, 180}));
+
+  JcData jc = make_jc_idle(3);
+  jc.devt = 1000;
+  jc.sbits[1 / 8] |= static_cast<uint8_t>(1u << (1 % 8));
+  jc.ps[1] = PsEntry{1, 120, 950, 0};   // running
+  jc.ps[2] = PsEntry{1, 180, 1100, 0};  // upcoming (future start)
+
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);
+  TEST_ASSERT_EQUAL_INT(1, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(2, pr.current_station_number);
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);
 }
 
 void test_program_run_classified_as_program_running_phase() {
@@ -762,6 +804,7 @@ int main(int, char**) {
   // M9 — program screen classification
   RUN_TEST(test_manual_run_classified_as_running_phase);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
+  RUN_TEST(test_program_run_counts_up_through_full_station_set);
   RUN_TEST(test_idle_jc_stays_idle_phase);
   RUN_TEST(test_program_run_then_idle_returns_to_idle_phase);
   RUN_TEST(test_jc_fields_stored_in_view);
