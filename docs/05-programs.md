@@ -139,8 +139,9 @@ queue (`ps[]`):
 - **Rows** (up to `MAX_QROWS = 9`), each: a marker, station name, and the
   station's **full configured duration** (static — it does **not** count down;
   the only ticking number is the big countdown on the left).
-  - **Current** station: `▶` (`LV_SYMBOL_PLAY`, teal), name in `CLR_TEXT`,
-    duration teal.
+  - **Current** station: `▶` (`LV_SYMBOL_PLAY`, teal) while running; the glyph
+    flips to `⏸` (`LV_SYMBOL_PAUSE`, teal) while the queue is **paused** so the
+    row mirrors the paused state. Name in `CLR_TEXT`, duration teal.
   - **Completed** stations: `✓` (`LV_SYMBOL_OK`, muted), name + duration dimmed.
   - **Upcoming** stations: no marker, name in `CLR_TEXT`, duration muted.
 - **Windowing:** when a program has more than 9 stations, the list windows around
@@ -164,6 +165,7 @@ queue (`ps[]`):
 - A **`Resumes in M:SS`** line appears (from the controller's pause countdown
   `pt`), showing time until auto-resume.
 - The `Pause` button label becomes `Resume`.
+- In the queue list, the current station's `▶` marker flips to a `⏸` pause glyph.
 
 ---
 

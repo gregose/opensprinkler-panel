@@ -2634,7 +2634,12 @@ static void ui_update() {
                 const bool is_current = (e.sid == pr.current_sid);
                 const bool is_done = e.done;
 
-                const char* mark = is_current ? LV_SYMBOL_PLAY
+                // Current station shows a play glyph while running; when the
+                // queue is paused it flips to a pause glyph so the list mirrors
+                // the paused state (and the "Resume" button / amber status word).
+                const char* current_mark =
+                    v.paused ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY;
+                const char* mark = is_current ? current_mark
                                    : (is_done ? LV_SYMBOL_OK : "");
                 lv_label_set_text(qrow_mark[r], mark);
                 lv_obj_set_style_text_color(qrow_mark[r],
