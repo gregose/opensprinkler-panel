@@ -2124,6 +2124,10 @@ static void build_ui() {
         prog_row_name[r] = lv_label_create(prog_rows[r]);
         lv_label_set_text(prog_row_name[r], "");
         lv_obj_set_width(prog_row_name[r], PROG_NAME_W);
+        // Constrain to a single line so LONG_DOT ellipsizes instead of wrapping
+        // — otherwise a long program name grows down into the schedule/meta line
+        // at y=28. montserrat_16 line height is ~19px; 20 keeps one line.
+        lv_obj_set_height(prog_row_name[r], 20);
         lv_label_set_long_mode(prog_row_name[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_name[r], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(prog_row_name[r], hex_color(CLR_TEXT), 0);
