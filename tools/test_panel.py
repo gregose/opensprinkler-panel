@@ -74,6 +74,18 @@ class ScreenshotParseTests(unittest.TestCase):
         # Last pixel of the last band must be present (full coverage).
         self.assertEqual(tuple(rgb[-3:]), (0, 0, 255))
 
+    def test_no_end_marker_full_coverage_fallback(self):
+        # Defense-in-depth: if the firmware drops the \x02END\n terminator but
+        # every row was covered by a strip, the client must still return
+        # (via the full-coverage fallback) instead of blocking.
+        full = build_stream(480, 320, rgb565_le(0, 0x3F, 0), band=40)
+        no_end = full[:-len(b"\x02END\n")]
+        self.assertFalse(no_end.endswith(b"\x02END\n"))
+        w, h, rgb = panel.read_screenshot(io.BytesIO(no_end))
+        self.assertEqual((w, h), (480, 320))
+        self.assertEqual(len(rgb), 480 * 320 * 3)
+        self.assertEqual(tuple(rgb[-3:]), (0, 255, 0))
+
     def test_leading_logs_are_discarded(self):
         logs = b"[HB] beat=1 heap=100000\n[LOG] OSPanel log stream\n"
         stream = build_stream(2, 1, rgb565_le(0x1F, 0x3F, 0x1F), leading_logs=logs)

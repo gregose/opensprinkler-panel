@@ -92,6 +92,11 @@ def read_screenshot(reader):
         # Some other control line before SHOT — ignore and keep scanning.
 
     frame = bytearray(width * height * 2)
+    # Primary exit is the \x02END\n terminator. As defense-in-depth (so a
+    # firmware regression that drops END can't hang the client forever), also
+    # exit once every row has been covered by a strip.
+    rows_seen = bytearray(height)
+    rows_left = height
     while True:
         b = reader.read(1)
         # Skip any stray bytes until the next control marker (defensive).
@@ -111,6 +116,12 @@ def read_screenshot(reader):
                 dst = ((y + row) * width + x) * 2
                 src = row * sw * 2
                 frame[dst:dst + sw * 2] = data[src:src + sw * 2]
+                yy = y + row
+                if 0 <= yy < height and not rows_seen[yy]:
+                    rows_seen[yy] = 1
+                    rows_left -= 1
+            if rows_left <= 0:
+                break
         else:
             raise ProtocolError("unexpected control frame: %r" % parts[0])
 
@@ -147,7 +158,13 @@ def do_shot(host, port, out_path, timeout):
     try:
         reader = sock.makefile("rb")
         sock.sendall(b"SHOT\n")
-        width, height, rgb = read_screenshot(reader)
+        try:
+            width, height, rgb = read_screenshot(reader)
+        except socket.timeout:
+            raise ProtocolError(
+                "timed out after %gs waiting for screen data — is dev_log "
+                "enabled and is another client holding the single :2323 slot?"
+                % timeout)
     finally:
         sock.close()
     png = encode_png(width, height, rgb)
