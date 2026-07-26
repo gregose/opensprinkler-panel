@@ -2692,11 +2692,12 @@ static void ui_update() {
                 const int pid = idx + 1;
                 const bool en = prog.enabled;
 
-                // Enable/disable icon + name — a single power glyph that
-                // recolors (teal enabled, muted disabled); the dimmed name and
-                // the Enable/Disable button carry the state too. No chip, no
-                // "Disabled" word.
-                lv_label_set_text(prog_row_icon[r], LV_SYMBOL_POWER);
+                // Enable/disable icon + name. Different SHAPES per state so
+                // disabled doesn't just read as a dimmer "on": a power glyph
+                // (teal) when enabled, a flat dash (muted) when disabled. The
+                // dimmed name and Enable/Disable button reinforce it.
+                lv_label_set_text(prog_row_icon[r],
+                                  en ? LV_SYMBOL_POWER : LV_SYMBOL_MINUS);
                 lv_obj_set_style_text_color(prog_row_icon[r],
                     hex_color(en ? CLR_TEAL : CLR_MUTED), 0);
                 lv_label_set_text(prog_row_name[r], prog.name.c_str());
