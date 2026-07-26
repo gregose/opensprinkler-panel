@@ -18,7 +18,7 @@ separate **Programs** feature (list + program-run screens) is documented in
 `05-programs.md`; it is reached from the settings panel and is out of scope here.
 
 ### Top bar (always, 26 px tall)
-- **Left — controller reachability:** `◉ <host>` in teal when the API is reachable; turns **red** `◎ <host>` when not.
+- **Left — panel status:** a water-droplet identity glyph (`LV_SYMBOL_TINT`) followed by the current status word — `Connected` / `Syncing...` / `Running` / `Program running` / `Program paused` / `Reconnecting...` / `Controller offline` / `Auth error`. The glyph is **static** (Wi-Fi/RSSI is shown by the right-hand meters, so a Wi-Fi glyph here would be redundant) and only **recolours** with state: teal (healthy), amber (syncing/reconnecting/paused), red (offline/auth error). The explicit warning/refresh affordance is carried by the large idle banner + status text below, not by swapping this glyph.
 - **Right — two indicators:**
   - **PANEL** signal — the panel's own Wi-Fi RSSI (`WiFi.RSSI()`, read locally), as 4 bars.
   - **CTRL** signal — the controller's Wi-Fi RSSI, from the `RSSI` field in the same `/jc` poll (`02`), as 4 bars. When the controller is unreachable, show `— —`; PANEL stays valid, which is the diagnostic ("panel's fine, controller's the problem").
@@ -97,7 +97,7 @@ running" station — selecting a station *is* running it.
 - Run time label: `RUN TIME`
 - Auto-advance label: `Auto-advance` (toggle switch, no helper sub-text)
 - Buttons: `Next ›` (advance), `■ Stop`
-- Connected: `◉ <host>` (teal) · Disconnected: `◎ <host>` (red). Signal bars labelled `PANEL` / `CTRL`; CTRL shows `— —` when unreachable.
+- Status (top-left): droplet `LV_SYMBOL_TINT` + status word (`Connected` teal · `Syncing...`/`Reconnecting...`/`Program paused` amber · `Controller offline`/`Auth error` red). Signal bars labelled `PANEL` / `CTRL`; CTRL shows `— —` when unreachable.
 - **No transient toasts.** Completion is conveyed by the confirmed-state UI (return to idle, countdown at `0:00`, no highlight); errors by the top-bar banner. (An earlier toast affordance was removed as redundant.)
 
 Voice: plain, active, no apologies. A control names what it does; the same word

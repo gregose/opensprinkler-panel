@@ -1789,7 +1789,7 @@ static void build_ui() {
         lbl_host = lv_label_create(bar);
         lv_obj_set_style_text_font(lbl_host, &lv_font_montserrat_12, 0);
         lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
-        lv_label_set_text(lbl_host, LV_SYMBOL_WIFI " Connected");
+        lv_label_set_text(lbl_host, LV_SYMBOL_TINT " Connected");
 
         // Drawn signal meters in a right-aligned flex-row group (PANEL left, CTRL right).
         lv_obj_t* sig_group = lv_obj_create(bar);
@@ -2442,13 +2442,12 @@ static void ui_update() {
         status_color = CLR_TEAL;
     }
 
-    // Link-state-appropriate glyph for status bar and idle banner (Part 4).
-    const char* link_sym = LV_SYMBOL_WIFI;
-    if (!show_syncing) {
-        if (v.link == osp::LinkState::Reconnecting) link_sym = LV_SYMBOL_REFRESH;
-        else if (v.link == osp::LinkState::Offline ||
-                 v.link == osp::LinkState::AuthError) link_sym = LV_SYMBOL_WARNING;
-    }
+    // Top-bar status glyph: a static water-droplet identity mark for the panel
+    // (Wi-Fi/RSSI lives in the right-hand meters, so a Wi-Fi glyph here would be
+    // redundant). It only recolours with link/run state — the explicit
+    // warning/refresh affordance is carried by the large idle banner + status
+    // text below, so the bar mark stays the constant droplet.
+    const char* link_sym = LV_SYMBOL_TINT;
 
     snprintf(buf, sizeof(buf), "%s %s", link_sym, status_text);
     lv_label_set_text(lbl_host, buf);
