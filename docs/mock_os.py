@@ -147,16 +147,22 @@ class ProgramDef:
 
 
 def default_programs(n_stations: int) -> list[ProgramDef]:
-    """Programs with DISJOINT station sets (two disabled) for testing.
+    """Programs for exercising the on-device Programs UI end-to-end.
 
-    Chosen so the on-device Programs UI can be exercised end-to-end:
-      - 6 programs total  -> more than one list page (MAX_PROG_ROWS == 4).
+      - 10 programs total -> THREE list pages (MAX_PROG_ROWS == 4), so the
+        pager dots + ‹ › arrows have to render and page 1<->2<->3.
       - "Full System Test" has 11 stations -> overflows the queue window
         (MAX_QROWS == 9) so windowing + fade indicators show.
       - that program also contains station 14 (the long name) -> queue-row
         text wrapping/ellipsis is exercised while it runs.
-      - every station set is disjoint so the panel's "identify the running
-        program by its live stations" matcher stays unambiguous.
+      - one program ("Northeast Perimeter & Back Forty Seasonal Deep-Soak
+        Cycle") has an intentionally long NAME -> the programs-list name column
+        must ellipsize it.
+
+    The ENABLED programs keep DISJOINT station sets so the panel's "identify the
+    running program by its live stations" matcher stays unambiguous (that matcher
+    only ever runs for programs the controller can actually start, i.e. enabled
+    ones). Disabled programs are list-only padding and may reuse stations.
     """
 
     def durs(mapping: dict[int, int]) -> list[int]:
@@ -187,6 +193,19 @@ def default_programs(n_stations: int) -> list[ProgramDef]:
         # Front Curb Strip — DISABLED — Sat/Sun 06:30 — curb strips
         ProgramDef("Front Curb Strip", False, SAT | SUN, 6 * 60 + 30,
                    durs({21: 300, 22: 240})),
+        # Northeast Perimeter ... — ENABLED — long NAME for the programs-list
+        # ellipsis test; uses only the one otherwise-unused station (23) so the
+        # enabled set stays disjoint.
+        ProgramDef("Northeast Perimeter & Back Forty Seasonal Deep-Soak Cycle",
+                   True, MON | THU, 3 * 60, durs({23: 600})),
+        # --- list-only padding so the list spans three pages (pager test). ---
+        # DISABLED, so they never run -> reusing stations is unambiguous.
+        ProgramDef("Holiday Away Mode", False, EVERY_DAY, 20 * 60,
+                   durs({0: 300, 3: 300})),
+        ProgramDef("Deep Root Quarterly", False, SUN, 9 * 60,
+                   durs({8: 1200, 9: 1200})),
+        ProgramDef("Overseed Germination", False, MON | WED | FRI, 5 * 60,
+                   durs({2: 180, 4: 180, 7: 180})),
     ]
 
 
