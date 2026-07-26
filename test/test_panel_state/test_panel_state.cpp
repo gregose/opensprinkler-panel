@@ -773,6 +773,50 @@ void test_paused_program_freezes_countdown() {
   TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
 }
 
+// The overall program time-remaining must tick down smoothly between polls,
+// like the station countdown (not stay frozen until the next /jc).
+void test_program_total_remaining_ticks_down_between_polls() {
+  Fixture f(3);
+  f.ps.set_program_list(make_jp_durations({300, 240, 180}));
+
+  JcData jc = make_jc_idle(3);
+  jc.devt = 1000;
+  jc.sbits[1 / 8] |= static_cast<uint8_t>(1u << (1 % 8));
+  jc.ps[1] = PsEntry{1, 120, 950, 0};   // running
+  jc.ps[2] = PsEntry{1, 180, 1100, 0};  // upcoming
+  f.ps.on_jc(jc, 1000);
+
+  const int total0 = f.ps.view().prog_run.total_remaining_seconds;
+  TEST_ASSERT_TRUE(total0 > 0);
+
+  f.ps.tick(4000);  // 3s later
+  TEST_ASSERT_EQUAL_INT(total0 - 3,
+                        f.ps.view().prog_run.total_remaining_seconds);
+}
+
+// While paused, the "resumes in" clock must tick down smoothly (the station and
+// overall countdowns stay frozen, but the resume timer does not).
+void test_paused_program_resume_clock_ticks_down() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;
+  jc.pt = 600;
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT(600, f.ps.view().pause_remaining_s);
+
+  f.ps.tick(9000);  // 4s later
+  TEST_ASSERT_EQUAL_INT(596, f.ps.view().pause_remaining_s);
+  // Station countdown stays frozen while paused.
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
 // A panel-initiated program run reports pid=254 in /jc (program_index=-1). The
 // panel must remember which program it launched so the UI can label it.
 void test_panel_launched_run_remembers_program_index() {
@@ -879,6 +923,8 @@ int main(int, char**) {
   // M9 — paused program / manual-run labeling (UX bug fixes)
   RUN_TEST(test_paused_program_shows_pending_station_and_countdown);
   RUN_TEST(test_paused_program_freezes_countdown);
+  RUN_TEST(test_program_total_remaining_ticks_down_between_polls);
+  RUN_TEST(test_paused_program_resume_clock_ticks_down);
   RUN_TEST(test_panel_launched_run_remembers_program_index);
   RUN_TEST(test_scheduled_run_keeps_model_program_index);
 

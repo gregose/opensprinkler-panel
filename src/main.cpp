@@ -1211,6 +1211,7 @@ static lv_obj_t* btn_programs    = nullptr;  // entry button on idle panel
 static constexpr int MAX_PROG_ROWS  = 4;
 static constexpr int MAX_PROG_PAGES = 6;
 static lv_obj_t* prog_rows[MAX_PROG_ROWS]          = {};
+static lv_obj_t* prog_row_icon[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_name[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_next[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_btn_toggle[MAX_PROG_ROWS] = {};
@@ -1746,7 +1747,7 @@ static void build_ui() {
     static constexpr int ACTION_GAP = 10;
     const int action_btn_w = (LEFT_W - (2 * ACTION_SIDE_PAD) - ACTION_GAP) / 2;
 
-    btn_advance = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+    btn_advance = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
                            CLR_TEAL, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
     lv_obj_set_pos(btn_advance, ACTION_SIDE_PAD, ACTION_Y);
@@ -1767,7 +1768,7 @@ static void build_ui() {
         static constexpr int PROG_BTN_GAP  = 8;
         const int prog_btn_w = (LEFT_W - (2 * PROG_SIDE_PAD) - (2 * PROG_BTN_GAP)) / 3;
 
-        btn_prog_adv = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+        btn_prog_adv = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
                                 CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
         lv_obj_set_size(btn_prog_adv, prog_btn_w, ACTION_H);
         lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, PROG_ACTION_Y);
@@ -2020,8 +2021,10 @@ static void build_ui() {
     // x position of toggle and run buttons (within row, row width = SCREEN_W)
     static constexpr int PROG_RUN_X  = SCREEN_W - PROG_BTN_RP - PROG_RUN_W;
     static constexpr int PROG_TOG_X  = PROG_RUN_X - PROG_BTN_G - PROG_TOG_W;
-    // Left content area: name / next-run label width
-    static constexpr int PROG_NAME_W = PROG_TOG_X - 8 - 8;  // x=8, gap=8
+    // Left content area: enable/disable icon + name / next-run label width
+    static constexpr int PROG_ICON_W = 22;  // enable/disable glyph column
+    static constexpr int PROG_TEXT_X = 8 + PROG_ICON_W;
+    static constexpr int PROG_NAME_W = PROG_TOG_X - PROG_TEXT_X - 8;  // gap=8
 
     pnl_programs = lv_obj_create(scr);
     lv_obj_set_size(pnl_programs, SCREEN_W, PROG_LIST_H);
@@ -2068,6 +2071,14 @@ static void build_ui() {
         lv_obj_set_style_pad_all(prog_rows[r], 0, 0);
         lv_obj_clear_flag(prog_rows[r], LV_OBJ_FLAG_SCROLLABLE);
 
+        // Enable/disable icon on the name line (left). Glyph + colour convey
+        // program state (paired with dimming of the name); no chip/word.
+        prog_row_icon[r] = lv_label_create(prog_rows[r]);
+        lv_label_set_text(prog_row_icon[r], "");
+        lv_obj_set_style_text_font(prog_row_icon[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(prog_row_icon[r], hex_color(CLR_TEAL), 0);
+        lv_obj_set_pos(prog_row_icon[r], 8, 8);
+
         // Program name (top line). Colour conveys enabled state (dimmed when
         // disabled) — no separate ENABLED/DISABLED chip.
         prog_row_name[r] = lv_label_create(prog_rows[r]);
@@ -2076,7 +2087,7 @@ static void build_ui() {
         lv_label_set_long_mode(prog_row_name[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_name[r], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(prog_row_name[r], hex_color(CLR_TEXT), 0);
-        lv_obj_set_pos(prog_row_name[r], 8, 6);
+        lv_obj_set_pos(prog_row_name[r], PROG_TEXT_X, 6);
 
         // Next-run + zones/runtime meta (bottom line, full width up to buttons).
         prog_row_next[r] = lv_label_create(prog_rows[r]);
@@ -2085,7 +2096,7 @@ static void build_ui() {
         lv_label_set_long_mode(prog_row_next[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_next[r], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(prog_row_next[r], hex_color(CLR_MUTED), 0);
-        lv_obj_set_pos(prog_row_next[r], 8, 28);
+        lv_obj_set_pos(prog_row_next[r], PROG_TEXT_X, 28);
 
         // Toggle (Enable/Disable) button
         prog_row_btn_toggle[r] = make_btn(prog_rows[r], "Disable",
@@ -2425,7 +2436,10 @@ static void ui_update() {
                 lv_obj_set_style_text_color(qrow_name[r],
                     hex_color(is_done ? CLR_MUTED : CLR_TEXT), 0);
 
-                int secs = is_current ? e.remaining_seconds : e.total_seconds;
+                // Queue rows always show the station's FULL configured
+                // duration (static) — the live per-station countdown lives in
+                // the big ticker on the left, so nothing counts down here.
+                int secs = e.total_seconds;
                 if (secs < 0) secs = 0;
                 snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
                 lv_label_set_text(qrow_dur[r], buf);
@@ -2458,7 +2472,12 @@ static void ui_update() {
                 const int pid = idx + 1;
                 const bool en = prog.enabled;
 
-                // Program name — dimmed when disabled (conveys state; no chip).
+                // Enable/disable icon + name — dimmed when disabled (icon +
+                // colour convey state; no chip, no "Disabled" word).
+                lv_label_set_text(prog_row_icon[r],
+                                  en ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+                lv_obj_set_style_text_color(prog_row_icon[r],
+                    hex_color(en ? CLR_TEAL : CLR_MUTED), 0);
                 lv_label_set_text(prog_row_name[r], prog.name.c_str());
                 lv_obj_set_style_text_color(prog_row_name[r],
                     hex_color(en ? CLR_TEXT : CLR_MUTED), 0);
@@ -2519,15 +2538,11 @@ static void ui_update() {
                         }
                     }
 
-                    if (en) {
-                        snprintf(nr_buf, sizeof(nr_buf),
-                                 "%s " LV_SYMBOL_BULLET " %s", when, meta);
-                    } else {
-                        // Disabled: still show when it *would* run, tagged.
-                        snprintf(nr_buf, sizeof(nr_buf),
-                                 "Disabled " LV_SYMBOL_BULLET " %s " LV_SYMBOL_BULLET " %s",
-                                 when, meta);
-                    }
+                    // Next-run + meta on one line. State is shown by the icon
+                    // + dimming, so disabled programs are NOT tagged in text —
+                    // we still compute when they *would* run for reference.
+                    snprintf(nr_buf, sizeof(nr_buf),
+                             "%s " LV_SYMBOL_BULLET " %s", when, meta);
                     lv_label_set_text(prog_row_next[r], nr_buf);
                 }
 
