@@ -1211,12 +1211,14 @@ static lv_obj_t* btn_programs    = nullptr;  // entry button on idle panel
 static constexpr int MAX_PROG_ROWS  = 4;
 static constexpr int MAX_PROG_PAGES = 6;
 static lv_obj_t* prog_rows[MAX_PROG_ROWS]          = {};
+static lv_obj_t* prog_row_icon[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_name[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_next[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_btn_toggle[MAX_PROG_ROWS] = {};
 static lv_obj_t* prog_row_btn_run[MAX_PROG_ROWS]   = {};
 static lv_obj_t* prog_page_dots[MAX_PROG_PAGES]    = {};
-static lv_obj_t* lbl_prog_page                     = nullptr;  // "Page N of M"
+static lv_obj_t* prog_page_prev                    = nullptr;  // ‹ pager arrow
+static lv_obj_t* prog_page_next                    = nullptr;  // › pager arrow
 
 // M9: Program-run queue view panel
 static lv_obj_t* pnl_prog_queue  = nullptr;
@@ -1348,12 +1350,17 @@ static void ev_close_programs(lv_event_t* e) {
     StateLock lock;
     if (lock && g_ps) g_ps->close_programs_list();
 }
-static void ev_prog_page_dot(lv_event_t* e) {
+static void ev_prog_page_prev(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
     if (!(lock && g_ps)) return;
-    lv_obj_t* dot = static_cast<lv_obj_t*>(lv_event_get_target(e));
-    g_ps->set_prog_list_page(get_prog_pid(dot));  // user_data holds page index
+    g_ps->set_prog_list_page(g_ps->view().prog_list_page - 1);  // clamped in setter
+}
+static void ev_prog_page_next(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    g_ps->set_prog_list_page(g_ps->view().prog_list_page + 1);  // clamped in setter
 }
 static void ev_prog_toggle_enabled(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -1428,6 +1435,13 @@ static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H;        // 264
 static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left panel above the action row
 static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
 static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
+
+// Shared navigation-button height for visual continuity across the "Programs >"
+// entry button, the programs-list "Back" button, and the pager ‹ › arrows.
+static constexpr int NAV_BTN_H = 36;
+// Programs-list pager dot indicators (shared by build + per-frame re-centring).
+static constexpr int PROG_DOT_W = 10, PROG_DOT_H = 10, PROG_DOT_GAP = 8;
+static constexpr int PROG_ARROW_W = 46;  // pager arrow button width
 
 
 // ---------------------------------------------------------------------------
@@ -1683,6 +1697,10 @@ static void build_ui() {
     lbl_stn_name = lv_label_create(pnl_running);
     lv_label_set_text(lbl_stn_name, "");
     lv_obj_set_width(lbl_stn_name, LEFT_W - 28);
+    // Constrain to a single line so LONG_DOT ellipsizes instead of wrapping —
+    // otherwise a long name grows down into the countdown ticker at y=66.
+    // montserrat_24 line height is ~29px; 30 keeps one line with a small margin.
+    lv_obj_set_height(lbl_stn_name, 30);
     lv_label_set_long_mode(lbl_stn_name, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_stn_name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_stn_name, hex_color(CLR_TEXT), 0);
@@ -1722,6 +1740,10 @@ static void build_ui() {
     lbl_prog_name = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_name, "");
     lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
+    // One-line height so a long current-station name ellipsizes instead of
+    // wrapping down into the big program countdown (lbl_prog_cd at y=70).
+    // montserrat_24 line height ~29px; name band y28–58 clears the timer.
+    lv_obj_set_height(lbl_prog_name, 30);
     lv_label_set_long_mode(lbl_prog_name, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
@@ -1746,7 +1768,7 @@ static void build_ui() {
     static constexpr int ACTION_GAP = 10;
     const int action_btn_w = (LEFT_W - (2 * ACTION_SIDE_PAD) - ACTION_GAP) / 2;
 
-    btn_advance = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+    btn_advance = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
                            CLR_TEAL, CLR_BG, &lv_font_montserrat_20, 11);
     lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
     lv_obj_set_pos(btn_advance, ACTION_SIDE_PAD, ACTION_Y);
@@ -1767,7 +1789,7 @@ static void build_ui() {
         static constexpr int PROG_BTN_GAP  = 8;
         const int prog_btn_w = (LEFT_W - (2 * PROG_SIDE_PAD) - (2 * PROG_BTN_GAP)) / 3;
 
-        btn_prog_adv = make_btn(scr, "Advance " LV_SYMBOL_RIGHT,
+        btn_prog_adv = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
                                 CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
         lv_obj_set_size(btn_prog_adv, prog_btn_w, ACTION_H);
         lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, PROG_ACTION_Y);
@@ -1864,7 +1886,9 @@ static void build_ui() {
         // "Programs" entry button — vertically centred in the space between the
         // Auto-advance row and the panel's bottom edge (biased a few px lower so
         // it reads as centred in the column rather than hugging Auto-advance).
-        static constexpr int PROG_BTN_H = 38;
+        // Height matches the Back button + pager arrows (NAV_BTN_H) for nav
+        // button continuity across screens.
+        static constexpr int PROG_BTN_H = NAV_BTN_H;
         static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
         const int aa_bottom = AA_Y + AA_H;
         int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
@@ -1897,6 +1921,9 @@ static void build_ui() {
         lbl_qlist_hdr = lv_label_create(pnl_prog_qlist);
         lv_label_set_text(lbl_qlist_hdr, "");
         lv_obj_set_width(lbl_qlist_hdr, qcontent_w);
+        // One-line height (montserrat_16 ~19px) so a long program name
+        // ellipsizes instead of wrapping into the total-time line at y=22.
+        lv_obj_set_height(lbl_qlist_hdr, 20);
         lv_label_set_long_mode(lbl_qlist_hdr, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(lbl_qlist_hdr, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl_qlist_hdr, hex_color(CLR_TEXT), 0);
@@ -1925,6 +1952,10 @@ static void build_ui() {
             qrow_name[i] = lv_label_create(pnl_prog_qlist);
             lv_label_set_text(qrow_name[i], "");
             lv_obj_set_width(qrow_name[i], qcontent_w - 22 - 48);
+            // Constrain to a single line so LONG_DOT truncates with an ellipsis
+            // instead of wrapping (a long station name would otherwise grow
+            // vertically and collide into the next queue row).
+            lv_obj_set_height(qrow_name[i], 18);
             lv_label_set_long_mode(qrow_name[i], LV_LABEL_LONG_DOT);
             lv_obj_set_style_text_font(qrow_name[i], &lv_font_montserrat_14, 0);
             lv_obj_set_style_text_color(qrow_name[i], hex_color(CLR_TEXT), 0);
@@ -1951,6 +1982,10 @@ static void build_ui() {
         lv_obj_set_style_bg_color(qfade_top, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_color(qfade_top, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_dir(qfade_top, LV_GRAD_DIR_VER, 0);
+        // Base fill must be opaque; the per-stop main/grad opacities below create
+        // the actual fade. Without this, remove_style_all leaves bg_opa=0 and the
+        // gradient never renders (the "no fade mask" bug).
+        lv_obj_set_style_bg_opa(qfade_top, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_main_opa(qfade_top, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_grad_opa(qfade_top, LV_OPA_TRANSP, 0);
         lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_CLICKABLE);
@@ -1964,6 +1999,7 @@ static void build_ui() {
         lv_obj_set_style_bg_color(qfade_bottom, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_color(qfade_bottom, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_dir(qfade_bottom, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_opa(qfade_bottom, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_main_opa(qfade_bottom, LV_OPA_TRANSP, 0);
         lv_obj_set_style_bg_grad_opa(qfade_bottom, LV_OPA_COVER, 0);
         lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_CLICKABLE);
@@ -2009,7 +2045,12 @@ static void build_ui() {
     //   Pager:   below the rows
     static constexpr int PROG_HDR_H  = 44;
     static constexpr int PROG_ROW_H  = 48;
-    static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H + 6;
+    // Pager sits in the empty band below the last row, vertically centred
+    // between the bottom of the last program row and the bottom of the panel.
+    static constexpr int PROG_ROWS_BOTTOM = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H;
+    static constexpr int PROG_PAGER_CY = PROG_ROWS_BOTTOM +
+                                         (PROG_LIST_H - PROG_ROWS_BOTTOM) / 2;
+    static constexpr int PROG_DOT_Y  = PROG_PAGER_CY - PROG_DOT_H / 2;
     // Right-side button metrics within each row.
     static constexpr int PROG_RUN_W  = 80;   // Run button width
     static constexpr int PROG_TOG_W  = 86;   // Toggle (Enable/Disable) button width
@@ -2020,8 +2061,10 @@ static void build_ui() {
     // x position of toggle and run buttons (within row, row width = SCREEN_W)
     static constexpr int PROG_RUN_X  = SCREEN_W - PROG_BTN_RP - PROG_RUN_W;
     static constexpr int PROG_TOG_X  = PROG_RUN_X - PROG_BTN_G - PROG_TOG_W;
-    // Left content area: name / next-run label width
-    static constexpr int PROG_NAME_W = PROG_TOG_X - 8 - 8;  // x=8, gap=8
+    // Left content area: enable/disable icon + name / next-run label width
+    static constexpr int PROG_ICON_W = 22;  // enable/disable glyph column
+    static constexpr int PROG_TEXT_X = 8 + PROG_ICON_W;
+    static constexpr int PROG_NAME_W = PROG_TOG_X - PROG_TEXT_X - 8;  // gap=8
 
     pnl_programs = lv_obj_create(scr);
     lv_obj_set_size(pnl_programs, SCREEN_W, PROG_LIST_H);
@@ -2051,7 +2094,7 @@ static void build_ui() {
         lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
                                       CLR_LINE, CLR_TEXT,
                                       &lv_font_montserrat_20, 8);
-        lv_obj_set_size(btn_back, 128, PROG_HDR_H - 8);
+        lv_obj_set_size(btn_back, 128, NAV_BTN_H);
         lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_add_event_cb(btn_back, ev_close_programs, LV_EVENT_CLICKED, nullptr);
     }
@@ -2068,15 +2111,27 @@ static void build_ui() {
         lv_obj_set_style_pad_all(prog_rows[r], 0, 0);
         lv_obj_clear_flag(prog_rows[r], LV_OBJ_FLAG_SCROLLABLE);
 
+        // Enable/disable icon on the name line (left). Glyph + colour convey
+        // program state (paired with dimming of the name); no chip/word.
+        prog_row_icon[r] = lv_label_create(prog_rows[r]);
+        lv_label_set_text(prog_row_icon[r], "");
+        lv_obj_set_style_text_font(prog_row_icon[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(prog_row_icon[r], hex_color(CLR_TEAL), 0);
+        lv_obj_set_pos(prog_row_icon[r], 8, 8);
+
         // Program name (top line). Colour conveys enabled state (dimmed when
         // disabled) — no separate ENABLED/DISABLED chip.
         prog_row_name[r] = lv_label_create(prog_rows[r]);
         lv_label_set_text(prog_row_name[r], "");
         lv_obj_set_width(prog_row_name[r], PROG_NAME_W);
+        // Constrain to a single line so LONG_DOT ellipsizes instead of wrapping
+        // — otherwise a long program name grows down into the schedule/meta line
+        // at y=28. montserrat_16 line height is ~19px; 20 keeps one line.
+        lv_obj_set_height(prog_row_name[r], 20);
         lv_label_set_long_mode(prog_row_name[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_name[r], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(prog_row_name[r], hex_color(CLR_TEXT), 0);
-        lv_obj_set_pos(prog_row_name[r], 8, 6);
+        lv_obj_set_pos(prog_row_name[r], PROG_TEXT_X, 6);
 
         // Next-run + zones/runtime meta (bottom line, full width up to buttons).
         prog_row_next[r] = lv_label_create(prog_rows[r]);
@@ -2085,7 +2140,7 @@ static void build_ui() {
         lv_label_set_long_mode(prog_row_next[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(prog_row_next[r], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(prog_row_next[r], hex_color(CLR_MUTED), 0);
-        lv_obj_set_pos(prog_row_next[r], 8, 28);
+        lv_obj_set_pos(prog_row_next[r], PROG_TEXT_X, 28);
 
         // Toggle (Enable/Disable) button
         prog_row_btn_toggle[r] = make_btn(prog_rows[r], "Disable",
@@ -2106,35 +2161,43 @@ static void build_ui() {
                             LV_EVENT_CLICKED, nullptr);
     }
 
-    // Page indicator + dots (centered, below rows)
+    // Pager: ‹ › arrow buttons flanking a centred row of page dots (no text).
     {
-        // "Page N of M" text centered above the dots.
-        lbl_prog_page = lv_label_create(pnl_programs);
-        lv_label_set_text(lbl_prog_page, "");
-        lv_obj_set_style_text_font(lbl_prog_page, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_prog_page, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_prog_page, LV_ALIGN_TOP_MID, 0, PROG_DOT_Y - 12);
-        lv_obj_add_flag(lbl_prog_page, LV_OBJ_FLAG_HIDDEN);
-
-        // Dots are 10×10 buttons; draw them centred on the panel.
-        static constexpr int DOT_W = 10, DOT_H = 10, DOT_GAP = 8;
-        const int total_w = MAX_PROG_PAGES * DOT_W + (MAX_PROG_PAGES - 1) * DOT_GAP;
-        const int dot_start_x = (SCREEN_W - total_w) / 2;
+        // Dots are non-interactive indicators; the arrows drive paging. Their X
+        // is re-centred every frame in ui_update() from the live page count, so
+        // the build-time X here is just a placeholder — only size/style/Y are
+        // set now (dots stay hidden until there is more than one page).
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
-            prog_page_dots[d] = lv_btn_create(pnl_programs);
-            lv_obj_set_size(prog_page_dots[d], DOT_W, DOT_H);
-            lv_obj_set_pos(prog_page_dots[d],
-                           dot_start_x + d * (DOT_W + DOT_GAP),
-                           PROG_DOT_Y + 2);
+            prog_page_dots[d] = lv_obj_create(pnl_programs);
+            lv_obj_remove_style_all(prog_page_dots[d]);
+            lv_obj_set_size(prog_page_dots[d], PROG_DOT_W, PROG_DOT_H);
+            lv_obj_set_pos(prog_page_dots[d], 0, PROG_DOT_Y);
             lv_obj_set_style_radius(prog_page_dots[d], LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_border_width(prog_page_dots[d], 0, 0);
+            lv_obj_set_style_bg_opa(prog_page_dots[d], LV_OPA_COVER, 0);
             lv_obj_set_style_bg_color(prog_page_dots[d], hex_color(CLR_LINE), 0);
-            lv_obj_set_style_pad_all(prog_page_dots[d], 0, 0);
-            set_prog_pid(prog_page_dots[d], d);  // page index in user_data
-            lv_obj_add_event_cb(prog_page_dots[d], ev_prog_page_dot,
-                                LV_EVENT_CLICKED, nullptr);
             lv_obj_add_flag(prog_page_dots[d], LV_OBJ_FLAG_HIDDEN);
         }
+
+        // Touch-sized arrow buttons: same height as the Back button (NAV_BTN_H)
+        // for nav-button continuity, vertically centred on the pager band.
+        static constexpr int ARROW_INSET = 14;
+        const int arrow_y = PROG_PAGER_CY - NAV_BTN_H / 2;
+
+        prog_page_prev = make_btn(pnl_programs, LV_SYMBOL_LEFT,
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(prog_page_prev, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(prog_page_prev, ARROW_INSET, arrow_y);
+        lv_obj_add_event_cb(prog_page_prev, ev_prog_page_prev,
+                            LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(prog_page_prev, LV_OBJ_FLAG_HIDDEN);
+
+        prog_page_next = make_btn(pnl_programs, LV_SYMBOL_RIGHT,
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(prog_page_next, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(prog_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
+        lv_obj_add_event_cb(prog_page_next, ev_prog_page_next,
+                            LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(prog_page_next, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2425,7 +2488,10 @@ static void ui_update() {
                 lv_obj_set_style_text_color(qrow_name[r],
                     hex_color(is_done ? CLR_MUTED : CLR_TEXT), 0);
 
-                int secs = is_current ? e.remaining_seconds : e.total_seconds;
+                // Queue rows always show the station's FULL configured
+                // duration (static) — the live per-station countdown lives in
+                // the big ticker on the left, so nothing counts down here.
+                int secs = e.total_seconds;
                 if (secs < 0) secs = 0;
                 snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
                 lv_label_set_text(qrow_dur[r], buf);
@@ -2458,7 +2524,12 @@ static void ui_update() {
                 const int pid = idx + 1;
                 const bool en = prog.enabled;
 
-                // Program name — dimmed when disabled (conveys state; no chip).
+                // Enable/disable icon + name — dimmed when disabled (icon +
+                // colour convey state; no chip, no "Disabled" word).
+                lv_label_set_text(prog_row_icon[r],
+                                  en ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+                lv_obj_set_style_text_color(prog_row_icon[r],
+                    hex_color(en ? CLR_TEAL : CLR_MUTED), 0);
                 lv_label_set_text(prog_row_name[r], prog.name.c_str());
                 lv_obj_set_style_text_color(prog_row_name[r],
                     hex_color(en ? CLR_TEXT : CLR_MUTED), 0);
@@ -2519,15 +2590,11 @@ static void ui_update() {
                         }
                     }
 
-                    if (en) {
-                        snprintf(nr_buf, sizeof(nr_buf),
-                                 "%s " LV_SYMBOL_BULLET " %s", when, meta);
-                    } else {
-                        // Disabled: still show when it *would* run, tagged.
-                        snprintf(nr_buf, sizeof(nr_buf),
-                                 "Disabled " LV_SYMBOL_BULLET " %s " LV_SYMBOL_BULLET " %s",
-                                 when, meta);
-                    }
+                    // Next-run + meta on one line. State is shown by the icon
+                    // + dimming, so disabled programs are NOT tagged in text —
+                    // we still compute when they *would* run for reference.
+                    snprintf(nr_buf, sizeof(nr_buf),
+                             "%s " LV_SYMBOL_BULLET " %s", when, meta);
                     lv_label_set_text(prog_row_next[r], nr_buf);
                 }
 
@@ -2540,21 +2607,37 @@ static void ui_update() {
             }
         }
 
-        // Page indicator label + dots: only when more than one page.
+        // Pager: dots (indicators) + ‹ › arrows, only when >1 page.
         const bool need_pager = total_pages > 1;
-        if (lbl_prog_page) {
-            obj_set_hidden(lbl_prog_page, !need_pager);
-            if (need_pager) {
-                snprintf(buf, sizeof(buf), "Page %d of %d", page + 1, total_pages);
-                lv_label_set_text(lbl_prog_page, buf);
-            }
-        }
+        // Re-centre the visible dot cluster between the arrows (screen centre),
+        // sized to the live page count so it stays centred regardless of how
+        // many pages exist.
+        const int dots_w = need_pager
+            ? total_pages * PROG_DOT_W + (total_pages - 1) * PROG_DOT_GAP
+            : 0;
+        const int dots_x0 = (SCREEN_W - dots_w) / 2;
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
             if (!prog_page_dots[d]) continue;
             obj_set_hidden(prog_page_dots[d], !need_pager || d >= total_pages);
             if (need_pager && d < total_pages) {
+                lv_obj_set_x(prog_page_dots[d],
+                             dots_x0 + d * (PROG_DOT_W + PROG_DOT_GAP));
                 lv_obj_set_style_bg_color(prog_page_dots[d],
                     hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
+            }
+        }
+        if (prog_page_prev && prog_page_next) {
+            obj_set_hidden(prog_page_prev, !need_pager);
+            obj_set_hidden(prog_page_next, !need_pager);
+            if (need_pager) {
+                // Dim (but keep tappable — setter clamps) at the ends. make_btn
+                // set the color on the child label, so target that.
+                lv_obj_t* pl = lv_obj_get_child(prog_page_prev, 0);
+                lv_obj_t* nl = lv_obj_get_child(prog_page_next, 0);
+                if (pl) lv_obj_set_style_text_color(pl,
+                    hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
+                if (nl) lv_obj_set_style_text_color(nl,
+                    hex_color(page >= total_pages - 1 ? CLR_MUTED : CLR_TEXT), 0);
             }
         }
     }

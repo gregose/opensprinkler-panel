@@ -174,6 +174,26 @@ void test_run_time_change_while_running_used_on_advance() {
   TEST_ASSERT_EQUAL_INT(180, f.ps.desired().seconds);
 }
 
+void test_reselect_running_station_restarts_with_new_run_time() {
+  Fixture f;
+
+  // Station 1 is confirmed running with 50 s left.
+  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::None, (int)f.ps.desired().kind);
+
+  // Pick a new run time, then tap the SAME station that is running.
+  f.ps.set_run_time(180);
+  f.ps.select_station(1);
+
+  // A fresh Run intent is queued for the same sid at the new run time; the
+  // delivery layer turns Run(running_sid) into an off-then-on restart (extend).
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::Run, (int)f.ps.desired().kind);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+  TEST_ASSERT_EQUAL_INT(180, f.ps.desired().seconds);
+}
+
 void test_advance_queues_next_station_without_changing_confirmed_running_sid() {
   Fixture f;
 
@@ -773,6 +793,50 @@ void test_paused_program_freezes_countdown() {
   TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
 }
 
+// The overall program time-remaining must tick down smoothly between polls,
+// like the station countdown (not stay frozen until the next /jc).
+void test_program_total_remaining_ticks_down_between_polls() {
+  Fixture f(3);
+  f.ps.set_program_list(make_jp_durations({300, 240, 180}));
+
+  JcData jc = make_jc_idle(3);
+  jc.devt = 1000;
+  jc.sbits[1 / 8] |= static_cast<uint8_t>(1u << (1 % 8));
+  jc.ps[1] = PsEntry{1, 120, 950, 0};   // running
+  jc.ps[2] = PsEntry{1, 180, 1100, 0};  // upcoming
+  f.ps.on_jc(jc, 1000);
+
+  const int total0 = f.ps.view().prog_run.total_remaining_seconds;
+  TEST_ASSERT_TRUE(total0 > 0);
+
+  f.ps.tick(4000);  // 3s later
+  TEST_ASSERT_EQUAL_INT(total0 - 3,
+                        f.ps.view().prog_run.total_remaining_seconds);
+}
+
+// While paused, the "resumes in" clock must tick down smoothly (the station and
+// overall countdowns stay frozen, but the resume timer does not).
+void test_paused_program_resume_clock_ticks_down() {
+  Fixture f;
+  f.ps.set_program_list(make_jp(2));
+
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.pq = 1;
+  jc.pt = 600;
+  jc.sbits[0] |= 0x01;
+  jc.ps[0].pid = 1;
+  jc.ps[0].rem = 300;
+  jc.ps[0].start = 2000;
+  f.ps.on_jc(jc, 5000);
+  TEST_ASSERT_EQUAL_INT(600, f.ps.view().pause_remaining_s);
+
+  f.ps.tick(9000);  // 4s later
+  TEST_ASSERT_EQUAL_INT(596, f.ps.view().pause_remaining_s);
+  // Station countdown stays frozen while paused.
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
 // A panel-initiated program run reports pid=254 in /jc (program_index=-1). The
 // panel must remember which program it launched so the UI can label it.
 void test_panel_launched_run_remembers_program_index() {
@@ -823,6 +887,7 @@ int main(int, char**) {
   RUN_TEST(test_running_station_dead_reckons_between_polls);
   RUN_TEST(test_run_time_change_while_running_updates_value_without_requeue);
   RUN_TEST(test_run_time_change_while_running_used_on_advance);
+  RUN_TEST(test_reselect_running_station_restarts_with_new_run_time);
   RUN_TEST(test_advance_queues_next_station_without_changing_confirmed_running_sid);
   RUN_TEST(test_prev_wraps_and_queues_previous_station);
   RUN_TEST(test_stop_queues_stop_until_idle_confirmed);
@@ -879,6 +944,8 @@ int main(int, char**) {
   // M9 — paused program / manual-run labeling (UX bug fixes)
   RUN_TEST(test_paused_program_shows_pending_station_and_countdown);
   RUN_TEST(test_paused_program_freezes_countdown);
+  RUN_TEST(test_program_total_remaining_ticks_down_between_polls);
+  RUN_TEST(test_paused_program_resume_clock_ticks_down);
   RUN_TEST(test_panel_launched_run_remembers_program_index);
   RUN_TEST(test_scheduled_run_keeps_model_program_index);
 

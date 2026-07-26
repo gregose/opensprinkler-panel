@@ -308,35 +308,55 @@ void PanelState::tick(uint32_t now_ms) {
 
   now_ms_ = now_ms;
 
-  // Countdown dead-reckoning for both manual and program running phases.
-  if ((view_.phase == Phase::Running || view_.phase == Phase::ProgramRunning) &&
-      view_.countdown_s > 0) {
-    if (view_.paused) {
-      // A paused program freezes its countdown; keep the tick baseline current
-      // so resuming doesn't subtract the whole paused interval at once.
-      last_countdown_tick_ms_ = now_ms;
-    } else {
-      const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
-      const uint32_t secs = elapsed / 1000u;
-      if (secs > 0u) {
-        last_countdown_tick_ms_ += secs * 1000u;
-        if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
-          view_.countdown_s = 0;
-          if (view_.phase == Phase::Running && !await_close_) {
-            const int finished_sid = view_.running_sid;
-            const int next_sid =
-                view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
-            if (next_sid != -1) {
-              queue_desired_run(next_sid);
-              begin_await_close();
-            } else {
-              begin_await_close();
+  // Countdown dead-reckoning for both manual and program running phases. Every
+  // per-second timer the UI shows (station countdown, overall program time
+  // remaining, and the pause "resumes in" clock) is advanced here from the
+  // wall clock so they all tick smoothly between the 2 s /jc polls that
+  // re-sync them.
+  if (view_.phase == Phase::Running || view_.phase == Phase::ProgramRunning) {
+    const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
+    const uint32_t secs = elapsed / 1000u;
+    if (secs > 0u) {
+      last_countdown_tick_ms_ += secs * 1000u;
+      if (view_.paused) {
+        // Paused: the station + overall countdowns freeze; only the resume
+        // clock ticks down (smoothly, in step with the main timer).
+        if (view_.pause_remaining_s > 0) {
+          view_.pause_remaining_s =
+              (secs >= static_cast<uint32_t>(view_.pause_remaining_s))
+                  ? 0
+                  : view_.pause_remaining_s - static_cast<int>(secs);
+        }
+      } else {
+        if (view_.countdown_s > 0) {
+          if (secs >= static_cast<uint32_t>(view_.countdown_s)) {
+            view_.countdown_s = 0;
+            if (view_.phase == Phase::Running && !await_close_) {
+              const int finished_sid = view_.running_sid;
+              const int next_sid =
+                  view_.auto_advance ? model_.auto_next_sid(finished_sid) : -1;
+              if (next_sid != -1) {
+                queue_desired_run(next_sid);
+                begin_await_close();
+              } else {
+                begin_await_close();
+              }
             }
+            // For ProgramRunning: countdown reaching 0 just holds at 0 until
+            // the next /jc poll updates the state.
+          } else {
+            view_.countdown_s -= static_cast<int>(secs);
           }
-          // For ProgramRunning: countdown reaching 0 just holds at 0 until
-          // the next /jc poll updates the state.
-        } else {
-          view_.countdown_s -= static_cast<int>(secs);
+        }
+        // Overall program time remaining ticks in step with the station timer.
+        if (view_.phase == Phase::ProgramRunning &&
+            view_.prog_run.total_remaining_seconds > 0) {
+          view_.prog_run.total_remaining_seconds =
+              (secs >= static_cast<uint32_t>(
+                           view_.prog_run.total_remaining_seconds))
+                  ? 0
+                  : view_.prog_run.total_remaining_seconds -
+                        static_cast<int>(secs);
         }
       }
     }
@@ -501,10 +521,11 @@ void PanelState::on_touch(uint32_t now_ms) {
 void PanelState::select_station(int sid) {
   on_touch(now_ms_);
   if (model_.runnable_index(sid) == -1) return;
-  if (view_.phase == Phase::Running && view_.running_sid == sid &&
-      !await_close_ && !has_desired()) {
-    return;
-  }
+  // Re-selecting the station that is already running intentionally RESTARTS it
+  // with the currently selected run time (delivered as off-then-on via
+  // extend()), so every selection queues a fresh Run — we no longer early-out
+  // on same-sid. Editing the run time alone still does not requeue (see
+  // set_run_time); a restart requires an explicit tap on the station.
   queue_desired_run(sid);
 }
 
