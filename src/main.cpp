@@ -256,8 +256,6 @@ static bool g_log_server_started = false;
 static volatile bool g_capture_request     = false;  // net task -> UI task
 static volatile bool g_capture_active      = false;  // UI task owns the send
 static volatile bool g_capture_suppress_log = false; // silence the log tee
-static int32_t       g_capture_max_y       = -1;     // rows streamed so far
-static int           g_capture_stall       = 0;      // UI-iters since active
 
 struct InjTouch { int16_t x; int16_t y; bool pressed; };
 static constexpr int INJ_QUEUE_LEN = 8;
@@ -1215,14 +1213,6 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
                                static_cast<long>(w), static_cast<long>(h));
         g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
         g_log_client.write(px_map, static_cast<size_t>(w) * h * 2);
-        if (area->y2 > g_capture_max_y) g_capture_max_y = area->y2;
-        if (g_capture_max_y >= SCREEN_H - 1) {
-            const char* end = "\x02END\n";
-            g_log_client.write(reinterpret_cast<const uint8_t*>(end), 5);
-            g_log_client.flush();
-            g_capture_active = false;
-            g_capture_suppress_log = false;
-        }
     }
 
     lv_display_flush_ready(disp);
@@ -2897,15 +2887,15 @@ static void ui_task(void* /*arg*/) {
             }
         }
 
-        // Bench screen capture runs on this (LVGL-owning) task: honor a pending
-        // request by forcing a full-screen redraw. disp_flush_cb then streams
-        // each rendered band to the log client and clears g_capture_active when
-        // the bottom row is reached (normally within this one lv_timer_handler).
+        // Bench screen capture runs on this (LVGL-owning) task. Force a
+        // SYNCHRONOUS full-screen redraw with lv_refr_now: it renders every
+        // band and invokes disp_flush_cb (which tees each strip) before it
+        // returns, since our flush is synchronous. That makes frame completion
+        // deterministic — we emit the \x02END\n terminator right after the
+        // redraw instead of trying to detect the bottom row inside the flush.
         if (g_capture_request && !g_capture_active) {
             g_capture_request = false;
             g_capture_active = true;
-            g_capture_max_y = -1;
-            g_capture_stall = 0;
             if (g_log_client && g_log_client.connected()) {
                 char hdr[32];
                 const int n = snprintf(hdr, sizeof(hdr), "\x02SHOT %d %d 565\n",
@@ -2913,16 +2903,17 @@ static void ui_task(void* /*arg*/) {
                 g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
             }
             lv_obj_invalidate(lv_screen_active());
-        }
-
-        lv_timer_handler();
-
-        // Safety net: a capture should finish inside the handler above. If it
-        // didn't (e.g. client dropped mid-frame), don't leave the log tee muted.
-        if (g_capture_active && ++g_capture_stall > 4) {
+            lv_refr_now(lv_display_get_default());
+            if (g_log_client && g_log_client.connected()) {
+                const char* end = "\x02END\n";
+                g_log_client.write(reinterpret_cast<const uint8_t*>(end), 5);
+                g_log_client.flush();
+            }
             g_capture_active = false;
             g_capture_suppress_log = false;
         }
+
+        lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
     }
 }
