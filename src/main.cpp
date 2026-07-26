@@ -1733,6 +1733,10 @@ static void build_ui() {
     lbl_prog_name = lv_label_create(pnl_prog_queue);
     lv_label_set_text(lbl_prog_name, "");
     lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
+    // One-line height so a long current-station name ellipsizes instead of
+    // wrapping down into the big program countdown (lbl_prog_cd at y=70).
+    // montserrat_24 line height ~29px; name band y28–58 clears the timer.
+    lv_obj_set_height(lbl_prog_name, 30);
     lv_label_set_long_mode(lbl_prog_name, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
