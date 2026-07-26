@@ -154,7 +154,7 @@ if [[ -z "$port" ]]; then
   port="$(detect_port)"
 fi
 
-download_dir="$(mktemp -d)"
+download_dir="$(mktemp -d "$(osp_bench_tmp)/flash.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 
 selected_run_id=""
