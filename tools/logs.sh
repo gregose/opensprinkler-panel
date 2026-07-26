@@ -17,24 +17,42 @@ source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 # never stays wedged). There is deliberately NO app-level silence timer — the
 # firmware emits no heartbeat, so an idle-but-healthy board looks identical to a
 # dead one and any finite silence window would churn needless reconnects.
+#
+# Reconnection is BOUNDED (issue #92): after a disconnect (or a failed initial
+# connect) the reader retries only for --retry-window seconds — long enough to
+# ride one OTA reboot — then EXITS instead of looping forever. This prevents a
+# backgrounded/orphaned reader from becoming immortal, re-grabbing the single
+# :2323 slot on every retry and starving the board's TCP PCBs. SIGINT/SIGTERM
+# are trapped so a plain `kill <pid>` always closes the socket and frees the
+# slot promptly rather than dying mid-recv.
 
 host="ospanel.local"
 port="2323"
 log="logs/serial.log"
+retry_window="30"
 
 usage() {
   cat <<'EOF'
 Usage: tools/logs.sh [--host <ip-or-hostname>] [--port <port>] [--log <path>]
+                     [--retry-window <seconds>]
 
 Stream the TCP log port to stdout and a log file. Reconnects after OTA reboots,
 hard device resets, and network drops (via SO_KEEPALIVE); stays quietly connected
 while an idle board sends nothing. The log server is active only when dev_log is
 enabled in the config portal.
 
+Reconnection is bounded: after a disconnect or failed connect the reader retries
+for --retry-window seconds, then exits (so it can't become an immortal reader
+that wedges the single-client :2323 slot). Ctrl-C or `kill` exits cleanly and
+releases the slot immediately.
+
 Options:
-  --host <host>   Device hostname or IP (default: ospanel.local).
-  --port <port>   TCP log port (default: 2323).
-  --log <path>    Log file to append to (default: logs/serial.log).
+  --host <host>            Device hostname or IP (default: ospanel.local).
+  --port <port>            TCP log port (default: 2323).
+  --log <path>             Log file to append to (default: logs/serial.log).
+  --retry-window <secs>    Seconds to keep retrying a lost/failed connection
+                           before giving up and exiting (default: 30; 0 = never
+                           reconnect, exit on the first disconnect/failure).
 EOF
 }
 
@@ -43,6 +61,7 @@ while [[ $# -gt 0 ]]; do
     --host) host="${2:-}"; shift 2 ;;
     --port) port="${2:-}"; shift 2 ;;
     --log)  log="${2:-}";  shift 2 ;;
+    --retry-window) retry_window="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown argument: %s\n\n' "$1" >&2; usage >&2; exit 1 ;;
   esac
@@ -51,10 +70,12 @@ done
 log_dir="$(dirname "$log")"
 [[ "$log_dir" == "." || -z "$log_dir" ]] || mkdir -p "$log_dir"
 
-printf 'Streaming %s:%s -> %s (reconnects on reboot/disconnect)\n' "$host" "$port" "$log" >&2
+printf 'Streaming %s:%s -> %s (reconnects up to %ss on reboot/disconnect)\n' \
+  "$host" "$port" "$log" "$retry_window" >&2
 
-HOST="$host" PORT="$port" LOG="$log" exec python3 - <<'PY'
+HOST="$host" PORT="$port" LOG="$log" RETRY_WINDOW="$retry_window" exec python3 - <<'PY'
 import os
+import signal
 import socket
 import sys
 import time
@@ -62,24 +83,60 @@ import time
 host = os.environ["HOST"]
 port = int(os.environ["PORT"])
 log_path = os.environ["LOG"]
+retry_window = float(os.environ["RETRY_WINDOW"])
 
 CONNECT_TIMEOUT = 5    # seconds to wait for initial TCP connection
 RECV_BUFFER_SIZE = 256  # bytes per recv() call
 RECV_TIMEOUT = 2.0      # seconds per recv() call (keeps Ctrl-C responsive)
+RETRY_SLEEP = 2.0       # seconds between reconnect attempts
+
+# Trap SIGINT/SIGTERM so a plain `kill <pid>` (or Ctrl-C) always unwinds through
+# the finally blocks, closing the socket and releasing the single :2323 slot,
+# instead of the process dying mid-recv with the slot still held on the device.
+_stop = False
+
+
+def _request_stop(signum, frame):
+    global _stop
+    _stop = True
+
+
+signal.signal(signal.SIGINT, _request_stop)
+signal.signal(signal.SIGTERM, _request_stop)
 
 log = open(log_path, "a", buffering=1)
 print(f"--- logs start {time.strftime('%Y-%m-%dT%H:%M:%S')} {host}:{port} ---",
       file=log, flush=True)
 
-try:
-    while True:
+
+def connect_within_window():
+    """Try to connect, retrying for retry_window seconds. None if we give up."""
+    deadline = time.monotonic() + retry_window
+    first = True
+    while not _stop:
         try:
-            sock = socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
+            return socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
         except (OSError, socket.timeout) as exc:
-            print(f"[logs] cannot connect to {host}:{port}: {exc}; retrying...",
-                  file=sys.stderr)
-            time.sleep(2.0)
-            continue
+            if first:
+                print(f"[logs] cannot connect to {host}:{port}: {exc}", file=sys.stderr)
+                first = False
+            # retry_window == 0 means "don't reconnect"; give up immediately.
+            if retry_window <= 0 or time.monotonic() >= deadline:
+                return None
+            print(f"[logs] retrying for up to {retry_window:.0f}s...", file=sys.stderr)
+            time.sleep(min(RETRY_SLEEP, max(0.0, deadline - time.monotonic())))
+    return None
+
+
+try:
+    while not _stop:
+        sock = connect_within_window()
+        if sock is None:
+            if not _stop:
+                print(f"[logs] giving up after {retry_window:.0f}s without a "
+                      f"connection; exiting so the :2323 slot stays free.",
+                      file=sys.stderr)
+            break
 
         note = f"--- connected {time.strftime('%Y-%m-%dT%H:%M:%S')} ---"
         print(note)
@@ -88,8 +145,8 @@ try:
         # Enable SO_KEEPALIVE so the OS detects a half-open socket after a hard
         # device reboot (ESP.restart() sends no FIN/RST): the rebooted device
         # RSTs the first keepalive probe, surfacing as a recv() error below.
-        # This is the sole reconnect trigger — see the note at the top of the
-        # file for why there is no app-level silence timer.
+        # This is the sole reconnect trigger while connected — see the note at
+        # the top of the file for why there is no app-level silence timer.
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         try:
             if hasattr(socket, 'TCP_KEEPALIVE'):    # macOS: idle before probing
@@ -106,7 +163,7 @@ try:
         sock.settimeout(RECV_TIMEOUT)
         buf = b""
         try:
-            while True:
+            while not _stop:
                 try:
                     chunk = sock.recv(RECV_BUFFER_SIZE)
                 except socket.timeout:
@@ -132,12 +189,13 @@ try:
             except OSError:
                 pass
 
+        if _stop:
+            break
+
         disc = f"--- disconnected {time.strftime('%Y-%m-%dT%H:%M:%S')}, reconnecting ---"
         print(disc, file=sys.stderr)
         print(disc, file=log, flush=True)
         time.sleep(1.0)
-except KeyboardInterrupt:
-    pass
 finally:
     print(f"--- logs stop {time.strftime('%Y-%m-%dT%H:%M:%S')} ---",
           file=log, flush=True)

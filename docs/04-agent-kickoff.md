@@ -94,6 +94,11 @@ Walk the 10-point Definition of Done in `03` §"Definition of done" as the
 acceptance checklist. The mockup is the tie-breaker for any UI ambiguity; this
 package's `01`/`02` are the tie-breakers for behavior and API.
 
+Once firmware is running on the physical panel, `06-hardware-validation-loop.md`
+is the bench runbook for validating it: the emulator-first + OTA-first loop,
+screenshot + synthetic-touch with objective pixel measurement, the USB/NVS
+fallback, and how to report results back.
+
 ## Things that will bite if ignored (all detailed in the specs)
 - **No PSRAM** on this classic ESP32 → LVGL draw buffers must be small/partial and in internal DRAM; a full framebuffer won't fit (`03`).
 - LCD **and** touch share one SPI bus → keep the touch SPI clock low (~2.5 MHz) while the display runs fast (`03`).

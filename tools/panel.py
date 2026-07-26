@@ -6,10 +6,10 @@ NVS flag) to pull a pixel-exact screenshot of whatever LVGL last drew and to
 drive the UI with synthetic touch — no camera, no finger required.
 
 Examples:
-    tools/panel.py --host 192.168.1.246 shot -o screen.png
-    tools/panel.py --host ospanel.local tap 145 250
-    tools/panel.py --host 192.168.1.246 down 40 40
-    tools/panel.py --host 192.168.1.246 up
+    tools/panel.py --host <panel-ip> shot -o screen.png
+    tools/panel.py --host <panel-ip> tap 145 250
+    tools/panel.py --host <panel-ip> down 40 40
+    tools/panel.py --host <panel-ip> up
 
 The wire protocol is defined in lib/bench_probe. Screenshot framing:
     \\x02SHOT <w> <h> 565\\n
@@ -22,10 +22,18 @@ import argparse
 import socket
 import struct
 import sys
+import time
 import zlib
 
 STX = 0x02
 DEFAULT_PORT = 2323
+
+# Brightness below which a whole frame is treated as "blank" (the panel blanks
+# its backlight/screen after ~5 min idle, so a capture then comes back all-dark).
+# The settled dark UI background is ~0x07/0x10/0x0f (max channel ~16), while any
+# live screen always has bright content (white text 255, teal buttons), so a
+# frame whose brightest channel is under this threshold means "asleep / no UI".
+BLANK_MAX_CHANNEL = 48
 
 
 class ProtocolError(Exception):
@@ -145,6 +153,11 @@ def encode_png(width: int, height: int, rgb: bytes) -> bytes:
             chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
 
 
+def frame_is_blank(rgb: bytes) -> bool:
+    """True if the frame has no bright content (panel asleep / screen blanked)."""
+    return bool(rgb) and max(rgb) < BLANK_MAX_CHANNEL
+
+
 # --- socket I/O -------------------------------------------------------------
 
 def _connect(host: str, port: int, timeout: float):
@@ -153,13 +166,13 @@ def _connect(host: str, port: int, timeout: float):
     return sock
 
 
-def do_shot(host, port, out_path, timeout):
+def _capture_once(host, port, timeout):
     sock = _connect(host, port, timeout)
     try:
         reader = sock.makefile("rb")
         sock.sendall(b"SHOT\n")
         try:
-            width, height, rgb = read_screenshot(reader)
+            return read_screenshot(reader)
         except socket.timeout:
             raise ProtocolError(
                 "timed out after %gs waiting for screen data — is dev_log "
@@ -167,6 +180,30 @@ def do_shot(host, port, out_path, timeout):
                 % timeout)
     finally:
         sock.close()
+
+
+def do_shot(host, port, out_path, timeout, wake=True):
+    width, height, rgb = _capture_once(host, port, timeout)
+
+    # The panel blanks after ~5 min idle; a capture then comes back all-dark.
+    # Only when we actually see a blank frame do we send a wake tap and retry —
+    # the firmware consumes the first touch of a sleeping panel as the wake
+    # (it is NOT dispatched to the UI), so this cannot actuate a control. We
+    # never tap a non-blank (awake) frame, so a live screen is untouched.
+    if wake and frame_is_blank(rgb):
+        print("[panel] captured frame is blank — panel looks asleep; "
+              "sending a wake tap and retrying...", file=sys.stderr)
+        try:
+            _send_line(host, port, "TAP 2 2", timeout)
+            time.sleep(0.6)
+            width, height, rgb = _capture_once(host, port, timeout)
+        except OSError:
+            pass
+        if frame_is_blank(rgb):
+            print("[panel] warning: frame still blank after wake — board may be "
+                  "off, mid-boot, or genuinely showing a black screen.",
+                  file=sys.stderr)
+
     png = encode_png(width, height, rgb)
     if out_path == "-":
         sys.stdout.buffer.write(png)
@@ -176,12 +213,16 @@ def do_shot(host, port, out_path, timeout):
         print("wrote %s (%dx%d)" % (out_path, width, height), file=sys.stderr)
 
 
-def do_send(host, port, line, timeout):
+def _send_line(host, port, line, timeout):
     sock = _connect(host, port, timeout)
     try:
         sock.sendall((line + "\n").encode("ascii"))
     finally:
         sock.close()
+
+
+def do_send(host, port, line, timeout):
+    _send_line(host, port, line, timeout)
     print("sent: %s" % line, file=sys.stderr)
 
 
@@ -195,6 +236,8 @@ def main(argv=None):
 
     s = sub.add_parser("shot", help="capture the screen to a PNG")
     s.add_argument("-o", "--out", default="screen.png", help="output PNG ('-' = stdout)")
+    s.add_argument("--no-wake", dest="wake", action="store_false",
+                   help="don't send a wake tap if the captured frame is blank")
 
     for name, help_ in (("tap", "click at x y"), ("down", "press-hold at x y"),
                         ("move", "move while pressed to x y")):
@@ -207,7 +250,7 @@ def main(argv=None):
 
     args = p.parse_args(argv)
     if args.cmd == "shot":
-        do_shot(args.host, args.port, args.out, args.timeout)
+        do_shot(args.host, args.port, args.out, args.timeout, wake=args.wake)
     elif args.cmd in ("tap", "down", "move"):
         do_send(args.host, args.port, "%s %d %d" % (args.cmd.upper(), args.x, args.y),
                 args.timeout)
