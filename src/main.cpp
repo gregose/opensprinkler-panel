@@ -1217,7 +1217,8 @@ static lv_obj_t* prog_row_next[MAX_PROG_ROWS]      = {};
 static lv_obj_t* prog_row_btn_toggle[MAX_PROG_ROWS] = {};
 static lv_obj_t* prog_row_btn_run[MAX_PROG_ROWS]   = {};
 static lv_obj_t* prog_page_dots[MAX_PROG_PAGES]    = {};
-static lv_obj_t* lbl_prog_page                     = nullptr;  // "Page N of M"
+static lv_obj_t* prog_page_prev                    = nullptr;  // ‹ pager arrow
+static lv_obj_t* prog_page_next                    = nullptr;  // › pager arrow
 
 // M9: Program-run queue view panel
 static lv_obj_t* pnl_prog_queue  = nullptr;
@@ -1349,12 +1350,17 @@ static void ev_close_programs(lv_event_t* e) {
     StateLock lock;
     if (lock && g_ps) g_ps->close_programs_list();
 }
-static void ev_prog_page_dot(lv_event_t* e) {
+static void ev_prog_page_prev(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
     if (!(lock && g_ps)) return;
-    lv_obj_t* dot = static_cast<lv_obj_t*>(lv_event_get_target(e));
-    g_ps->set_prog_list_page(get_prog_pid(dot));  // user_data holds page index
+    g_ps->set_prog_list_page(g_ps->view().prog_list_page - 1);  // clamped in setter
+}
+static void ev_prog_page_next(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    g_ps->set_prog_list_page(g_ps->view().prog_list_page + 1);  // clamped in setter
 }
 static void ev_prog_toggle_enabled(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -1926,6 +1932,10 @@ static void build_ui() {
             qrow_name[i] = lv_label_create(pnl_prog_qlist);
             lv_label_set_text(qrow_name[i], "");
             lv_obj_set_width(qrow_name[i], qcontent_w - 22 - 48);
+            // Constrain to a single line so LONG_DOT truncates with an ellipsis
+            // instead of wrapping (a long station name would otherwise grow
+            // vertically and collide into the next queue row).
+            lv_obj_set_height(qrow_name[i], 18);
             lv_label_set_long_mode(qrow_name[i], LV_LABEL_LONG_DOT);
             lv_obj_set_style_text_font(qrow_name[i], &lv_font_montserrat_14, 0);
             lv_obj_set_style_text_color(qrow_name[i], hex_color(CLR_TEXT), 0);
@@ -1952,6 +1962,10 @@ static void build_ui() {
         lv_obj_set_style_bg_color(qfade_top, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_color(qfade_top, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_dir(qfade_top, LV_GRAD_DIR_VER, 0);
+        // Base fill must be opaque; the per-stop main/grad opacities below create
+        // the actual fade. Without this, remove_style_all leaves bg_opa=0 and the
+        // gradient never renders (the "no fade mask" bug).
+        lv_obj_set_style_bg_opa(qfade_top, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_main_opa(qfade_top, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_grad_opa(qfade_top, LV_OPA_TRANSP, 0);
         lv_obj_clear_flag(qfade_top, LV_OBJ_FLAG_CLICKABLE);
@@ -1965,6 +1979,7 @@ static void build_ui() {
         lv_obj_set_style_bg_color(qfade_bottom, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_color(qfade_bottom, hex_color(CLR_BG), 0);
         lv_obj_set_style_bg_grad_dir(qfade_bottom, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_bg_opa(qfade_bottom, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_main_opa(qfade_bottom, LV_OPA_TRANSP, 0);
         lv_obj_set_style_bg_grad_opa(qfade_bottom, LV_OPA_COVER, 0);
         lv_obj_clear_flag(qfade_bottom, LV_OBJ_FLAG_CLICKABLE);
@@ -2117,35 +2132,44 @@ static void build_ui() {
                             LV_EVENT_CLICKED, nullptr);
     }
 
-    // Page indicator + dots (centered, below rows)
+    // Pager: ‹ › arrow buttons flanking a centred dot indicator (no text).
     {
-        // "Page N of M" text centered above the dots.
-        lbl_prog_page = lv_label_create(pnl_programs);
-        lv_label_set_text(lbl_prog_page, "");
-        lv_obj_set_style_text_font(lbl_prog_page, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_prog_page, hex_color(CLR_MUTED), 0);
-        lv_obj_align(lbl_prog_page, LV_ALIGN_TOP_MID, 0, PROG_DOT_Y - 12);
-        lv_obj_add_flag(lbl_prog_page, LV_OBJ_FLAG_HIDDEN);
-
-        // Dots are 10×10 buttons; draw them centred on the panel.
+        // Dots are 10×10 indicators (non-interactive); the arrows drive paging.
         static constexpr int DOT_W = 10, DOT_H = 10, DOT_GAP = 8;
         const int total_w = MAX_PROG_PAGES * DOT_W + (MAX_PROG_PAGES - 1) * DOT_GAP;
         const int dot_start_x = (SCREEN_W - total_w) / 2;
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
-            prog_page_dots[d] = lv_btn_create(pnl_programs);
+            prog_page_dots[d] = lv_obj_create(pnl_programs);
+            lv_obj_remove_style_all(prog_page_dots[d]);
             lv_obj_set_size(prog_page_dots[d], DOT_W, DOT_H);
             lv_obj_set_pos(prog_page_dots[d],
                            dot_start_x + d * (DOT_W + DOT_GAP),
                            PROG_DOT_Y + 2);
             lv_obj_set_style_radius(prog_page_dots[d], LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_border_width(prog_page_dots[d], 0, 0);
+            lv_obj_set_style_bg_opa(prog_page_dots[d], LV_OPA_COVER, 0);
             lv_obj_set_style_bg_color(prog_page_dots[d], hex_color(CLR_LINE), 0);
-            lv_obj_set_style_pad_all(prog_page_dots[d], 0, 0);
-            set_prog_pid(prog_page_dots[d], d);  // page index in user_data
-            lv_obj_add_event_cb(prog_page_dots[d], ev_prog_page_dot,
-                                LV_EVENT_CLICKED, nullptr);
             lv_obj_add_flag(prog_page_dots[d], LV_OBJ_FLAG_HIDDEN);
         }
+
+        // Touch-sized arrow buttons, vertically centred on the dot row.
+        static constexpr int ARROW_W = 46, ARROW_H = 34;
+        const int arrow_y = PROG_DOT_Y + 2 + DOT_H / 2 - ARROW_H / 2;
+
+        prog_page_prev = make_btn(pnl_programs, LV_SYMBOL_LEFT,
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(prog_page_prev, ARROW_W, ARROW_H);
+        lv_obj_set_pos(prog_page_prev, 14, arrow_y);
+        lv_obj_add_event_cb(prog_page_prev, ev_prog_page_prev,
+                            LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(prog_page_prev, LV_OBJ_FLAG_HIDDEN);
+
+        prog_page_next = make_btn(pnl_programs, LV_SYMBOL_RIGHT,
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(prog_page_next, ARROW_W, ARROW_H);
+        lv_obj_set_pos(prog_page_next, SCREEN_W - ARROW_W - 14, arrow_y);
+        lv_obj_add_event_cb(prog_page_next, ev_prog_page_next,
+                            LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(prog_page_next, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -2555,21 +2579,28 @@ static void ui_update() {
             }
         }
 
-        // Page indicator label + dots: only when more than one page.
+        // Pager: dots (indicators) + ‹ › arrows, only when >1 page.
         const bool need_pager = total_pages > 1;
-        if (lbl_prog_page) {
-            obj_set_hidden(lbl_prog_page, !need_pager);
-            if (need_pager) {
-                snprintf(buf, sizeof(buf), "Page %d of %d", page + 1, total_pages);
-                lv_label_set_text(lbl_prog_page, buf);
-            }
-        }
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
             if (!prog_page_dots[d]) continue;
             obj_set_hidden(prog_page_dots[d], !need_pager || d >= total_pages);
             if (need_pager && d < total_pages) {
                 lv_obj_set_style_bg_color(prog_page_dots[d],
                     hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
+            }
+        }
+        if (prog_page_prev && prog_page_next) {
+            obj_set_hidden(prog_page_prev, !need_pager);
+            obj_set_hidden(prog_page_next, !need_pager);
+            if (need_pager) {
+                // Dim (but keep tappable — setter clamps) at the ends. make_btn
+                // set the color on the child label, so target that.
+                lv_obj_t* pl = lv_obj_get_child(prog_page_prev, 0);
+                lv_obj_t* nl = lv_obj_get_child(prog_page_next, 0);
+                if (pl) lv_obj_set_style_text_color(pl,
+                    hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
+                if (nl) lv_obj_set_style_text_color(nl,
+                    hex_color(page >= total_pages - 1 ? CLR_MUTED : CLR_TEXT), 0);
             }
         }
     }
