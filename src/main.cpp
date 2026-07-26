@@ -1436,6 +1436,13 @@ static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left pane
 static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
 static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
 
+// Shared navigation-button height for visual continuity across the "Programs >"
+// entry button, the programs-list "Back" button, and the pager ‹ › arrows.
+static constexpr int NAV_BTN_H = 36;
+// Programs-list pager dot indicators (shared by build + per-frame re-centring).
+static constexpr int PROG_DOT_W = 10, PROG_DOT_H = 10, PROG_DOT_GAP = 8;
+static constexpr int PROG_ARROW_W = 46;  // pager arrow button width
+
 
 // ---------------------------------------------------------------------------
 // Signal-meter helpers (Part 3)
@@ -1879,7 +1886,9 @@ static void build_ui() {
         // "Programs" entry button — vertically centred in the space between the
         // Auto-advance row and the panel's bottom edge (biased a few px lower so
         // it reads as centred in the column rather than hugging Auto-advance).
-        static constexpr int PROG_BTN_H = 38;
+        // Height matches the Back button + pager arrows (NAV_BTN_H) for nav
+        // button continuity across screens.
+        static constexpr int PROG_BTN_H = NAV_BTN_H;
         static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
         const int aa_bottom = AA_Y + AA_H;
         int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
@@ -2036,7 +2045,12 @@ static void build_ui() {
     //   Pager:   below the rows
     static constexpr int PROG_HDR_H  = 44;
     static constexpr int PROG_ROW_H  = 48;
-    static constexpr int PROG_DOT_Y  = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H + 6;
+    // Pager sits in the empty band below the last row, vertically centred
+    // between the bottom of the last program row and the bottom of the panel.
+    static constexpr int PROG_ROWS_BOTTOM = PROG_HDR_H + MAX_PROG_ROWS * PROG_ROW_H;
+    static constexpr int PROG_PAGER_CY = PROG_ROWS_BOTTOM +
+                                         (PROG_LIST_H - PROG_ROWS_BOTTOM) / 2;
+    static constexpr int PROG_DOT_Y  = PROG_PAGER_CY - PROG_DOT_H / 2;
     // Right-side button metrics within each row.
     static constexpr int PROG_RUN_W  = 80;   // Run button width
     static constexpr int PROG_TOG_W  = 86;   // Toggle (Enable/Disable) button width
@@ -2080,7 +2094,7 @@ static void build_ui() {
         lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
                                       CLR_LINE, CLR_TEXT,
                                       &lv_font_montserrat_20, 8);
-        lv_obj_set_size(btn_back, 128, PROG_HDR_H - 8);
+        lv_obj_set_size(btn_back, 128, NAV_BTN_H);
         lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_add_event_cb(btn_back, ev_close_programs, LV_EVENT_CLICKED, nullptr);
     }
@@ -2143,41 +2157,40 @@ static void build_ui() {
                             LV_EVENT_CLICKED, nullptr);
     }
 
-    // Pager: ‹ › arrow buttons flanking a centred dot indicator (no text).
+    // Pager: ‹ › arrow buttons flanking a centred row of page dots (no text).
     {
-        // Dots are 10×10 indicators (non-interactive); the arrows drive paging.
-        static constexpr int DOT_W = 10, DOT_H = 10, DOT_GAP = 8;
-        const int total_w = MAX_PROG_PAGES * DOT_W + (MAX_PROG_PAGES - 1) * DOT_GAP;
-        const int dot_start_x = (SCREEN_W - total_w) / 2;
+        // Dots are non-interactive indicators; the arrows drive paging. Their X
+        // is re-centred every frame in ui_update() from the live page count, so
+        // the build-time X here is just a placeholder — only size/style/Y are
+        // set now (dots stay hidden until there is more than one page).
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
             prog_page_dots[d] = lv_obj_create(pnl_programs);
             lv_obj_remove_style_all(prog_page_dots[d]);
-            lv_obj_set_size(prog_page_dots[d], DOT_W, DOT_H);
-            lv_obj_set_pos(prog_page_dots[d],
-                           dot_start_x + d * (DOT_W + DOT_GAP),
-                           PROG_DOT_Y + 2);
+            lv_obj_set_size(prog_page_dots[d], PROG_DOT_W, PROG_DOT_H);
+            lv_obj_set_pos(prog_page_dots[d], 0, PROG_DOT_Y);
             lv_obj_set_style_radius(prog_page_dots[d], LV_RADIUS_CIRCLE, 0);
             lv_obj_set_style_bg_opa(prog_page_dots[d], LV_OPA_COVER, 0);
             lv_obj_set_style_bg_color(prog_page_dots[d], hex_color(CLR_LINE), 0);
             lv_obj_add_flag(prog_page_dots[d], LV_OBJ_FLAG_HIDDEN);
         }
 
-        // Touch-sized arrow buttons, vertically centred on the dot row.
-        static constexpr int ARROW_W = 46, ARROW_H = 34;
-        const int arrow_y = PROG_DOT_Y + 2 + DOT_H / 2 - ARROW_H / 2;
+        // Touch-sized arrow buttons: same height as the Back button (NAV_BTN_H)
+        // for nav-button continuity, vertically centred on the pager band.
+        static constexpr int ARROW_INSET = 14;
+        const int arrow_y = PROG_PAGER_CY - NAV_BTN_H / 2;
 
         prog_page_prev = make_btn(pnl_programs, LV_SYMBOL_LEFT,
                                   CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
-        lv_obj_set_size(prog_page_prev, ARROW_W, ARROW_H);
-        lv_obj_set_pos(prog_page_prev, 14, arrow_y);
+        lv_obj_set_size(prog_page_prev, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(prog_page_prev, ARROW_INSET, arrow_y);
         lv_obj_add_event_cb(prog_page_prev, ev_prog_page_prev,
                             LV_EVENT_CLICKED, nullptr);
         lv_obj_add_flag(prog_page_prev, LV_OBJ_FLAG_HIDDEN);
 
         prog_page_next = make_btn(pnl_programs, LV_SYMBOL_RIGHT,
                                   CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
-        lv_obj_set_size(prog_page_next, ARROW_W, ARROW_H);
-        lv_obj_set_pos(prog_page_next, SCREEN_W - ARROW_W - 14, arrow_y);
+        lv_obj_set_size(prog_page_next, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(prog_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
         lv_obj_add_event_cb(prog_page_next, ev_prog_page_next,
                             LV_EVENT_CLICKED, nullptr);
         lv_obj_add_flag(prog_page_next, LV_OBJ_FLAG_HIDDEN);
@@ -2592,10 +2605,19 @@ static void ui_update() {
 
         // Pager: dots (indicators) + ‹ › arrows, only when >1 page.
         const bool need_pager = total_pages > 1;
+        // Re-centre the visible dot cluster between the arrows (screen centre),
+        // sized to the live page count so it stays centred regardless of how
+        // many pages exist.
+        const int dots_w = need_pager
+            ? total_pages * PROG_DOT_W + (total_pages - 1) * PROG_DOT_GAP
+            : 0;
+        const int dots_x0 = (SCREEN_W - dots_w) / 2;
         for (int d = 0; d < MAX_PROG_PAGES; ++d) {
             if (!prog_page_dots[d]) continue;
             obj_set_hidden(prog_page_dots[d], !need_pager || d >= total_pages);
             if (need_pager && d < total_pages) {
+                lv_obj_set_x(prog_page_dots[d],
+                             dots_x0 + d * (PROG_DOT_W + PROG_DOT_GAP));
                 lv_obj_set_style_bg_color(prog_page_dots[d],
                     hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
             }

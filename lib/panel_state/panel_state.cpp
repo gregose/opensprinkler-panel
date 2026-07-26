@@ -521,10 +521,11 @@ void PanelState::on_touch(uint32_t now_ms) {
 void PanelState::select_station(int sid) {
   on_touch(now_ms_);
   if (model_.runnable_index(sid) == -1) return;
-  if (view_.phase == Phase::Running && view_.running_sid == sid &&
-      !await_close_ && !has_desired()) {
-    return;
-  }
+  // Re-selecting the station that is already running intentionally RESTARTS it
+  // with the currently selected run time (delivered as off-then-on via
+  // extend()), so every selection queues a fresh Run — we no longer early-out
+  // on same-sid. Editing the run time alone still does not requeue (see
+  // set_run_time); a restart requires an explicit tap on the station.
   queue_desired_run(sid);
 }
 
