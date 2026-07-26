@@ -12,8 +12,10 @@ tappable content and text off the extreme corners.
 
 ## 1. Screens & states
 
-There is **one screen** with two states: **Idle** and **Running**. Plus a
-**Sleep** overlay and a first-run **Setup** flow (Setup is covered in `03`).
+There is **one main screen** with two states: **Idle** and **Running**. Plus a
+**Sleep** overlay and a first-run **Setup** flow (Setup is covered in `03`). A
+separate **Programs** feature (list + program-run screens) is documented in
+`05-programs.md`; it is reached from the settings panel and is out of scope here.
 
 ### Top bar (always, 26 px tall)
 - **Left — controller reachability:** `◉ <host>` in teal when the API is reachable; turns **red** `◎ <host>` when not.
@@ -25,23 +27,23 @@ There is **one screen** with two states: **Idle** and **Running**. Plus a
 - No station count here — the grid conveys that.
 
 ### Idle state
-- **Left panel:** a prompt, not a station. Heading **"Select a station"**, sub-line **"▾ Tap a station below to start"** (chevron teal). No station number, no countdown, no Advance/Stop nav.
-- **Right panel (settings, 190 px wide):** Run time stepper + Auto-advance toggle. No Stop.
-- **Grid:** all station pills, **none highlighted**. Label reads **"Stations"**.
+- **Left panel:** a prompt, not a station. Heading **"Select a station"**, sub-line **"Tap a station below to start"** (teal). No station number, no countdown, no Advance/Stop nav.
+- **Right panel (settings, 190 px wide):** Run time stepper + Auto-advance toggle + a **`Programs ›`** entry button (opens the Programs list — see `05`). No Stop.
+- **Grid:** all station pills, **none highlighted**. Label reads **"STATIONS"**.
 - Tapping any station pill → starts that station → Running.
 
 ### Running state
 - **Left panel:**
-  - Small eyebrow: **"Station N"** (mono, teal), where N is 1-based.
+  - Small eyebrow: **"STATION N"** (mono caps, teal), where N is 1-based.
   - **Station name, large** — this is the headline (e.g. **North Beds**). Ellipsize if it would overflow one line.
   - **Countdown**, large, amber (e.g. `2:14`) — the single time element. **No** "Running" label, **no** "left" label, **no** progress bar.
-  - Action row pinned to the bottom: **Advance ›** (teal) and **■ Stop** (red).
-- **Right panel:** Run time stepper + Auto-advance toggle.
-- **Grid:** the active station pill is highlighted teal. Label reads **"Stations"** (kept consistent with idle).
+  - Action row pinned to the bottom: **Next ›** (advance, teal) and **■ Stop** (red).
+- **Right panel:** Run time stepper + Auto-advance toggle + `Programs ›` entry button (see `05`).
+- **Grid:** the active station pill is highlighted teal. Label reads **"STATIONS"** (kept consistent with idle).
 
-**Action buttons — one consistent left-nav row.** Advance and Stop are the same
-height and share one baseline at the panel bottom. Stop is distinguished by
-**color (red)**, not by size or position.
+**Action buttons — one consistent left-nav row.** Next (advance) and Stop are
+the same height and share one baseline at the panel bottom. Stop is
+distinguished by **color (red)**, not by size or position.
 
 ### Sleep overlay
 - After **5 minutes idle and untouched**, blank the screen (backlight off) and show a minimal "screen off" state. Any touch wakes it and is consumed (does not also trigger the control under the finger).
@@ -56,10 +58,10 @@ UI (`n`), 0-based in the API (`sid = n-1`).
 
 | Control | Where | Behavior |
 |---|---|---|
-| **Station pill** | grid | Runs that station for `RT`. From idle → Running. While running → jump to it (turn current off, this one on). |
-| **Advance ›** | running | Move to the next station and run it for `RT`. **Wraps**: after the last station, goes back to station 1. Skips disabled stations. |
-| **Run time − / +** | always | Adjust `RT` (0:15–10:00, 15 s steps, default 1:00). The new value applies to the **next** run or advance; the currently running station is not restarted. |
-| **Auto-advance** (toggle) | always | **Off (default):** when `RT` elapses, the station stops → Idle. **On:** when `RT` elapses, automatically run the **next** station. A full auto pass **stops after the last station** (no loop). Helper text: On → "Runs the next station"; Off → "Stops when time ends". |
+| **Station pill** | grid | Runs that station for `RT`. From idle → Running. While running → jump to it (turn current off, this one on). **Re-tapping the station that is already running restarts it** with the current `RT` (off-then-on), so you can apply a new run time immediately. |
+| **Next ›** (advance) | running | Move to the next station and run it for `RT`. **Wraps**: after the last station, goes back to station 1. Skips disabled stations. |
+| **Run time − / +** | always | Adjust `RT` (0:15–10:00, 15 s steps, default 1:00). The new value applies to the **next** run or advance; editing it alone does **not** restart the currently running station (re-tap the station pill to apply it now). |
+| **Auto-advance** (toggle switch) | always | **Off (default):** when `RT` elapses, the station stops → Idle. **On:** when `RT` elapses, automatically run the **next** station. A full auto pass **stops after the last station** (no loop). The whole row is the tap target; the switch shows state (teal on). No helper sub-text. |
 | **■ Stop** | running | Immediately stop everything → Idle. No confirmation. |
 
 **Manual Advance wraps; auto-advance stops after the last station.** This split
@@ -89,14 +91,14 @@ running" station — selecting a station *is* running it.
 ## 4. Copy (exact strings)
 
 - Idle heading: `Select a station`
-- Idle sub: `Tap a station below to start` (with a leading teal `▾`)
-- Grid label: `Stations` (idle and running)
-- Eyebrow: `Station N`
-- Run time label: `Run time`
-- Auto-advance label: `Auto-advance`; helper `Runs the next station` / `Stops when time ends`
-- Buttons: `Advance ›`, `■ Stop`
+- Idle sub: `Tap a station below to start` (teal)
+- Grid label: `STATIONS` (idle and running)
+- Eyebrow: `STATION N` (uppercase)
+- Run time label: `RUN TIME`
+- Auto-advance label: `Auto-advance` (toggle switch, no helper sub-text)
+- Buttons: `Next ›` (advance), `■ Stop`
 - Connected: `◉ <host>` (teal) · Disconnected: `◎ <host>` (red). Signal bars labelled `PANEL` / `CTRL`; CTRL shows `— —` when unreachable.
-- Transient toasts (~3 s): `Stopped.` · `Station N finished.` · `Finished all stations.`
+- **No transient toasts.** Completion is conveyed by the confirmed-state UI (return to idle, countdown at `0:00`, no highlight); errors by the top-bar banner. (An earlier toast affordance was removed as redundant.)
 
 Voice: plain, active, no apologies. A control names what it does; the same word
 carries through (Stop → "Stopped.").
@@ -114,7 +116,7 @@ digits don't jitter; a clean sans for labels/buttons. (Mockup uses JetBrains
 Mono + Space Grotesk; on-device, convert a mono for the digits or use a built-in
 LVGL mono font — see `03`.)
 
-Targets: Advance/Stop and the stepper buttons are large; grid pills are the
+Targets: Next/Stop and the stepper buttons are large; grid pills are the
 fast secondary jump. Everything finger-sized at both 14 and 24 stations.
 
 ---

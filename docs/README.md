@@ -16,6 +16,7 @@ This folder is the complete package for a coding agent to build the firmware.
 | `02-opensprinkler-api.md` | The controller API: endpoints, params, response shapes, and the **non-obvious firmware quirks** (verified against OpenSprinkler firmware source). This is the highest-risk-to-get-wrong document. |
 | `03-architecture.md` | Target board, framework decision (**PlatformIO + stock espressif32, TFT_eSPI + LVGL**), library stack, WiFi/config provisioning, concurrency model, sleep, and Definition of Done. |
 | `04-agent-kickoff.md` | Milestone order, per-step verification, and a **mock OpenSprinkler server** so you can build the whole thing without the physical controller. |
+| `05-programs.md` | The **Programs feature (M9)** as shipped: the programs list, running a program, the live queue view, pause, program identification, the API contract used, and next-run computation. Authoritative for Programs behavior. |
 | `mock_os.py` | Runnable emulator of the controller's API — serves `/jn`, `/jo`, `/jc`, `/js`, `/jp` and accepts `/cm`, `/cv`, `/mp`, `/cp`, `/pq`. Models the full sequential run queue, programs (M9), and pause. `test_mock_os.py` is its contract/connection test suite (`python3 docs/test_mock_os.py`). |
 
 ## Decisions already locked (do not re-litigate)
