@@ -6,18 +6,23 @@ all work in isolation — that's what keeps debugging tractable.
 
 ## Develop without the controller
 
-`mock_os.py` (in this folder) is a runnable stand-in for the OpenSprinkler API.
+`mock_os.py` (in this folder) is a runnable emulator of the OpenSprinkler API.
 
 ```
-python3 mock_os.py          # serves 0.0.0.0:8080, 14 fake stations
+python3 mock_os.py          # serves 0.0.0.0:8080, 24 fake stations, 6 programs
+python3 test_mock_os.py     # contract/connection tests for the emulator
 ```
 
 Set the panel's `os_host` to your dev machine's `IP:8080` (the mock ignores
-`pw`). It implements `/jn`, `/jc`, `/js`, `/cm`, `/cv` and **faithfully models the
+`pw` unless you pass `--require-pw`). It implements `/jn`, `/jo`, `/jc`, `/js`,
+`/jp`, `/cm`, `/cv`, `/mp`, `/cp`, `/pq` and **faithfully models the
 `en=1`-on-running-station no-op**, so your off-then-on logic gets exercised for
-real. Edit `NAMES`/`DISABLED`/`MASTER` at the top to test 24 stations, disabled
-stations, and master filtering. It's sequential and time-accurate, so countdowns
-and auto-advance behave like the real thing.
+real. Programs (M9) run sequentially with a live queue; a manual `/mp` run
+reports `pid 254` while a scheduled run (`--schedule` or the `/_run` debug
+endpoint) reports the real 1-based program id — exactly like the controller.
+Edit `DEFAULT_NAMES`/`default_programs()` at the top to test different station
+counts, disabled stations, and program layouts. It's sequential and
+time-accurate, so countdowns and auto-advance behave like the real thing.
 
 ## Milestones
 
