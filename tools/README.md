@@ -25,6 +25,15 @@ gh auth login
 so you never need to `source` it or reference an absolute path. The pinned
 versions live in `tools/requirements.txt`.
 
+### Scratch stays in-repo (no host `/tmp`)
+
+All transient bench output stays inside the repo so hardware work never pollutes
+the rest of the machine. `flash.sh`/`ota.sh` download into a git-ignored
+`.bench-tmp/` at the repo root (override the base with `BENCH_TMPDIR`);
+`logs.sh`/`monitor.sh` write `logs/`, and `nvs.sh` writes `.nvs-backups/` — all
+git-ignored. Point your own scratch (screenshots, `mock_os.py` logs, throwaway
+worktrees) under `.bench-tmp/` too, and `rm -rf .bench-tmp` when done.
+
 ## Flash the latest CI artifact for a branch
 
 ```bash

@@ -21,3 +21,16 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
   fi
   unset _osp_repo_root
 fi
+
+# Repo-root scratch base for the bench tools. Everything transient a tool writes
+# (artifact downloads, temp capture files, etc.) goes under <repo>/.bench-tmp
+# (git-ignored) instead of the host's /tmp, so hardware bring-up/testing never
+# pollutes the rest of the machine. Override with BENCH_TMPDIR if you must.
+# Usage: dir="$(mktemp -d "$(osp_bench_tmp)/foo.XXXXXX")"
+osp_bench_tmp() {
+  local _root
+  _root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  local _base="${BENCH_TMPDIR:-$_root/.bench-tmp}"
+  mkdir -p "$_base"
+  printf '%s\n' "$_base"
+}

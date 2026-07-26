@@ -10,3 +10,4 @@ logs/
 .serial-monitor/
 .venv/
 .nvs-backups/
+.bench-tmp/

@@ -140,7 +140,7 @@ fi
 
 repo="$(resolve_repo)"
 
-download_dir="$(mktemp -d)"
+download_dir="$(mktemp -d "$(osp_bench_tmp)/ota.XXXXXX")"
 trap 'rm -rf "$download_dir"' EXIT
 
 selected_run_id=""

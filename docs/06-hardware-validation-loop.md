@@ -94,7 +94,21 @@ gh auth login       # or gh auth status to confirm
 versions are in `tools/requirements.txt`.
 
 Everything the bench needs is committed to the repo: a fresh clone + `setup.sh`
-is a complete working bench. No `/tmp` scratch files, no machine-specific state.
+is a complete working bench. No machine-specific state.
+
+**Keep all scratch in-repo — never write to the host `/tmp`.** Bench work
+(artifact downloads, capture files, logs, screenshots, NVS backups) must stay
+inside the repo so hardware bring-up never pollutes the rest of the machine:
+
+- The tools already do this. `flash.sh`/`ota.sh` download into a git-ignored
+  `.bench-tmp/` at the repo root (override with `BENCH_TMPDIR`); `logs.sh`/
+  `monitor.sh` write `logs/`, `nvs.sh` writes `.nvs-backups/` — all git-ignored
+  and in-repo.
+- For your own ad-hoc scratch (a `panel.py shot -o ...`, a `mock_os.py` log, a
+  scratch worktree), write under `.bench-tmp/` (or another git-ignored in-repo
+  path), not `/tmp`. Set `TMPDIR="$PWD/.bench-tmp"` for a shell session if you
+  want stray tools to follow the rule too.
+- Clean up with `rm -rf .bench-tmp` when you're done; it's disposable.
 
 <details>
 <summary><b>Why the bench uses a <code>.venv</code>, not Docker</b></summary>

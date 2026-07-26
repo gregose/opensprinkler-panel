@@ -33,7 +33,12 @@ DEFAULT_PORT = 2323
 # The settled dark UI background is ~0x07/0x10/0x0f (max channel ~16), while any
 # live screen always has bright content (white text 255, teal buttons), so a
 # frame whose brightest channel is under this threshold means "asleep / no UI".
-BLANK_MAX_CHANNEL = 48
+#
+# Measured on real hardware (ESP32-3248S035R): a genuinely blanked frame is not
+# pure black — a faint ~1px edge/bezel glow peaks at max channel 49, so the old
+# threshold of 48 mis-classified a blanked panel as "awake" and auto-wake never
+# fired. 64 clears that 49 floor with margin while staying far below live UI.
+BLANK_MAX_CHANNEL = 64
 
 
 class ProtocolError(Exception):
