@@ -862,6 +862,96 @@ void test_scheduled_run_keeps_model_program_index() {
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
 }
 
+// Regression: a panel-launched program whose FINAL station is shared with a
+// different (shorter) program must not be mis-identified as that other program
+// once it drains down to the shared station. "Morning Lawn" {0,3,8} advanced
+// twice reports only station 8 (pid=254); station 8 is also the first station
+// of "Deep Root Quarterly" {8,9}. Station-set inference alone would pick Deep
+// Root (fewer completed stations) and render its queue (station 9 shown as
+// "done"). The authoritative panel-launched index must win because it's still
+// consistent with the live station set.
+void test_panel_launched_run_survives_drain_to_shared_final_station() {
+  Fixture f(10);
+  JpData jp;
+  jp.nprogs = 2;
+  Program morning;
+  morning.enabled = true;
+  morning.name = "Morning Lawn";
+  morning.durations.assign(10, 0);
+  morning.durations[0] = 600;
+  morning.durations[3] = 600;
+  morning.durations[8] = 900;  // final station, shared with Deep Root
+  Program deep;
+  deep.enabled = false;
+  deep.name = "Deep Root Quarterly";
+  deep.durations.assign(10, 0);
+  deep.durations[8] = 1200;  // first station, shared with Morning Lawn
+  deep.durations[9] = 1200;
+  jp.programs = {morning, deep};
+  f.ps.set_program_list(jp);
+
+  f.ps.run_program_intent(0);  // panel launches Morning Lawn (index 0)
+  f.ps.mark_desired_delivered();
+
+  // Controller state after two "Next" skips: stations 0 and 3 finished and
+  // dropped out of ps[]; only station 8 runs, reported as pid=254.
+  JcData jc = make_jc_idle(10);
+  jc.devt = 1000;
+  jc.sbits[8 / 8] |= static_cast<uint8_t>(1u << (8 % 8));
+  jc.ps[8] = PsEntry{254, 300, 950, 0};  // running (station 8)
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, pr.program_index);   // Morning Lawn, NOT Deep Root(1)
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);   // full Morning Lawn set {0,3,8}
+  TEST_ASSERT_EQUAL_INT(8, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(3, pr.current_station_number);  // done(0),done(3),cur(8)
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);   // station 0 completed
+  TEST_ASSERT_TRUE(pr.queue[1].done);   // station 3 completed
+  TEST_ASSERT_FALSE(pr.queue[2].done);  // station 8 current
+  // Deep Root's station 9 (Parkway) must NOT appear in the queue.
+  for (const auto& q : pr.queue) {
+    TEST_ASSERT_NOT_EQUAL_INT(9, q.sid);
+  }
+}
+
+// Guard: the panel-launched hint is only trusted while it stays consistent with
+// the live station set. If the launched run ends and a DIFFERENT program's
+// station appears under pid=254, inference (not the stale hint) must win.
+void test_panel_hint_yields_to_inference_when_stations_diverge() {
+  Fixture f(10);
+  JpData jp;
+  jp.nprogs = 2;
+  Program launched;
+  launched.enabled = true;
+  launched.name = "Launched";
+  launched.durations.assign(10, 0);
+  launched.durations[0] = 600;
+  launched.durations[3] = 600;  // owns {0,3}
+  Program other;
+  other.enabled = true;
+  other.name = "Other";
+  other.durations.assign(10, 0);
+  other.durations[5] = 300;  // owns {5}, disjoint from Launched
+  jp.programs = {launched, other};
+  f.ps.set_program_list(jp);
+
+  f.ps.run_program_intent(0);  // panel launched index 0
+  f.ps.mark_desired_delivered();
+
+  // A pid=254 run is now showing station 5, which is NOT in the launched
+  // program — the hint is inconsistent, so inference must recover index 1.
+  JcData jc = make_jc_idle(10);
+  jc.devt = 1000;
+  jc.sbits[5 / 8] |= static_cast<uint8_t>(1u << (5 % 8));
+  jc.ps[5] = PsEntry{254, 200, 950, 0};
+  f.ps.on_jc(jc, 1000);
+
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);  // "Other"
+}
+
 // ---------------------------------------------------------------------------
 // M9 — set_program_list
 // ---------------------------------------------------------------------------
@@ -948,6 +1038,8 @@ int main(int, char**) {
   RUN_TEST(test_paused_program_resume_clock_ticks_down);
   RUN_TEST(test_panel_launched_run_remembers_program_index);
   RUN_TEST(test_scheduled_run_keeps_model_program_index);
+  RUN_TEST(test_panel_launched_run_survives_drain_to_shared_final_station);
+  RUN_TEST(test_panel_hint_yields_to_inference_when_stations_diverge);
 
   // M9 — set_program_list
   RUN_TEST(test_set_program_list_updates_cache);

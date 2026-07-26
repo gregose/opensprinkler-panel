@@ -47,6 +47,28 @@ int infer_program_index_by_stations(const JpData& jp,
   }
   return best;
 }
+
+// True when every station currently queued for `pid` in the live ps[] belongs
+// to program `prog_idx`'s definition (and at least one such station exists).
+// Used to trust an authoritative panel-launched program index over ambiguous
+// station-set inference: while a run drains toward its final station(s), a
+// different program that happens to share those stations can score as a
+// "closer" match in infer_program_index_by_stations() and win incorrectly.
+bool live_stations_in_program(const JpData& jp,
+                              const std::vector<ProgramPsEntry>& ps,
+                              int pid, int prog_idx) {
+  if (prog_idx < 0 || prog_idx >= static_cast<int>(jp.programs.size())) {
+    return false;
+  }
+  const auto& durs = jp.programs[prog_idx].durations;
+  bool any = false;
+  for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
+    if (ps[sid].pid != pid) continue;
+    any = true;
+    if (!(sid < static_cast<int>(durs.size()) && durs[sid] > 0)) return false;
+  }
+  return any;
+}
 }  // namespace
 
 PanelState::PanelState(StationModel& model, int default_run_time_s)
@@ -448,10 +470,25 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     //                     panel-launched hint if the match is ambiguous.
     int eff_idx = prog_state.program_index;
     if (eff_idx < 0) {
-      eff_idx = infer_program_index_by_stations(jp_cache_, ps, 254);
-    }
-    if (eff_idx < 0 && run_initiated_by_panel_ && launched_program_index_ >= 0) {
-      eff_idx = launched_program_index_;
+      // pid=254 (manual/app run). The panel-launched index is authoritative, so
+      // prefer it over station-set inference *whenever it's still consistent*
+      // with the live station set. Inference alone mis-identifies an ambiguous
+      // run: as a program drains toward its final station(s), a *different*
+      // program that shares those stations can look like a closer match (fewer
+      // completed stations) and win — e.g. "Morning Lawn" {0,3,8} draining to
+      // {8} otherwise matches "Deep Root Quarterly" {8,9}, rendering the wrong
+      // program's queue. Externally-launched runs (no panel hint) still fall
+      // through to inference.
+      if (run_initiated_by_panel_ && launched_program_index_ >= 0 &&
+          live_stations_in_program(jp_cache_, ps, 254, launched_program_index_)) {
+        eff_idx = launched_program_index_;
+      } else {
+        eff_idx = infer_program_index_by_stations(jp_cache_, ps, 254);
+        if (eff_idx < 0 && run_initiated_by_panel_ &&
+            launched_program_index_ >= 0) {
+          eff_idx = launched_program_index_;
+        }
+      }
     }
     if (eff_idx >= 0 && eff_idx < static_cast<int>(jp_cache_.programs.size())) {
       const auto& durs = jp_cache_.programs[eff_idx].durations;

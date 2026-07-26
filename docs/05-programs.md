@@ -177,17 +177,33 @@ The controller does **not** always tell the panel which program is running:
 panel `Run ›` *and* a run started from the OpenSprinkler app), and `pid = 99` for
 a manual single-station run. Only scheduled runs carry a real 1-based `pid`.
 
-So the panel identifies the running program by **matching the live station set
-against the `/jp` program definitions**
-(`panel_state.cpp::infer_program_index_by_stations`): it collects the stations
-live in the run's queue and picks the program whose full station set (durations
-> 0) contains all of them with the fewest already-completed. It falls back to a
-remembered panel-launched index, then to the legacy `pid`.
+So the panel identifies the running program (`panel_state.cpp::on_jc`) in this
+priority order:
 
-**Design consequence:** for reliable identification, **enabled programs must have
-disjoint station sets** (disabled programs may overlap). The mock controller
-fixtures (`docs/mock_os.py`) honour this on purpose so the identification path is
-exercised in tests.
+1. **Panel-launched hint first.** If the panel itself started the run, it
+   remembers the launched program index (`launched_program_index_`). That index
+   is used **as long as it stays consistent** with the live station set — i.e.
+   every still-live station belongs to that program. This is authoritative and
+   avoids ambiguity.
+2. **Station-set inference.** Otherwise (external/app-triggered run, or the hint
+   no longer matches), it matches the live station set against the `/jp` program
+   definitions (`infer_program_index_by_stations`): collect the stations live in
+   the run's queue and pick the program whose full station set (durations > 0)
+   contains all of them with the fewest already-completed.
+3. **Fallbacks.** Failing both, it falls back to the remembered panel-launched
+   index, then to the legacy `pid`.
+
+Preferring the panel hint (step 1) matters when a program's **last** station is
+also another program's **first** station: after the run drains down to that
+shared station, inference's "fewest already-completed" heuristic would otherwise
+pick the *shorter* program that starts on it. Trusting the panel-launched index
+while it remains consistent keeps the correct program (and its completed-station
+queue) on screen.
+
+**Design consequence:** for reliable identification of *externally* started runs,
+**enabled programs must have disjoint station sets** (disabled programs may
+overlap). The mock controller fixtures (`docs/mock_os.py`) honour this on purpose
+so the identification path is exercised in tests.
 
 The `run_initiated_by_panel` flag also lets an **externally scheduled** program
 run allow the screen to sleep, while a **panel-initiated** run keeps the display
