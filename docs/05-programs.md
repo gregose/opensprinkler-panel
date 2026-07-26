@@ -60,7 +60,7 @@ Each row:
 
 | Element | Detail |
 |---|---|
-| **State icon** | `LV_SYMBOL_OK` (✓, teal) when enabled, `LV_SYMBOL_CLOSE` (✗, muted) when disabled. |
+| **State icon** | `LV_SYMBOL_POWER` (⏻), recolored to convey state: teal when enabled, muted (`CLR_MUTED`) when disabled. |
 | **Program name** | montserrat_16, one line. Ellipsized (`…`) if it overflows — the label is height-pinned to a single line so a long name never wraps into the meta line. Dimmed (`CLR_MUTED`) when the program is disabled. |
 | **Meta line** | `<when> • <N> zones • <M> min` (montserrat_12, muted). See below. |
 | **Enable / Disable** button | Toggles the program's enabled flag on the controller. Label reflects current state: `Disable` when enabled, `Enable` when disabled. |
@@ -81,7 +81,7 @@ Each row:
 - **Disabled programs still show a next run.** The next-run is computed from the
   schedule regardless of the enabled flag (an enabled copy is evaluated), so the
   meta line always reads "when it *would* run." Disabled state is conveyed by the
-  ✗ icon and dimming, **not** by a "Disabled" word in the text.
+  muted power (⏻) icon and dimming, **not** by a "Disabled" word in the text.
 
 ### Pagination
 
@@ -262,9 +262,11 @@ Reuses the panel's existing palette and fonts (see `01` §5). Programs-specific:
   inactive dots / neutral buttons, `CLR_BG` panel.
 - **Fonts:** montserrat 12 (meta), 16 (name/list title/queue), 20 (Back / pager
   arrows), 24 (running station name), `ui_font_countdown_48` (big ticker).
-- **Icons:** `LV_SYMBOL_OK` ✓, `LV_SYMBOL_CLOSE` ✗, `LV_SYMBOL_PLAY` ▶,
-  `LV_SYMBOL_BULLET` • (meta separator), `LV_SYMBOL_RIGHT` › (Run/Next),
-  `LV_SYMBOL_LEFT` ‹ (Back), `LV_SYMBOL_STOP` ■. All built into the montserrat
+- **Icons:** `LV_SYMBOL_POWER` ⏻ (program enabled/disabled state), `LV_SYMBOL_OK`
+  ✓ (completed queue station), `LV_SYMBOL_PLAY` ▶ / `LV_SYMBOL_PAUSE` ⏸ (current
+  queue station — pause when the run is paused), `LV_SYMBOL_LIST` ≡ (Programs
+  entry button), `LV_SYMBOL_BULLET` • (meta separator), `LV_SYMBOL_RIGHT` ›
+  (Run/Next), `LV_SYMBOL_LEFT` ‹ (Back), `LV_SYMBOL_STOP` ■. All built into the montserrat
   symbol font (no custom glyphs, no `\u…` literals that render as tofu).
 - **Casing:** eyebrow/caption micro-labels are UPPERCASE (`PROGRAMS`,
   `STATION N OF M`); content/buttons are sentence case (`Run ›`, `Pause`,
@@ -285,7 +287,7 @@ follows — this list is why the original mockup is **not** committed as referen
 | Original design | As shipped |
 |---|---|
 | Pager with **"Page N of M"** text label | Dots + `‹` / `›` arrows, no page text; dots re-centre live. |
-| **"Disabled"** word tag on disabled rows | ✗ icon + dimmed name only; no word. Next-run still computed and shown. |
+| **"Disabled"** word tag on disabled rows | Muted power (⏻) icon + dimmed name only; no word. Next-run still computed and shown. |
 | Row action **`View ›` / `● Running now`** for the active program | Row button is always **`Run ›`**; the running program is reflected by the screen switching to the program-run view, not by a per-row state. |
 | Status **"Running program"** | **"Program running"** (and "Program paused"). |
 | Queue rows counting down per-row | Queue rows show **static** full durations; only the left-column big countdown ticks. |
