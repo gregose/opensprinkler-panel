@@ -35,6 +35,7 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
+#include "bench_probe.h"
 #include "os_client.h"
 #include "panel_config.h"
 #include "panel_state.h"
@@ -239,6 +240,44 @@ static WiFiClient g_log_client;
 static bool g_ota_started = false;
 static bool g_log_server_started = false;
 
+// --- Bench probe: on-demand screen capture + synthetic touch over :2323 ------
+// Lets a bench host pull a pixel-exact screenshot and drive the UI without
+// physical touch (gated behind dev_log, like the log stream itself). See
+// lib/bench_probe for the wire protocol.
+//
+// Threading: the dev-log socket is serviced on network_task (core 0), but LVGL
+// (disp_flush_cb / touchpad_read_cb / lv_timer_handler) runs on the UI task.
+// LVGL is not thread-safe and WiFiClient writes must not race across cores
+// (fix #79), so capture is split: the net task only *requests* a capture and
+// stops writing to the client (g_capture_suppress_log); the UI task performs
+// the lv_obj_invalidate and is then the SOLE writer of the framebuffer bytes
+// for the duration of the frame. Touch injection is an SPSC ring: net task
+// produces, UI task consumes.
+static volatile bool g_capture_request     = false;  // net task -> UI task
+static volatile bool g_capture_active      = false;  // UI task owns the send
+static volatile bool g_capture_suppress_log = false; // silence the log tee
+static int32_t       g_capture_max_y       = -1;     // rows streamed so far
+static int           g_capture_stall       = 0;      // UI-iters since active
+
+struct InjTouch { int16_t x; int16_t y; bool pressed; };
+static constexpr int INJ_QUEUE_LEN = 8;
+static InjTouch      g_inj_queue[INJ_QUEUE_LEN];
+static volatile int  g_inj_head = 0;  // next write slot (producer: net task)
+static volatile int  g_inj_tail = 0;  // next read slot  (consumer: UI task)
+
+static bool inj_push(int16_t x, int16_t y, bool pressed) {
+    const int next = (g_inj_head + 1) % INJ_QUEUE_LEN;
+    if (next == g_inj_tail) return false;  // full — drop
+    g_inj_queue[g_inj_head] = {x, y, pressed};
+    g_inj_head = next;
+    return true;
+}
+static bool inj_pop(InjTouch* out) {
+    if (g_inj_tail == g_inj_head) return false;  // empty
+    *out = g_inj_queue[g_inj_tail];
+    g_inj_tail = (g_inj_tail + 1) % INJ_QUEUE_LEN;
+    return true;
+}
 // TeeSerial: Print subclass that writes to UART0 and, when a TCP log client is
 // connected, also to that client.  Keeps the per-character path tiny to avoid
 // budget pressure on the no-PSRAM ESP32.
@@ -249,12 +288,16 @@ public:
 
     size_t write(uint8_t c) override {
         g_hw_serial->write(c);
-        if (g_log_client && g_log_client.connected()) { g_log_client.write(c); }
+        if (!g_capture_suppress_log && g_log_client && g_log_client.connected()) {
+            g_log_client.write(c);
+        }
         return 1;
     }
     size_t write(const uint8_t* buf, size_t n) override {
         g_hw_serial->write(buf, n);
-        if (g_log_client && g_log_client.connected()) { g_log_client.write(buf, n); }
+        if (!g_capture_suppress_log && g_log_client && g_log_client.connected()) {
+            g_log_client.write(buf, n);
+        }
         return n;
     }
 };
@@ -307,12 +350,45 @@ static void dev_loop_init(const String& ota_pass, bool dev_log) {
     }
 }
 
+static void handle_bench_command(const char* line) {
+    const bench::Command c = bench::parse_command(line);
+    switch (c.cmd) {
+        case bench::Cmd::Shot:
+            // Ask the UI task to render + stream a frame. Suppress the log tee
+            // now (on this task) so nothing interleaves the binary stream once
+            // the UI task starts writing it.
+            g_capture_suppress_log = true;
+            g_capture_request = true;
+            break;
+        case bench::Cmd::Tap:
+            inj_push(c.x, c.y, true);
+            inj_push(c.x, c.y, false);
+            break;
+        case bench::Cmd::Down:
+        case bench::Cmd::Move:
+            inj_push(c.x, c.y, true);
+            break;
+        case bench::Cmd::Up:
+            inj_push(0, 0, false);
+            break;
+        case bench::Cmd::Invalid:
+            g_hw_serial->printf("[BENCH] ignoring bad command: %s\n", line);
+            break;
+        case bench::Cmd::None:
+        default:
+            break;
+    }
+}
+
 static void dev_loop_handle() {
     if (g_ota_started) {
         ArduinoOTA.handle();
     }
 
-    if (g_log_server_started) {
+    // While a screen capture is streaming, the UI task is the sole owner of the
+    // log socket (see the bench-probe threading note). Skip ALL socket
+    // maintenance here so the net task never races it cross-core mid-frame.
+    if (g_log_server_started && !g_capture_active) {
         // Accept new TCP log client (single-slot: drops any stale connection).
         if (g_log_server.hasClient()) {
             if (g_log_client) g_log_client.stop();
@@ -320,9 +396,34 @@ static void dev_loop_handle() {
             g_hw_serial->println("[LOG] client connected");
             g_log_client.println("[LOG] OSPanel log stream");
         }
-        // Silently drop dead connections so write() doesn't block.
+        // Silently drop dead connections so write() doesn't block. If the
+        // client vanished mid-capture, release the log suppression so UART0
+        // logging resumes and a wedged screenshot can't silence the stream.
         if (g_log_client && !g_log_client.connected()) {
             g_log_client.stop();
+            g_capture_request = false;
+            g_capture_active = false;
+            g_capture_suppress_log = false;
+        }
+
+        // Drain inbound bench-probe commands (one per line).
+        if (g_log_client && g_log_client.connected()) {
+            static char linebuf[64];
+            static size_t linelen = 0;
+            while (g_log_client.available()) {
+                const char ch = static_cast<char>(g_log_client.read());
+                if (ch == '\r') continue;
+                if (ch == '\n') {
+                    linebuf[linelen] = '\0';
+                    handle_bench_command(linebuf);
+                    linelen = 0;
+                    if (g_capture_request) break;  // let the UI task take over
+                } else if (linelen < sizeof(linebuf) - 1) {
+                    linebuf[linelen++] = ch;
+                } else {
+                    linelen = 0;  // overlong line — drop it
+                }
+            }
         }
     }
 }
@@ -1101,12 +1202,48 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
     // px_map is packed RGB565 (LV_COLOR_FORMAT_RGB565, 2 bytes/pixel).
     tft.pushPixels(reinterpret_cast<const uint16_t*>(px_map), w * h);
     tft.endWrite();
+
+    // Bench screen capture: tee this strip to the log client as a binary frame.
+    // We are on the UI task and the net task's log tee is suppressed, so this is
+    // the sole writer for the frame. Full-screen invalidate renders top-to-bottom
+    // full-width bands; the capture completes when the bottom row is reached.
+    if (g_capture_active && g_log_client && g_log_client.connected()) {
+        char hdr[40];
+        const int n = snprintf(hdr, sizeof(hdr), "\x02STRIP %ld %ld %ld %ld\n",
+                               static_cast<long>(area->x1),
+                               static_cast<long>(area->y1),
+                               static_cast<long>(w), static_cast<long>(h));
+        g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
+        g_log_client.write(px_map, static_cast<size_t>(w) * h * 2);
+        if (area->y2 > g_capture_max_y) g_capture_max_y = area->y2;
+        if (g_capture_max_y >= SCREEN_H - 1) {
+            const char* end = "\x02END\n";
+            g_log_client.write(reinterpret_cast<const uint8_t*>(end), 5);
+            g_log_client.flush();
+            g_capture_active = false;
+            g_capture_suppress_log = false;
+        }
+    }
+
     lv_display_flush_ready(disp);
 }
 
 static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
     uint16_t tx = 0, ty = 0;
-    const bool pressed = tft.getTouch(&tx, &ty);
+    bool pressed;
+
+    // Bench synthetic touch takes priority over the physical panel: drain one
+    // queued event per poll so a press then a release land on consecutive reads
+    // (LVGL needs both edges to register a click).
+    InjTouch inj;
+    const bool injected = inj_pop(&inj);
+    if (injected) {
+        tx = static_cast<uint16_t>(inj.x);
+        ty = static_cast<uint16_t>(inj.y);
+        pressed = inj.pressed;
+    } else {
+        pressed = tft.getTouch(&tx, &ty);
+    }
 
     if (!pressed) {
         g_consume_touch_until_release = false;
@@ -1123,10 +1260,11 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
             StateLock lock;
             if (lock && g_ps) idle_ms = g_ps->idle_elapsed_ms();
         }
-        Serial.printf("[TOUCH] x=%u y=%u z=%u idle_ms=%lu\n",
+        Serial.printf("[%s] x=%u y=%u z=%u idle_ms=%lu\n",
+                      injected ? "INJ" : "TOUCH",
                       static_cast<unsigned int>(tx),
                       static_cast<unsigned int>(ty),
-                      static_cast<unsigned int>(tft.getTouchRawZ()),
+                      injected ? 0u : static_cast<unsigned int>(tft.getTouchRawZ()),
                       static_cast<unsigned long>(idle_ms));
     }
     g_touch_was_pressed = true;
@@ -2759,7 +2897,32 @@ static void ui_task(void* /*arg*/) {
             }
         }
 
+        // Bench screen capture runs on this (LVGL-owning) task: honor a pending
+        // request by forcing a full-screen redraw. disp_flush_cb then streams
+        // each rendered band to the log client and clears g_capture_active when
+        // the bottom row is reached (normally within this one lv_timer_handler).
+        if (g_capture_request && !g_capture_active) {
+            g_capture_request = false;
+            g_capture_active = true;
+            g_capture_max_y = -1;
+            g_capture_stall = 0;
+            if (g_log_client && g_log_client.connected()) {
+                char hdr[32];
+                const int n = snprintf(hdr, sizeof(hdr), "\x02SHOT %d %d 565\n",
+                                       SCREEN_W, SCREEN_H);
+                g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
+            }
+            lv_obj_invalidate(lv_screen_active());
+        }
+
         lv_timer_handler();
+
+        // Safety net: a capture should finish inside the handler above. If it
+        // didn't (e.g. client dropped mid-frame), don't leave the log tee muted.
+        if (g_capture_active && ++g_capture_stall > 4) {
+            g_capture_active = false;
+            g_capture_suppress_log = false;
+        }
         vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
     }
 }

@@ -43,6 +43,18 @@ jobs:
       - name: Run unit tests
         run: pio test -e native
 
+  tools-tests:
+    name: Bench tool tests (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # tools/panel.py is pure standard library — no dependencies to install.
+      - name: Run bench probe tool tests
+        run: python3 tools/test_panel.py
+
   firmware-build:
     name: Build firmware
     runs-on: ubuntu-latest

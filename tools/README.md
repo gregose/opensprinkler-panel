@@ -132,6 +132,40 @@ bundled in the CI artifact and the Python venv created by `setup.sh`. The
 only Python dependency is the standard library (`socket`), which `logs.sh` also
 uses exclusively.
 
+### Screen capture & synthetic touch (`panel.py`)
+
+`tools/panel.py` drives the panel over the same dev-log socket (port 2323, so
+"Enable remote debug log" must be on). It can pull a **pixel-exact screenshot**
+of whatever LVGL last drew and inject **synthetic touch** — no camera or finger
+needed, so layouts and tap flows can be verified programmatically.
+
+```bash
+./tools/panel.py --host 192.168.1.246 shot -o screen.png   # capture to PNG
+./tools/panel.py --host ospanel.local  tap 145 250          # click at (x,y)
+./tools/panel.py --host 192.168.1.246 down 40 40            # press-and-hold
+./tools/panel.py --host 192.168.1.246 move 60 40            # drag while pressed
+./tools/panel.py --host 192.168.1.246 up                    # release
+./tools/panel.py --host 192.168.1.246 raw "TAP 10 20"       # send a raw line
+```
+
+How it works: `shot` asks the firmware to force a full-screen redraw and streams
+each rendered band back as raw RGB565; `panel.py` reassembles them into a PNG
+(standard library only — no Pillow). Touch coordinates are in the panel's
+display space (480×320, origin top-left), i.e. the same values the `[TOUCH]`
+log lines report, so you can copy a coordinate straight from a real tap. The
+protocol lives in `lib/bench_probe`; parsing is covered by `pio test -e native`
+(bench_probe) and `tools/test_panel.py`.
+
+Notes:
+
+- Port 2323 is a **single-client slot**: connecting `panel.py` drops any running
+  `logs.sh` reader (and vice-versa). Take screenshots between log streams, or
+  reconnect `logs.sh` afterwards.
+- `--port` / `--timeout` override the defaults (2323 / 10 s).
+- Capture only reflects what the firmware itself renders — it never reads the
+  ILI9488's GRAM (this SPI module doesn't wire MISO for readback), so it is
+  immune to display-readback limitations.
+
 
 
 ```bash
