@@ -144,6 +144,7 @@ download_dir="$(mktemp -d)"
 trap 'rm -rf "$download_dir"' EXIT
 
 selected_run_id=""
+selected_artifact=""
 firmware_bin=""
 espota_py=""
 
@@ -155,11 +156,11 @@ while IFS= read -r candidate_run_id; do
 
   # Artifact names are suffixed with the commit SHA; match by prefix.
   artifact_name="$(gh api "repos/$repo/actions/runs/$candidate_run_id/artifacts" \
-    --jq '.artifacts[].name' 2>/tmp/ota_gh_api_err | grep -m1 "^${artifact_prefix}-" || true)"
+    --jq '.artifacts[].name' 2>"$download_dir/gh_api_err" | grep -m1 "^${artifact_prefix}-" || true)"
   if [[ -z "$artifact_name" ]]; then
-    if [[ -s /tmp/ota_gh_api_err ]]; then
+    if [[ -s "$download_dir/gh_api_err" ]]; then
       printf '[ota] GitHub API call failed for run %s: %s\n' \
-        "$candidate_run_id" "$(cat /tmp/ota_gh_api_err)" >&2
+        "$candidate_run_id" "$(cat "$download_dir/gh_api_err")" >&2
     fi
     continue
   fi
@@ -173,6 +174,7 @@ while IFS= read -r candidate_run_id; do
 
   if [[ -n "$firmware_bin" && -n "$espota_py" ]]; then
     selected_run_id="$candidate_run_id"
+    selected_artifact="$artifact_name"
     break
   fi
 done < <(resolve_candidate_run_ids "$repo")
@@ -182,7 +184,19 @@ if [[ -z "$selected_run_id" || -z "$firmware_bin" || -z "$espota_py" ]]; then
   exit 1
 fi
 
-printf 'OTA: run %s  artifact %s  host %s\n' "$selected_run_id" "$artifact_prefix" "$host"
+printf 'OTA: %s (run %s) -> host %s\n' "${selected_artifact:-$artifact_prefix}" "$selected_run_id" "$host"
+
+# Reachability preflight: OTA rides UDP/TCP 3232, which historically has been the
+# first thing broken by a stale host-side route/ARP entry (espota then fails with
+# an opaque "failed"/"Host Not Found"). A quick ICMP probe surfaces that up front.
+# It is best-effort only — a device that blocks ping still OTAs fine, so we only warn.
+if command -v ping >/dev/null 2>&1; then
+  if ! ping -c1 -t2 "$host" >/dev/null 2>&1 && ! ping -c1 -W2000 "$host" >/dev/null 2>&1; then
+    printf '[ota] warning: %s did not answer ping. If espota reports "failed" or\n' "$host" >&2
+    printf '      "Host Not Found", this host may have a stale route/ARP entry — try\n' >&2
+    printf '      toggling Wi-Fi, or pass the device IP to --host instead of mDNS.\n' >&2
+  fi
+fi
 
 espota_args=(-i "$host" -f "$firmware_bin")
 if [[ -n "$ota_pass" ]]; then

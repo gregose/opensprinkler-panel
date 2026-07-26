@@ -9,3 +9,4 @@ __pycache__/
 logs/
 .serial-monitor/
 .venv/
+.nvs-backups/

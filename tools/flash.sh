@@ -158,6 +158,7 @@ download_dir="$(mktemp -d)"
 trap 'rm -rf "$download_dir"' EXIT
 
 selected_run_id=""
+selected_artifact=""
 merged_firmware=""
 while IFS= read -r candidate_run_id; do
   [[ -n "$candidate_run_id" && "$candidate_run_id" != "null" ]] || continue
@@ -178,6 +179,7 @@ while IFS= read -r candidate_run_id; do
   merged_firmware="$(find "$candidate_dir" -name merged-firmware.bin -print -quit)"
   if [[ -n "$merged_firmware" ]]; then
     selected_run_id="$candidate_run_id"
+    selected_artifact="$artifact_name"
     break
   fi
 done < <(resolve_candidate_run_ids "$repo")
@@ -201,5 +203,5 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-printf 'Flashing run %s from %s to %s\n' "$run_id" "$repo" "$port"
+printf 'Flashing %s (run %s) from %s to %s\n' "${selected_artifact:-$artifact_prefix}" "$run_id" "$repo" "$port"
 python3 -m esptool --chip esp32 --port "$port" write-flash 0x0 "$merged_firmware"

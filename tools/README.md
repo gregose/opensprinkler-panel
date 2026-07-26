@@ -4,6 +4,11 @@ These scripts are the lightweight local "flash & debug" companion to the cloud
 build. CI owns all compilation. The local machine only downloads a finished
 artifact, flashes it over USB, and captures observations for the cloud session.
 
+> **New to the bench?** Read [`docs/06-hardware-validation-loop.md`](../docs/06-hardware-validation-loop.md)
+> first — it's the runbook for the whole validation loop (emulator-first,
+> OTA-first, screenshot-driven checks, NVS backup/restore, reporting). This file
+> is the per-tool reference.
+
 ## One-time setup
 
 No PlatformIO toolchain is needed locally — CI owns all compilation. The local
@@ -44,7 +49,14 @@ Each CI run publishes two artifacts, suffixed with the short commit SHA so
 multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production) and
 `cyd-35r-diag-firmware-<sha>` (diagnostic). `flash.sh` resolves the right one
 for a run by prefix, downloads it with `gh run download`, finds
-`merged-firmware.bin`, then writes it at `0x0`.
+`merged-firmware.bin`, then writes it at `0x0`. It prints the **resolved
+artifact name** (`Flashing cyd-35r-firmware-<sha> ...`) so you can confirm you
+flashed the build you intended.
+
+> `flash.sh` writes the merged image at `0x0`, which **wipes NVS** (Wi-Fi + OS
+> config + touch calibration + `ota_pass` + `dev_log`). Snapshot NVS with
+> [`nvs.sh backup`](#back-up--restore-nvs-nvssh) first, or prefer OTA (below)
+> for routine iteration since it preserves NVS.
 
 ## OTA (wireless firmware updates)
 
@@ -94,6 +106,13 @@ Options:
 - `--branch <name>`, `--pr <number>`, `--run-id <id>` select the CI run
   (same semantics as `flash.sh`).
 
+`ota.sh` prints the **resolved artifact name** (`OTA: cyd-35r-firmware-<sha> ...`)
+so you can confirm the build, and does a best-effort `ping` reachability check
+first — if the host doesn't answer it warns about a likely stale route / mDNS
+issue (espota rides UDP/TCP 3232). **Drive OTA by IP, not mDNS**, to sidestep
+intermittent `ospanel.local` responder flakiness. OTA preserves NVS, so it's the
+preferred loop for routine iteration.
+
 ### Stream logs over Wi-Fi
 
 ```bash
@@ -115,6 +134,11 @@ Options:
 - `--host <ip-or-hostname>` overrides `ospanel.local`.
 - `--port <port>` overrides port 2323.
 - `--log <path>` changes the log file (default `logs/serial.log`).
+- `--retry-window <secs>` bounds reconnection (default 30; `0` = exit on the
+  first disconnect). After a drop, `logs.sh` retries only for this window — long
+  enough to ride an OTA reboot — then **exits** instead of looping forever, so a
+  backgrounded reader can't become immortal and wedge the single `:2323` slot.
+  Ctrl-C or `kill <pid>` (SIGTERM) tears it down cleanly and frees the slot.
 
 ### Full OTA iteration cycle
 
@@ -140,12 +164,12 @@ of whatever LVGL last drew and inject **synthetic touch** — no camera or finge
 needed, so layouts and tap flows can be verified programmatically.
 
 ```bash
-./tools/panel.py --host 192.168.1.246 shot -o screen.png   # capture to PNG
-./tools/panel.py --host ospanel.local  tap 145 250          # click at (x,y)
-./tools/panel.py --host 192.168.1.246 down 40 40            # press-and-hold
-./tools/panel.py --host 192.168.1.246 move 60 40            # drag while pressed
-./tools/panel.py --host 192.168.1.246 up                    # release
-./tools/panel.py --host 192.168.1.246 raw "TAP 10 20"       # send a raw line
+./tools/panel.py --host <panel-ip> shot -o screen.png   # capture to PNG
+./tools/panel.py --host <panel-ip> tap 145 250          # click at (x,y)
+./tools/panel.py --host <panel-ip> down 40 40           # press-and-hold
+./tools/panel.py --host <panel-ip> move 60 40           # drag while pressed
+./tools/panel.py --host <panel-ip> up                   # release
+./tools/panel.py --host <panel-ip> raw "TAP 10 20"      # send a raw line
 ```
 
 How it works: `shot` asks the firmware to force a full-screen redraw and streams
@@ -158,6 +182,11 @@ protocol lives in `lib/bench_probe`; parsing is covered by `pio test -e native`
 
 Notes:
 
+- **Auto-wake:** the panel blanks after ~5 min idle. `shot` detects an all-dark
+  frame, sends one wake tap at a safe corner (`TAP 2 2`, consumed by the
+  firmware as the wake — not dispatched to the UI), and re-captures, so a
+  sleeping panel still yields a live screenshot. `--no-wake` disables it. The
+  wake tap only fires on a genuinely blank frame, so it can't actuate a control.
 - Port 2323 is a **single-client slot**: connecting `panel.py` drops any running
   `logs.sh` reader (and vice-versa). Take screenshots between log streams, or
   reconnect `logs.sh` afterwards.
@@ -165,6 +194,44 @@ Notes:
 - Capture only reflects what the firmware itself renders — it never reads the
   ILI9488's GRAM (this SPI module doesn't wire MISO for readback), so it is
   immune to display-readback limitations.
+- Pixel analysis of the PNG (measuring a region/label) needs Pillow, which is
+  **not** in the `.venv` — use the system `python3` (it has PIL) or the editor's
+  image viewer. `panel.py` itself stays stdlib-only so it runs inside the venv.
+
+## Back up & restore NVS (`nvs.sh`)
+
+Because `flash.sh` wipes NVS, `tools/nvs.sh` snapshots and restores the NVS
+partition over USB so a USB reflash doesn't cost you a re-provision:
+
+```bash
+./tools/nvs.sh backup                              # -> .nvs-backups/nvs-<timestamp>.bin
+./tools/flash.sh --pr 10                           # reflash (wipes NVS)
+./tools/nvs.sh restore .nvs-backups/nvs-<ts>.bin   # creds/cal/ota_pass back
+```
+
+It reads/writes the NVS partition at `0x9000` (`0x5000` B) and pins the CH340 to
+**115200** (higher bauds fail read-flash). `restore` refuses a file that isn't
+exactly the partition size. Options: `--port` overrides auto-detect; `backup
+--out <file>` picks the output path.
+
+> **Security:** an NVS backup holds your Wi-Fi PSK, OpenSprinkler password hash,
+> and OTA password **in the clear**. Backups go to `.nvs-backups/` (git-ignored)
+> and must never be committed, uploaded, or shared. Treat them like passwords.
+
+## Wire-level capture probe (`probe.py`)
+
+`tools/probe.py` inspects the raw screen-capture protocol on the wire — use it
+when `panel.py shot` hangs, returns black, or only decodes via the coverage
+fallback, to tell a firmware "bytes never sent" bug from a host decode bug:
+
+```bash
+python3 tools/probe.py --host <panel-ip>
+```
+
+It sends one `SHOT` and reports total bytes, STRIP band count, any non-STRIP
+control lines, the trailing bytes (hex + ascii), and whether the `\x02END`
+terminator (`02 45 4e 44`) reached the wire (exit 0 if present, 1 if not).
+Stdlib only.
 
 
 

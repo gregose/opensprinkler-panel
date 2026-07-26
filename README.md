@@ -66,7 +66,10 @@ flash/manifest.json
 - **Primary path, local flash/debug:** install only `esptool` + `pyserial`, then use
   [`tools/flash.sh`](tools/flash.sh) to download a branch or PR artifact and write
   `merged-firmware.bin` at `0x0`. Use [`tools/monitor.sh`](tools/monitor.sh) for a
-  115200 serial monitor. Full workflow in [`tools/README.md`](tools/README.md).
+  115200 serial monitor. Full workflow in [`tools/README.md`](tools/README.md); the
+  end-to-end **hardware validation runbook** (emulator-first + OTA-first loop,
+  screenshot-driven checks, NVS backup/restore) is in
+  [`docs/06-hardware-validation-loop.md`](docs/06-hardware-validation-loop.md).
 - **Browser flashing:** after extracting the artifact, open `flash/index.html` in
   Chrome or Edge and flash over WebSerial with ESP Web Tools.
 - **Fallback:** `python3 -m esptool --chip esp32 --port <port> write_flash 0x0 merged-firmware.bin`

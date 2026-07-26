@@ -120,5 +120,24 @@ class PngEncodeTests(unittest.TestCase):
             self.assertEqual(row, rgb[y * stride:(y + 1) * stride])
 
 
+class FrameBlankTests(unittest.TestCase):
+    def test_all_black_is_blank(self):
+        self.assertTrue(panel.frame_is_blank(bytes([0, 0, 0] * 16)))
+
+    def test_settled_dark_bg_is_blank(self):
+        # The idle UI background (~0x07/0x10/0x0f) maxes ~16 per channel — below
+        # the wake threshold, so a dark-but-live frame with no bright content
+        # still reads as blank (it visually is; the panel has blanked).
+        self.assertTrue(panel.frame_is_blank(bytes([7, 16, 15] * 16)))
+
+    def test_bright_content_is_not_blank(self):
+        # Any live screen has bright pixels (white text 255, teal buttons).
+        px = bytes([7, 16, 15] * 16) + bytes([255, 255, 255])
+        self.assertFalse(panel.frame_is_blank(px))
+
+    def test_empty_is_not_blank(self):
+        self.assertFalse(panel.frame_is_blank(b""))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
