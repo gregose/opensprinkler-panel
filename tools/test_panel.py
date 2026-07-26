@@ -130,6 +130,12 @@ class FrameBlankTests(unittest.TestCase):
         # still reads as blank (it visually is; the panel has blanked).
         self.assertTrue(panel.frame_is_blank(bytes([7, 16, 15] * 16)))
 
+    def test_faint_blanked_border_is_blank(self):
+        # Real hardware: a genuinely blanked panel is not pure black — a faint
+        # edge/bezel glow peaks at max channel 49. That must still read as blank
+        # so auto-wake fires (the old threshold of 48 mis-classified it as awake).
+        self.assertTrue(panel.frame_is_blank(bytes([49, 40, 30] * 16)))
+
     def test_bright_content_is_not_blank(self):
         # Any live screen has bright pixels (white text 255, teal buttons).
         px = bytes([7, 16, 15] * 16) + bytes([255, 255, 255])
