@@ -1690,6 +1690,10 @@ static void build_ui() {
     lbl_stn_name = lv_label_create(pnl_running);
     lv_label_set_text(lbl_stn_name, "");
     lv_obj_set_width(lbl_stn_name, LEFT_W - 28);
+    // Constrain to a single line so LONG_DOT ellipsizes instead of wrapping —
+    // otherwise a long name grows down into the countdown ticker at y=66.
+    // montserrat_24 line height is ~29px; 30 keeps one line with a small margin.
+    lv_obj_set_height(lbl_stn_name, 30);
     lv_label_set_long_mode(lbl_stn_name, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_font(lbl_stn_name, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_stn_name, hex_color(CLR_TEXT), 0);
@@ -1904,6 +1908,9 @@ static void build_ui() {
         lbl_qlist_hdr = lv_label_create(pnl_prog_qlist);
         lv_label_set_text(lbl_qlist_hdr, "");
         lv_obj_set_width(lbl_qlist_hdr, qcontent_w);
+        // One-line height (montserrat_16 ~19px) so a long program name
+        // ellipsizes instead of wrapping into the total-time line at y=22.
+        lv_obj_set_height(lbl_qlist_hdr, 20);
         lv_label_set_long_mode(lbl_qlist_hdr, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(lbl_qlist_hdr, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl_qlist_hdr, hex_color(CLR_TEXT), 0);
