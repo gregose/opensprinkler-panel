@@ -28,7 +28,7 @@ separate **Programs** feature (list + program-run screens) is documented in
 
 ### Idle state
 - **Left panel:** a prompt, not a station. Heading **"Select a station"**, sub-line **"Tap a station below to start"** (teal). No station number, no countdown, no Advance/Stop nav.
-- **Right panel (settings, 190 px wide):** Run time stepper + Auto-advance toggle + a **`Programs ›`** entry button (opens the Programs list — see `05`). No Stop.
+- **Right panel (settings, 190 px wide):** Run time stepper + Auto-advance toggle + a **`≡ Programs`** entry button (leading `LV_SYMBOL_LIST`, no chevron; styled + sized like the stepper — opens the Programs list — see `05`). No Stop.
 - **Grid:** all station pills, **none highlighted**. Label reads **"STATIONS"**.
 - Tapping any station pill → starts that station → Running.
 
@@ -38,7 +38,7 @@ separate **Programs** feature (list + program-run screens) is documented in
   - **Station name, large** — this is the headline (e.g. **North Beds**). Ellipsize if it would overflow one line.
   - **Countdown**, large, amber (e.g. `2:14`) — the single time element. **No** "Running" label, **no** "left" label, **no** progress bar.
   - Action row pinned to the bottom: **Next ›** (advance, teal) and **■ Stop** (red).
-- **Right panel:** Run time stepper + Auto-advance toggle + `Programs ›` entry button (see `05`).
+- **Right panel:** Run time stepper + Auto-advance toggle + `≡ Programs` entry button (see `05`).
 - **Grid:** the active station pill is highlighted teal. Label reads **"STATIONS"** (kept consistent with idle).
 
 **Action buttons — one consistent left-nav row.** Next (advance) and Stop are

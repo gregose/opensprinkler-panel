@@ -35,9 +35,13 @@ state.
 
 ## 2. Where it lives / navigation
 
-- **Entry:** a **`Programs ›`** button in the right-hand settings panel, below
-  the Run-time stepper and Auto-advance toggle. It is shown when idle or during
-  a **manual** station run; it is hidden while a **program** is running.
+- **Entry:** a **`≡ Programs`** button (leading `LV_SYMBOL_LIST` glyph, no
+  chevron) in the right-hand settings panel, below the Run-time stepper and
+  Auto-advance toggle. Styled like the other secondary buttons — `CLR_LINE`
+  fill, `CLR_TEXT` label — and sized to the Run-time stepper height (`STEP_H`,
+  44 px) so the right column reads as one family of controls. It is shown when
+  idle or during a **manual** station run; it is hidden while a **program** is
+  running.
 - Tapping it swaps the station grid for the full-width **Programs list** panel.
 - **`‹ Back`** (top-right of the list header) returns to the previous screen.
 - The list header title is **`PROGRAMS`** (caps, left).
