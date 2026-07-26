@@ -1588,7 +1588,11 @@ static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
 // program-run screens). These surfaces have their own widgets, so they simply
 // build at the taller geometry — no runtime resize needed.
 static constexpr int FULL_BOTTOM   = SCREEN_H - 4;                  // 316
-static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H;        // 264
+// Lift the program-run action row off the very bottom edge so Next/Pause/Stop
+// are easier to reach. Still sits lower than the manual-run row (ACTION_Y=156)
+// — a modest raise, not a full match.
+static constexpr int PROG_ACTION_LIFT = 40;
+static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H - PROG_ACTION_LIFT; // 224
 static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left panel above the action row
 static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
 static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
