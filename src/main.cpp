@@ -416,6 +416,10 @@ static void dev_loop_handle() {
         if (g_log_server.hasClient()) {
             if (g_log_client) g_log_client.stop();
             g_log_client = g_log_server.accept();
+            // Disable Nagle so the tiny trailing \x02END\n frame is pushed
+            // immediately after the strip burst instead of being held waiting
+            // for an ACK of the ~300 KB that preceded it.
+            g_log_client.setNoDelay(true);
             g_hw_serial->println("[LOG] client connected");
             g_log_client.println("[LOG] OSPanel log stream");
         }
@@ -2930,8 +2934,15 @@ static void ui_task(void* /*arg*/) {
             lv_obj_invalidate(lv_screen_active());
             lv_refr_now(lv_display_get_default());
             if (g_log_client && g_log_client.connected()) {
-                const char* end = "\x02END\n";
-                capture_write_all(reinterpret_cast<const uint8_t*>(end), 5);
+                // NOTE: write the STX explicitly, NOT as part of the literal
+                // "\x02END\n". A \x hex escape consumes every following hex
+                // digit, and 'E' is one — so "\x02END\n" compiles to the single
+                // byte 0x2E ('.') plus "ND\n", i.e. ".ND\n", and the real STX
+                // (0x02) terminator never went on the wire. (SHOT/STRIP escape
+                // fine only because 'S' is not a hex digit.) Use adjacent string
+                // literals so 0x02 is its own byte.
+                static const char kEnd[] = "\x02" "END\n";
+                capture_write_all(reinterpret_cast<const uint8_t*>(kEnd), 5);
                 g_log_client.flush();
             }
             g_capture_active = false;
