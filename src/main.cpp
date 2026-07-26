@@ -257,6 +257,31 @@ static volatile bool g_capture_request     = false;  // net task -> UI task
 static volatile bool g_capture_active      = false;  // UI task owns the send
 static volatile bool g_capture_suppress_log = false; // silence the log tee
 
+// Write every byte of a capture frame to the dev-log client, retrying on short
+// or zero-length writes. Arduino-ESP32 WiFiClient::write returns fewer bytes
+// than requested (or 0) when lwIP's TCP send buffer is momentarily full. During
+// a screenshot the ~300 KB of strip data survives because the slow SPI
+// pushPixels between strips lets the tx buffer drain, but the tiny \x02END\n
+// terminator is written immediately after the final strip with no drain gap —
+// so a single ignored short write silently dropped it, leaving the host client
+// blocked waiting for an END that never arrived. Retry until every byte is
+// accepted (bounded by a deadline + connection check so a dead socket can't
+// wedge the UI task).
+static bool capture_write_all(const uint8_t* buf, size_t n) {
+    size_t sent = 0;
+    const uint32_t deadline = millis() + 2000;
+    while (sent < n) {
+        if (!g_log_client || !g_log_client.connected()) return false;
+        const size_t w = g_log_client.write(buf + sent, n - sent);
+        sent += w;
+        if (w == 0) {
+            if (static_cast<int32_t>(millis() - deadline) >= 0) return false;
+            delay(1);  // let the tx buffer drain, then retry
+        }
+    }
+    return true;
+}
+
 struct InjTouch { int16_t x; int16_t y; bool pressed; };
 static constexpr int INJ_QUEUE_LEN = 8;
 static InjTouch      g_inj_queue[INJ_QUEUE_LEN];
@@ -1211,8 +1236,8 @@ static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
                                static_cast<long>(area->x1),
                                static_cast<long>(area->y1),
                                static_cast<long>(w), static_cast<long>(h));
-        g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
-        g_log_client.write(px_map, static_cast<size_t>(w) * h * 2);
+        capture_write_all(reinterpret_cast<const uint8_t*>(hdr), n);
+        capture_write_all(px_map, static_cast<size_t>(w) * h * 2);
     }
 
     lv_display_flush_ready(disp);
@@ -2957,13 +2982,13 @@ static void ui_task(void* /*arg*/) {
                 char hdr[32];
                 const int n = snprintf(hdr, sizeof(hdr), "\x02SHOT %d %d 565\n",
                                        SCREEN_W, SCREEN_H);
-                g_log_client.write(reinterpret_cast<const uint8_t*>(hdr), n);
+                capture_write_all(reinterpret_cast<const uint8_t*>(hdr), n);
             }
             lv_obj_invalidate(lv_screen_active());
             lv_refr_now(lv_display_get_default());
             if (g_log_client && g_log_client.connected()) {
                 const char* end = "\x02END\n";
-                g_log_client.write(reinterpret_cast<const uint8_t*>(end), 5);
+                capture_write_all(reinterpret_cast<const uint8_t*>(end), 5);
                 g_log_client.flush();
             }
             g_capture_active = false;
