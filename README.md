@@ -31,7 +31,8 @@ docs/                 Design docs — the source of truth (read docs/README.md f
 src/                  Firmware entry point (hardware glue: display/touch/LVGL/WiFi)
 lib/station_model/    Hardware-independent domain logic (grid, navigation, bitmasks)
 test/                 Native (host) unit tests — run in CI, no board needed
-docs/mock_os.py       Mock OpenSprinkler controller for developing without hardware
+docs/mock_os.py       OpenSprinkler controller emulator for developing without hardware
+docs/test_mock_os.py  Contract/connection tests for the emulator (run in CI)
 platformio.ini        Build config: `cyd-35r` (firmware) + `native` (tests)
 ```
 
@@ -74,10 +75,17 @@ flash/manifest.json
 ### Develop without the controller
 
 ```bash
-python3 docs/mock_os.py   # serves the OpenSprinkler API on :8080 (14 fake stations)
+python3 docs/mock_os.py            # serves the OpenSprinkler API on :8080 (24 fake stations, 6 programs)
+python3 docs/mock_os.py --schedule # also fire programs at their scheduled start times
+python3 docs/test_mock_os.py       # run the emulator's contract/connection tests
 ```
 
-Point the panel's configured host at `your-machine-ip:8080`.
+Point the panel's configured host at `your-machine-ip:8080`. The emulator serves
+every endpoint the firmware uses — `/jn`, `/jo`, `/jc`, `/js`, `/jp` and
+`/cm`, `/cv`, `/mp`, `/cp`, `/pq` — and models the sequential run queue,
+programs, pause, and the `en=1`-on-running-station no-op. See the header of
+`docs/mock_os.py` for CLI flags and the debug endpoints (`/_run`, `/_reset`,
+`/_state`).
 
 ## Continuous integration
 
