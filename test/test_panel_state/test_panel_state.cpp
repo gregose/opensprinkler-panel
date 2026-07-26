@@ -174,6 +174,26 @@ void test_run_time_change_while_running_used_on_advance() {
   TEST_ASSERT_EQUAL_INT(180, f.ps.desired().seconds);
 }
 
+void test_reselect_running_station_restarts_with_new_run_time() {
+  Fixture f;
+
+  // Station 1 is confirmed running with 50 s left.
+  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::None, (int)f.ps.desired().kind);
+
+  // Pick a new run time, then tap the SAME station that is running.
+  f.ps.set_run_time(180);
+  f.ps.select_station(1);
+
+  // A fresh Run intent is queued for the same sid at the new run time; the
+  // delivery layer turns Run(running_sid) into an off-then-on restart (extend).
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::Run, (int)f.ps.desired().kind);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+  TEST_ASSERT_EQUAL_INT(180, f.ps.desired().seconds);
+}
+
 void test_advance_queues_next_station_without_changing_confirmed_running_sid() {
   Fixture f;
 
@@ -867,6 +887,7 @@ int main(int, char**) {
   RUN_TEST(test_running_station_dead_reckons_between_polls);
   RUN_TEST(test_run_time_change_while_running_updates_value_without_requeue);
   RUN_TEST(test_run_time_change_while_running_used_on_advance);
+  RUN_TEST(test_reselect_running_station_restarts_with_new_run_time);
   RUN_TEST(test_advance_queues_next_station_without_changing_confirmed_running_sid);
   RUN_TEST(test_prev_wraps_and_queues_previous_station);
   RUN_TEST(test_stop_queues_stop_until_idle_confirmed);

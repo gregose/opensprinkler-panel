@@ -281,13 +281,16 @@ class AuthTests(unittest.TestCase):
 class ModelUnitTests(unittest.TestCase):
     """Pure-model tests that don't need the HTTP server."""
 
-    def test_default_programs_have_disjoint_station_sets(self):
-        progs = default_programs(len(DEFAULT_NAMES))
+    def test_enabled_programs_have_disjoint_station_sets(self):
+        # The panel identifies an externally-started program by its live station
+        # set, so every program that can actually run (enabled) must own a
+        # unique set. Disabled programs never run -> they may reuse stations.
+        progs = [p for p in default_programs(len(DEFAULT_NAMES)) if p.enabled]
         sets = [set(p.station_sids()) for p in progs]
         for i in range(len(sets)):
             for j in range(i + 1, len(sets)):
                 self.assertEqual(sets[i] & sets[j], set(),
-                                 f"programs {i} and {j} share stations")
+                                 f"enabled programs {i} and {j} share stations")
 
     def test_durations_length_matches_station_count(self):
         n = len(DEFAULT_NAMES)
@@ -303,9 +306,9 @@ class FixtureCoverageTests(unittest.TestCase):
         self.progs = default_programs(len(DEFAULT_NAMES))
 
     def test_enough_programs_to_paginate(self):
-        # More than one page so the pager (‹ N of M ›) has to appear.
-        self.assertGreater(len(self.progs), PANEL_MAX_PROG_ROWS,
-                           "need >MAX_PROG_ROWS programs to test pagination")
+        # Need >2 full pages so the pager dots + ‹ › arrows page 1<->2<->3.
+        self.assertGreater(len(self.progs), 2 * PANEL_MAX_PROG_ROWS,
+                           "need >2 pages of programs to test the pager")
 
     def test_a_program_overflows_the_queue_window(self):
         biggest = max(len(p.station_sids()) for p in self.progs)
@@ -325,6 +328,14 @@ class FixtureCoverageTests(unittest.TestCase):
                 covered |= set(p.station_sids())
         self.assertTrue(long_sids & covered,
                         "long station name is not in any enabled program")
+
+    def test_a_program_name_overflows_for_ellipsis(self):
+        # The programs list must have at least one program whose NAME is long
+        # enough to force the name column to ellipsize.
+        PROG_NAME_WRAP_CHARS = 24  # ~chars that fit a list-row program name
+        self.assertTrue(
+            any(len(p.name) > PROG_NAME_WRAP_CHARS for p in self.progs),
+            "fixture has no long program name to test list-row ellipsis")
 
 
 if __name__ == "__main__":
