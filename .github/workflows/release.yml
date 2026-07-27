@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  # Pushing a v* tag (e.g. v1.0.0) cuts a GitHub Release with both the
+  # production and diagnostic firmware. workflow_dispatch allows a manual run
+  # against an existing tag for re-packaging without re-tagging.
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build a release for (e.g. v1.0.0)"
+        required: true
+        type: string
+
+# Needed to create the release and upload assets.
+permissions:
+  contents: write
+
+# Toolchain versions are kept identical to .github/workflows/ci.yml and
+# copilot-setup-steps.yml so every build uses the same tools. The ESP32
+# platform/toolchain itself is pinned in platformio.ini (espressif32@7.0.1).
+env:
+  PYTHON_VERSION: "3.11"
+  PLATFORMIO_VERSION: "6.1.19"
+  ESPTOOL_VERSION: "5.3.1"
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # workflow_dispatch checks out the requested tag; the push event
+          # already checks out the pushed tag ref.
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Resolve build metadata
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.tag }}"
+          else
+            version="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          # Release candidates (v*-rc*, or any tag containing -rc) are published
+          # as prereleases.
+          if [[ "${version}" == *-rc* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cache PlatformIO
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-fw-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}" "esptool==${{ env.ESPTOOL_VERSION }}"
+
+      # Production firmware (M6 UI). Build + package BEFORE the diag build, which
+      # overwrites the shared .pio/build toolchain outputs that merge_bin reads.
+      - name: Build production firmware (cyd-35r)
+        run: GIT_SHA=${{ steps.meta.outputs.sha }} FW_VERSION=${{ steps.meta.outputs.version }} pio run -e cyd-35r
+      - name: Package production firmware
+        run: tools/package-firmware.sh cyd-35r release/production --web
+
+      # Diagnostic bring-up firmware. Built AFTER the production artifact is
+      # packaged because building this env perturbs the shared .pio/build output
+      # dir (it would wipe cyd-35r's bootloader.bin before merge_bin runs).
+      - name: Build diagnostic firmware (cyd-35r-diag)
+        run: GIT_SHA=${{ steps.meta.outputs.sha }} FW_VERSION=${{ steps.meta.outputs.version }} pio run -e cyd-35r-diag
+      - name: Package diagnostic firmware
+        run: tools/package-firmware.sh cyd-35r-diag release/diag
+
+      - name: Assemble release assets
+        id: assets
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          stage="release/assets"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+
+          # Production: merged single-image + individual parts (unrenamed).
+          cp release/production/merged-firmware.bin "$stage/merged-firmware.bin"
+          cp release/production/bootloader.bin      "$stage/bootloader.bin"
+          cp release/production/partitions.bin      "$stage/partitions.bin"
+          cp release/production/boot_app0.bin       "$stage/boot_app0.bin"
+          cp release/production/firmware.bin        "$stage/firmware.bin"
+
+          # Diagnostic: renamed to avoid colliding with the prod parts.
+          cp release/diag/merged-firmware.bin "$stage/diag-merged-firmware.bin"
+          cp release/diag/firmware.bin        "$stage/diag-firmware.bin"
+
+          # Version-pinned manifest: same shape as flash/manifest.json but the
+          # part path is the ABSOLUTE GitHub release download URL for this tag's
+          # merged prod image, so the web flasher works standalone.
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/merged-firmware.bin"
+          cat > "$stage/manifest.json" <<EOF
+          {
+            "name": "OpenSprinkler Station Control Panel",
+            "version": "${VERSION}",
+            "new_install_prompt_erase": true,
+            "builds": [
+              {
+                "chipFamily": "ESP32",
+                "parts": [
+                  {
+                    "path": "${url}",
+                    "offset": 0
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          # Checksums over every .bin + the manifest, with relative filenames.
+          ( cd "$stage" && sha256sum ./*.bin manifest.json > SHA256SUMS )
+
+          echo "stage=${stage}" >> "$GITHUB_OUTPUT"
+          ls -l "$stage"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: ${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            release/assets/merged-firmware.bin
+            release/assets/bootloader.bin
+            release/assets/partitions.bin
+            release/assets/boot_app0.bin
+            release/assets/firmware.bin
+            release/assets/diag-merged-firmware.bin
+            release/assets/diag-firmware.bin
+            release/assets/manifest.json
+            release/assets/SHA256SUMS
