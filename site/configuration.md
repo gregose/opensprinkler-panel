@@ -31,18 +31,35 @@ them from your phone or laptop.
    joins your Wi-Fi, and connects to the controller.
 
 {: .note }
-Settings persist across reboots and firmware updates — you only enter them
-once. A [full re-flash]({{ '/flashing/' | relative_url }}) erases them, so you'd
-set them again after that.
+Settings persist across reboots and firmware updates, so you only enter them
+once. To change them later, see [Reconfiguring or resetting the panel](#reconfiguring-or-resetting-the-panel).
 
-## Re-entering configuration
+## Reconfiguring or resetting the panel
 
-To change Wi-Fi or controller settings later, re-flash the panel with the
-[web flasher]({{ '/flash/' | relative_url }}); the first install erases stored
-settings and the panel starts the setup portal again on next boot.
+You do not need to re-flash to change settings. The panel's **BOOT** button (one of the two small side buttons; the other is **RESET**) reopens configuration when it is held during startup.
+
+To reopen configuration:
+
+1. Hold the **BOOT** button and press **RESET** once (or power the panel on while holding **BOOT**).
+2. Keep holding **BOOT**. The screen shows **Keep holding BOOT** with two options: **Configure** at 3 seconds and **Factory reset** at 10 seconds.
+3. Release at about **3 seconds**, while **Configure** is highlighted.
+4. The panel rejoins your Wi-Fi and shows an address such as `http://192.168.1.42`. Open that address in a browser on the same network to change the Wi-Fi network, OpenSprinkler host, or device password, then Save.
+
+{: .note }
+If the panel cannot rejoin your Wi-Fi (for example, the network changed), it falls back to the `OSPanel-Setup` access point instead. Join that network and open `192.168.4.1`, the same as first-boot setup. The configuration portal times out after 10 minutes.
+
+### Factory reset
+
+To erase all settings (Wi-Fi, OpenSprinkler host and password, and touch calibration) and start over:
+
+1. Start the panel while holding **BOOT**, as above.
+2. Keep holding past the 3-second mark until **Factory reset** highlights at **10 seconds**, then release.
+3. The panel erases everything and restarts in first-boot setup with the `OSPanel-Setup` portal.
+
+A full [web-flasher install]({{ '/flashing/' | relative_url }}) also erases stored settings, but you only need that to recover a wedged panel, not to change settings.
 
 {: .note }
 Optional advanced settings (such as a firmware over-the-air update password or a
 remote debug log) can also be set in the portal. Leave them blank if you don't
-need them — see [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) and
+need them; see [Troubleshooting]({{ '/troubleshooting/' | relative_url }}) and
 [Updating]({{ '/updating/' | relative_url }}).

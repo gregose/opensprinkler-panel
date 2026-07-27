@@ -8,8 +8,9 @@ nav_order: 6
 
 ## The panel can't reach the controller
 
-The top bar shows **Controller offline** and the **CTRL** signal meter reads
-`— —`, while **PANEL** stays valid. That means the panel is on Wi-Fi but can't
+The top bar shows **Controller offline** and the **CTRL** signal meter goes
+empty (all four bars unfilled), while the **PANEL** Wi-Fi meter stays filled.
+That means the panel is on Wi-Fi but can't
 talk to the controller. Check:
 
 - The **OpenSprinkler host** you entered is correct and reachable on your
@@ -17,8 +18,8 @@ talk to the controller. Check:
 - The controller is powered on and on the same network.
 - Your **device password** is correct — a wrong password shows **Auth error**.
 
-To fix the host or password, re-flash and re-run
-[first-boot setup]({{ '/configuration/' | relative_url }}).
+To fix the host or password, hold **BOOT** for about 3 seconds at startup to
+reopen configuration; see [Reconfiguring or resetting the panel]({{ '/configuration/' | relative_url }}#reconfiguring-or-resetting-the-panel).
 
 ## Wi-Fi dropped / Reconnecting
 

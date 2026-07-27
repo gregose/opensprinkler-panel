@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - TBD
+## [1.0.0] - 2026-07-27
 
-- First public release.
+Initial public release. A 3.5" touch panel for running and stepping OpenSprinkler stations and programs, with local control directly to the controller over its HTTP API. Includes manual station control with auto-advance, a programs view with a live run queue, browser-based flashing, and over-the-air updates.
+
+See the documentation for supported hardware and full details.

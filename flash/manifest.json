@@ -1,5 +1,5 @@
 {
-  "name": "OpenSprinkler Station Control Panel",
+  "name": "OpenSprinkler Panel",
   "version": "ci-artifact",
   "new_install_prompt_erase": true,
   "builds": [
