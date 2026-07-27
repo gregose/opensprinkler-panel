@@ -155,13 +155,15 @@ static inline const char* fw_version() {
     return (FW_VERSION[0] != '\0') ? FW_VERSION : "dev";
 }
 
-// Boot brand tag shown on the boot screens: "<version> · <sha>" for a tagged
+// Boot brand tag shown on the boot screens: "<version> (<sha>)" for a tagged
 // release build, or just the bare sha/"dev" when no version is set. Uses a
-// static buffer — only called from the single-threaded boot draw path.
+// static buffer — called from the single-threaded boot draw path and the
+// captive-portal header builder (also synchronous/single-threaded during
+// setup/config), so the static buffer remains safe.
 static inline const char* fw_boot_tag() {
     static char buf[48];
     if (strcmp(fw_version(), "dev") != 0) {
-        snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s", fw_version(), fw_git_sha());
+        snprintf(buf, sizeof(buf), "%s (%s)", fw_version(), fw_git_sha());
         return buf;
     }
     return fw_git_sha();
@@ -823,7 +825,7 @@ static const char* portal_head_css() {
         // isn't duplicated on the menu page.
         css += F("h1{display:none}");
         css += F(".wrap::before{display:block;content:'OpenSprinkler Panel · ");
-        css += fw_git_sha();
+        css += fw_boot_tag();
         css += F("';font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;"
                  "letter-spacing:.14em;color:#35d0c3;text-align:center;padding:16px 0 13px;"
                  "border-bottom:2px solid #1c6a64;margin:0 0 18px}");
