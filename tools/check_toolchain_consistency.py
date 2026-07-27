@@ -3,10 +3,11 @@
 
 The Python / PlatformIO / esptool / ESP32-platform versions are duplicated in
 several files by necessity (GitHub Actions env blocks, the Copilot setup
-workflow, platformio.ini, the local venv requirements). They MUST stay
-identical everywhere, per docs/07-ci-cd-and-releases.md. This script is the
-machine check for that rule: it scrapes every known location, groups the
-findings per tool, and fails if any tool resolves to more than one version.
+workflow, platformio.ini, the local venv requirements, and the toolchain table
+in docs/07-ci-cd-and-releases.md). They MUST stay identical everywhere. This
+script is the machine check for that rule: it scrapes every known location,
+groups the findings per tool, and fails if any tool resolves to more than one
+version.
 
 It deliberately hardcodes NO version numbers — bumping a version just has to be
 done consistently, and this check enforces the "consistently" part. Stdlib
@@ -37,8 +38,13 @@ class Finding:
 # ignored (its literal source is the env block instead).
 def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
     ver = r'["\']?(\d+(?:\.\d+)+)["\']?'
+    # Only the workflows that actually BUILD/PACKAGE firmware are constrained.
+    # zizmor.yml is deliberately excluded: its Python is just the host that runs
+    # `pip install zizmor` (a prebuilt wheel), unrelated to the firmware
+    # toolchain, so pinning it to match PlatformIO's Python would be arbitrary
+    # coupling. It pins ZIZMOR_VERSION for its own reproducibility instead.
     env_rules = []
-    for wf in ("ci.yml", "release.yml", "zizmor.yml"):
+    for wf in ("ci.yml", "release.yml"):
         path = f".github/workflows/{wf}"
         env_rules += [
             ("python", path, re.compile(rf"^\s*PYTHON_VERSION:\s*{ver}", re.M)),
@@ -46,6 +52,12 @@ def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
             ("esptool", path, re.compile(rf"^\s*ESPTOOL_VERSION:\s*{ver}", re.M)),
         ]
     setup = ".github/workflows/copilot-setup-steps.yml"
+    # docs/07's "one source of truth" table restates every version in prose, so
+    # it drifts just like the workflows if not enforced. Anchor to the table
+    # rows (backtick-wrapped) and the ESP32 pin so the doc must be updated in the
+    # same PR as any bump.
+    doc = "docs/07-ci-cd-and-releases.md"
+    dver = r"`(\d+(?:\.\d+)+)`"
     return env_rules + [
         # Copilot cloud-agent setup: literal python-version + pip installs.
         ("python", setup, re.compile(rf"^\s*python-version:\s*{ver}", re.M)),
@@ -55,6 +67,11 @@ def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
         ("esptool", "tools/requirements.txt", re.compile(rf"^esptool=={ver}", re.M)),
         # The single source of truth for the ESP32 platform.
         ("esp32-platform", "platformio.ini", re.compile(rf"espressif32@{ver}")),
+        # docs/07 toolchain table + the ESP32 pin mentioned in its prose.
+        ("python", doc, re.compile(rf"^\|\s*Python\s*\|\s*{dver}", re.M)),
+        ("platformio", doc, re.compile(rf"^\|\s*PlatformIO\s*\|\s*{dver}", re.M)),
+        ("esptool", doc, re.compile(rf"^\|\s*esptool\s*\|\s*{dver}", re.M)),
+        ("esp32-platform", doc, re.compile(rf"espressif32@{ver}")),
     ]
 
 
@@ -63,9 +80,9 @@ def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
 # reducing coverage to a trivially-consistent single value.
 MIN_SOURCES = {
     "python": 4,
-    "platformio": 3,
-    "esptool": 4,
-    "esp32-platform": 1,
+    "platformio": 4,
+    "esptool": 5,
+    "esp32-platform": 3,
 }
 
 
@@ -115,8 +132,9 @@ def main() -> int:
 
     if not ok:
         print(
-            "\nToolchain versions must match across platformio.ini and all "
-            "workflows (see docs/07-ci-cd-and-releases.md).",
+            "\nToolchain versions must match across platformio.ini, the "
+            "workflows, and the docs/07 toolchain table "
+            "(see docs/07-ci-cd-and-releases.md).",
             file=sys.stderr,
         )
         return 1

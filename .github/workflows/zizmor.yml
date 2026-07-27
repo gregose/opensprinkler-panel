@@ -19,8 +19,11 @@ on:
     # touched indirectly (e.g. a renamed script it calls), so we don't
     # path-filter this.
 
-# zizmor is pinned here alongside the rest of the pip toolchain so it upgrades
-# deliberately, matching how ci.yml pins PlatformIO/esptool.
+# ZIZMOR_VERSION is pinned so the linter upgrades deliberately (the same way
+# ci.yml pins its build tools). PYTHON_VERSION here is just the host interpreter
+# that runs `pip install zizmor` — zizmor ships as a prebuilt wheel and behaves
+# the same across 3.10+, so this is intentionally NOT coupled to the firmware
+# build toolchain and is not part of tools/check_toolchain_consistency.py.
 env:
   PYTHON_VERSION: "3.11"
   ZIZMOR_VERSION: "1.28.0"

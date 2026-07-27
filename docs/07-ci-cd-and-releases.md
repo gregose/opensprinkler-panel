@@ -16,7 +16,7 @@ workflow — keep these in lockstep:
 
 | Tool | Version | Where it's pinned |
 |------|---------|-------------------|
-| Python | `3.11` | `ci.yml`, `release.yml`, `zizmor.yml` (`PYTHON_VERSION`), `copilot-setup-steps.yml` |
+| Python | `3.11` | `ci.yml`, `release.yml` (`PYTHON_VERSION`), `copilot-setup-steps.yml` |
 | PlatformIO | `6.1.19` | `ci.yml`, `release.yml` (`PLATFORMIO_VERSION`), `copilot-setup-steps.yml` |
 | esptool | `5.3.1` | `ci.yml`, `release.yml` (`ESPTOOL_VERSION`), `copilot-setup-steps.yml`, `tools/requirements.txt` |
 | ESP32 platform | `espressif32@7.0.1` | `platformio.ini` (the single source) |
@@ -25,6 +25,10 @@ workflow — keep these in lockstep:
 > PR. This is enforced in CI: the `toolchain-consistency` job (below) runs
 > `tools/check_toolchain_consistency.py`, which scrapes every location and fails
 > the build if any tool resolves to more than one version.
+>
+> `zizmor.yml` also sets `PYTHON_VERSION`, but it is intentionally **not** in
+> this set: that Python only hosts `pip install zizmor` (a prebuilt wheel) and
+> is unrelated to compiling firmware, so it is free to move independently.
 
 Every third-party action is **pinned by commit SHA** (with a trailing
 `# vX.Y.Z` comment), not by tag, so a re-tagged action can't silently change
@@ -94,7 +98,7 @@ use the Actions API, which the read token already covers).
 |-----|--------------|
 | `native-tests` | `pio test -e native` — the hardware-independent `lib/*` unit tests. |
 | `tools-tests` | `python3 tools/test_panel.py` — bench probe tool tests (stdlib only). |
-| `toolchain-consistency` | `python3 tools/check_toolchain_consistency.py` — fails if the pinned versions disagree across `platformio.ini` and the workflows. |
+| `toolchain-consistency` | `python3 tools/check_toolchain_consistency.py` — fails if the pinned versions disagree across `platformio.ini`, the workflows, and this doc's toolchain table. |
 | `mock-os-tests` | `python3 docs/test_mock_os.py` — OpenSprinkler emulator contract tests. |
 | `firmware-build` | Builds + packages prod, then diag; uploads two artifacts. |
 
