@@ -56,7 +56,7 @@ To erase all settings (Wi-Fi, OpenSprinkler host and password, and touch calibra
 2. Keep holding past the 3-second mark until **Factory reset** highlights at **10 seconds**, then release.
 3. The panel erases everything and restarts in first-boot setup with the `OSPanel-Setup` portal.
 
-A full [web-flasher install]({{ '/flashing/' | relative_url }}) also erases stored settings, but you only need that to recover a wedged panel, not to change settings.
+A full [web-flasher install]({{ '/flashing/' | relative_url }}) also erases stored settings, but you only need that to recover an unresponsive panel, not to change settings.
 
 {: .note }
 Optional advanced settings (such as a firmware over-the-air update password or a

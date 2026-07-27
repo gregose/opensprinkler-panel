@@ -38,7 +38,7 @@ If no serial port appears when you click Install in the
 - Install the **CH340** or **CP210x** USB-serial driver
   ([Supported hardware]({{ '/hardware/' | relative_url }}#flashing-driver)).
 
-## Recovering a wedged panel
+## Recovering an unresponsive panel
 
 If the firmware ever gets into a bad state, re-flash the latest release with the
 [web flasher]({{ '/flash/' | relative_url }}). The first install erases the flash
@@ -47,13 +47,15 @@ and installs a clean image; you'll re-run
 
 ## Debug interfaces (advanced)
 
-The firmware has optional, **LAN-only** debug interfaces that are useful when
-diagnosing a problem or capturing screenshots:
+The firmware has optional debug interfaces, reachable over the network, that are
+useful when diagnosing a problem or capturing screenshots:
 
 - An **HTTP screenshot server** that returns a pixel-exact capture of the
   current screen.
 - An optional **TCP log** stream for runtime logs.
 
-These are opt-in and stay on your local network. If you want to use them, see
-the [repository](https://github.com/gregose/opensprinkler-panel) `tools/` and
+They are off by default. When enabled, they listen on the panel's network
+interface, so anything that can reach the panel on your network can use them. If
+you want to use them, see the
+[repository](https://github.com/gregose/opensprinkler-panel) `tools/` and
 `docs/` folders for setup details.
