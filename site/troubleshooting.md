@@ -17,8 +17,8 @@ talk to the controller. Check:
 - The controller is powered on and on the same network.
 - Your **device password** is correct — a wrong password shows **Auth error**.
 
-To fix the host or password, re-flash and re-run
-[first-boot setup]({{ '/configuration/' | relative_url }}).
+To fix the host or password, hold **BOOT** for about 3 seconds at startup to
+reopen configuration; see [Reconfiguring or resetting the panel]({{ '/configuration/' | relative_url }}#reconfiguring-or-resetting-the-panel).
 
 ## Wi-Fi dropped / Reconnecting
 

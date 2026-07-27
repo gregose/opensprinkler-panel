@@ -19,6 +19,8 @@ as installing:
 A USB re-flash **erases the flash**, so you'll re-run
 [first-boot setup]({{ '/configuration/' | relative_url }}) afterward.
 
+To change Wi-Fi or controller settings you do not need to re-flash; see [Reconfiguring or resetting the panel]({{ '/configuration/' | relative_url }}#reconfiguring-or-resetting-the-panel).
+
 ## Wireless updates (advanced)
 
 The firmware also supports **over-the-air (OTA)** updates over Wi-Fi, which
