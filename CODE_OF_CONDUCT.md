@@ -59,8 +59,10 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-[greg@nullmethod.com](mailto:greg@nullmethod.com).
+reported to the community leaders responsible for enforcement by opening a
+report through GitHub — either a private
+[security advisory](../../security/advisories/new) or, if that is not
+appropriate, by contacting the maintainer via their GitHub profile.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

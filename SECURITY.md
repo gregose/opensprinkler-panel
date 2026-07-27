@@ -8,11 +8,13 @@ and will be addressed on a best-effort basis.
 
 Please **do not** open a public issue for security bugs.
 
-Instead, report privately via one of:
+The best way to report a vulnerability is privately through GitHub:
 
 - **GitHub Security Advisories** — go to the repository's **Security** tab and
   choose **Report a vulnerability**.
-- **Email** — [greg@nullmethod.com](mailto:greg@nullmethod.com).
+
+If you're unable to use a security advisory, open a regular GitHub issue and
+avoid including sensitive exploit details in the public description.
 
 Please include enough detail to reproduce the issue (affected version / git
 SHA, hardware, and steps). You'll get an acknowledgement as soon as practical.
