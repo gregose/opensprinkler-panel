@@ -8,8 +8,8 @@ network.
 
 ![The panel on its idle, connected screen](site/assets/img/screenshots/home-connected.png)
 
-📖 **[User manual](https://gregose.github.io/opensprinkler-panel/)** ·
-⚡ **[Flash it in your browser](https://gregose.github.io/opensprinkler-panel/flash/)**
+📖 **[User manual](https://www.nullmethod.com/opensprinkler-panel/)** ·
+⚡ **[Flash it in your browser](https://www.nullmethod.com/opensprinkler-panel/flash/)**
 
 ## Features
 
@@ -44,7 +44,7 @@ LCDwiki **3.5″ ESP32-32E Display** (SKU **E32R35T**, community name
 Classic **ESP32-WROOM-32E** (no PSRAM, 4 MB flash), **ST7796U** 480×320 display,
 **XPT2046 resistive** touch on the same SPI bus, USB-C 5 V power. Get the
 **resistive** touch version; capacitive variants aren't supported yet. Full
-detail in the [hardware guide](https://gregose.github.io/opensprinkler-panel/hardware/)
+detail in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/)
 and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).
 
 ## Flash it in your browser
@@ -52,11 +52,11 @@ and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).
 Install the latest firmware straight from a Chromium browser (Chrome/Edge) —
 nothing to download:
 
-👉 **<https://gregose.github.io/opensprinkler-panel/flash/>**
+👉 **<https://www.nullmethod.com/opensprinkler-panel/flash/>**
 
-Then follow [first-boot setup](https://gregose.github.io/opensprinkler-panel/configuration/)
+Then follow [first-boot setup](https://www.nullmethod.com/opensprinkler-panel/configuration/)
 to enter Wi-Fi plus your OpenSprinkler host and device password. The complete
-[user manual](https://gregose.github.io/opensprinkler-panel/) covers flashing,
+[user manual](https://www.nullmethod.com/opensprinkler-panel/) covers flashing,
 configuration, usage, updating, and troubleshooting.
 
 ---

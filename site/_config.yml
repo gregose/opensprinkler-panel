@@ -3,7 +3,7 @@ description: Run and step OpenSprinkler stations and programs locally from a wal
 
 theme: just-the-docs
 
-url: https://gregose.github.io
+url: https://www.nullmethod.com
 baseurl: /opensprinkler-panel
 
 # Clean directory-style URLs (e.g. /flashing/) to match the links used in the
