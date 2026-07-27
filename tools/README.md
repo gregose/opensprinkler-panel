@@ -62,10 +62,27 @@ for a run by prefix, downloads it with `gh run download`, finds
 artifact name** (`Flashing cyd-35r-firmware-<sha> ...`) so you can confirm you
 flashed the build you intended.
 
+## Flash a tagged release
+
+```bash
+./tools/flash.sh --release           # latest published release
+./tools/flash.sh --release v1.0.0    # a specific tag
+./tools/flash.sh --release --diag    # the diagnostic image from the latest release
+```
+
+Instead of a CI artifact, `--release [tag]` downloads the merged image from a
+[GitHub Release](../docs/07-ci-cd-and-releases.md#workflow-2--releaseyml-tagged-releases)
+with `gh release download` — the newest release when no tag (or `latest`) is
+given, otherwise the named tag. It grabs `merged-firmware.bin` (production) or,
+with `--diag`, `diag-merged-firmware.bin`, and writes it at `0x0` like the
+artifact path. `--release` can't be combined with `--branch`/`--pr`/`--run-id`.
+`--port` and `--repo` still apply.
+
 > `flash.sh` writes the merged image at `0x0`, which **wipes NVS** (Wi-Fi + OS
 > config + touch calibration + `ota_pass` + `dev_log`). Snapshot NVS with
 > [`nvs.sh backup`](#back-up--restore-nvs-nvssh) first, or prefer OTA (below)
 > for routine iteration since it preserves NVS.
+
 
 ## OTA (wireless firmware updates)
 
