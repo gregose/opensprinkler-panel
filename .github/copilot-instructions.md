@@ -1,6 +1,6 @@
 # Copilot instructions — opensprinkler-panel
 
-ESP32 firmware for a wall-mounted 3.5" resistive CYD touch panel that runs and
+ESP32 firmware for a 3.5" resistive CYD touch panel that runs and
 steps OpenSprinkler stations over the controller's local HTTP API. Built with
 PlatformIO (stock `espressif32`) + Arduino + TFT_eSPI + LVGL.
 

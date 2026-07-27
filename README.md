@@ -1,6 +1,6 @@
 # OpenSprinkler Station Control Panel
 
-A wall-mounted 3.5″ touch panel that runs and steps through your OpenSprinkler
+A 3.5″ touch panel that runs and steps through your OpenSprinkler
 **stations** and **programs** locally — for seasonal blow-out, spring testing,
 and everyday manual runs — with **no phone, app, or cloud account**. It talks
 directly to your OpenSprinkler controller over its local HTTP API on your own

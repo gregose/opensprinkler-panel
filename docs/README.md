@@ -1,6 +1,6 @@
 # OpenSprinkler Station Control Panel — Build Handoff
 
-A wall-mounted 3.5″ touch panel that lets a sprinkler tech run and step through
+A 3.5″ touch panel that lets a sprinkler tech run and step through
 irrigation **stations** locally — for seasonal blow-out and spring testing —
 without a phone, an app, or network credentials. It drives an OpenSprinkler v3
 controller directly over its **local HTTP API**.
