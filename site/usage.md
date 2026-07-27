@@ -15,9 +15,9 @@ the controller. Disabled and master/pump stations don't appear.
 When nothing is running, the panel shows a **"Select a station"** prompt and the
 full grid of your stations. The top bar shows a **Connected** status and two
 signal meters: **PANEL** (the panel's own Wi-Fi) and **CTRL** (the controller's
-Wi-Fi). If the controller is unreachable, CTRL reads `— —` while PANEL stays
-valid — a quick way to tell whether it's the panel or the controller that's
-having trouble.
+Wi-Fi). If the controller is unreachable, the CTRL meter goes empty (all four
+bars unfilled) while PANEL stays filled, a quick way to tell whether it's the
+panel or the controller that's having trouble.
 
 ![Idle, connected screen]({{ '/assets/img/screenshots/home-connected.png' | relative_url }})
 

@@ -8,8 +8,9 @@ nav_order: 6
 
 ## The panel can't reach the controller
 
-The top bar shows **Controller offline** and the **CTRL** signal meter reads
-`— —`, while **PANEL** stays valid. That means the panel is on Wi-Fi but can't
+The top bar shows **Controller offline** and the **CTRL** signal meter goes
+empty (all four bars unfilled), while the **PANEL** Wi-Fi meter stays filled.
+That means the panel is on Wi-Fi but can't
 talk to the controller. Check:
 
 - The **OpenSprinkler host** you entered is correct and reachable on your
