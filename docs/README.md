@@ -18,6 +18,7 @@ This folder is the complete package for a coding agent to build the firmware.
 | `04-agent-kickoff.md` | Milestone order, per-step verification, and a **mock OpenSprinkler server** so you can build the whole thing without the physical controller. |
 | `05-programs.md` | The **Programs feature (M9)** as shipped: the programs list, running a program, the live queue view, pause, program identification, the API contract used, and next-run computation. Authoritative for Programs behavior. |
 | `06-hardware-validation-loop.md` | The **bench runbook**: how a coding agent validates firmware on the physical panel — the emulator-first + OTA-first loop, screenshot-driven objective measurement, USB/NVS fallback, and reporting. |
+| `07-ci-cd-and-releases.md` | **CI/CD reference:** the four GitHub Actions workflows (build/test, tagged releases, workflow-security scanning, cloud-agent setup), the tag-driven release process + asset set, and the workflow conventions (SHA-pinned actions, least-privilege permissions, toolchain version pinning). |
 | `mock_os.py` | Runnable emulator of the controller's API — serves `/jn`, `/jo`, `/jc`, `/js`, `/jp` and accepts `/cm`, `/cv`, `/mp`, `/cp`, `/pq`. Models the full sequential run queue, programs (M9), and pause. `test_mock_os.py` is its contract/connection test suite (`python3 docs/test_mock_os.py`). |
 
 ## Decisions already locked (do not re-litigate)

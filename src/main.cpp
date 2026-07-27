@@ -145,6 +145,28 @@ static inline const char* fw_git_sha() {
     return (FW_GIT_SHA[0] != '\0') ? FW_GIT_SHA : "dev";
 }
 
+// Firmware version — injected by the release workflow via -D FW_VERSION
+// (FW_VERSION env var = the git tag at build time). Falls back to "dev" when
+// unset (empty string from sysenv), matching the fw_git_sha() pattern.
+#ifndef FW_VERSION
+#  define FW_VERSION ""
+#endif
+static inline const char* fw_version() {
+    return (FW_VERSION[0] != '\0') ? FW_VERSION : "dev";
+}
+
+// Boot brand tag shown on the boot screens: "<version> · <sha>" for a tagged
+// release build, or just the bare sha/"dev" when no version is set. Uses a
+// static buffer — only called from the single-threaded boot draw path.
+static inline const char* fw_boot_tag() {
+    static char buf[48];
+    if (strcmp(fw_version(), "dev") != 0) {
+        snprintf(buf, sizeof(buf), "%s \xC2\xB7 %s", fw_version(), fw_git_sha());
+        return buf;
+    }
+    return fw_git_sha();
+}
+
 // LVGL draw buffer (static, internal SRAM — no PSRAM on this board).
 // RGB565 render target = 2 bytes/px. Must be aligned to LVGL 9's
 // LV_DRAW_BUF_ALIGN; lv_display_set_buffers() asserts on a misaligned buffer
@@ -569,7 +591,7 @@ static void draw_boot_hold_bar(int pct, uint32_t color_hex) {
 
 // ---- Composed boot screens ------------------------------------------------
 static void draw_boot_connecting(const char* ssid) {
-    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_chrome(fw_boot_tag(), CLR_TEALDIM);
     draw_boot_headline("Connecting", CLR_TEXT);
     draw_boot_lede("Joining", 134);
     draw_boot_value(ssid, 158, CLR_TEXT);
@@ -577,7 +599,7 @@ static void draw_boot_connecting(const char* ssid) {
 }
 
 static void draw_boot_setup(const char* ap_ssid) {
-    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_chrome(fw_boot_tag(), CLR_TEALDIM);
     draw_boot_headline("Set up your panel", CLR_TEXT);
     draw_boot_step(1, (String("Join Wi-Fi ") + ap_ssid).c_str(), 138);
     draw_boot_step(2, "Open 192.168.4.1", 186);
@@ -585,7 +607,7 @@ static void draw_boot_setup(const char* ap_ssid) {
 }
 
 static void draw_boot_configure(const char* url) {
-    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_chrome(fw_boot_tag(), CLR_TEALDIM);
     draw_boot_headline("Configure", CLR_TEXT);
     draw_boot_lede("Open on your network:", 134);
     draw_boot_value(url, 160, CLR_TEAL);
@@ -594,7 +616,7 @@ static void draw_boot_configure(const char* url) {
 
 static void draw_boot_hold(BootMode mode) {
     const bool edit = (mode != BootMode::kNormal);
-    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_chrome(fw_boot_tag(), CLR_TEALDIM);
     draw_boot_headline("Keep holding BOOT", CLR_TEXT);
     draw_boot_tier(150, "3 s",  "Configure",     CLR_TEAL, edit);
     draw_boot_tier(192, "10 s", "Factory reset", CLR_RED,  false);
@@ -603,14 +625,14 @@ static void draw_boot_hold(BootMode mode) {
 }
 
 static void draw_boot_factory() {
-    draw_boot_chrome(fw_git_sha(), CLR_RED);
+    draw_boot_chrome(fw_boot_tag(), CLR_RED);
     draw_boot_headline("Erasing all settings", CLR_RED);
     draw_boot_lede("Clearing Wi-Fi, OpenSprinkler & touch calibration.", 134);
     draw_boot_footer("The panel will restart in setup mode");
 }
 
 static void draw_boot_notice(const char* headline) {
-    draw_boot_chrome(fw_git_sha(), CLR_TEALDIM);
+    draw_boot_chrome(fw_boot_tag(), CLR_TEALDIM);
     draw_boot_headline(headline, CLR_TEXT);
 }
 

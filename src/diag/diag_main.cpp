@@ -43,6 +43,16 @@ static inline const char* fw_git_sha() {
     return (FW_GIT_SHA[0] != '\0') ? FW_GIT_SHA : "dev";
 }
 
+// Firmware version — injected by the release workflow via -D FW_VERSION
+// (FW_VERSION env var = the git tag at build time). Falls back to "dev" when
+// unset (empty string from sysenv), matching the fw_git_sha() pattern.
+#ifndef FW_VERSION
+#  define FW_VERSION ""
+#endif
+static inline const char* fw_version() {
+    return (FW_VERSION[0] != '\0') ? FW_VERSION : "dev";
+}
+
 // ---------------------------------------------------------------------------
 // Hardware constants — keep identical to src/main.cpp.
 // ---------------------------------------------------------------------------
@@ -114,6 +124,7 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 // ---------------------------------------------------------------------------
 static void m0_boot_banner() {
     Serial.println("\n=== OpenSprinkler Panel — Diagnostic Firmware ===");
+    Serial.printf("Version  : %s\n", fw_version());
     Serial.printf("Git SHA  : %s\n", fw_git_sha());
     Serial.printf("Built    : %s %s\n", __DATE__, __TIME__);
     Serial.printf("Free heap: %u bytes\n", (unsigned)ESP.getFreeHeap());

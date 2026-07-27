@@ -94,9 +94,14 @@ programs, pause, and the `en=1`-on-running-station no-op. See the header of
 
 `.github/workflows/ci.yml` runs the native unit tests, compiles the firmware, and
 publishes the flashable firmware artifact on every push/PR.
+`.github/workflows/release.yml` builds and publishes a GitHub Release (production
++ diagnostic firmware) when a `v*` tag is pushed.
+`.github/workflows/zizmor.yml` security-audits the workflows themselves, and
 `.github/workflows/copilot-setup-steps.yml` pre-installs the **same** Python +
 PlatformIO + esptool toolchain for Copilot cloud sessions, so CI and cloud
-development stay in lockstep.
+development stay in lockstep. Full reference — jobs, the tag-driven release
+process, asset set, and workflow conventions — in
+[`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
 
 ## Roadmap
 
