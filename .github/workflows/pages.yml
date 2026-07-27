@@ -28,6 +28,9 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
     env:
       BUNDLE_GEMFILE: site/Gemfile
     steps:
