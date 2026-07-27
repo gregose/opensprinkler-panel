@@ -177,33 +177,34 @@ The controller does **not** always tell the panel which program is running:
 panel `Run ›` *and* a run started from the OpenSprinkler app), and `pid = 99` for
 a manual single-station run. Only scheduled runs carry a real 1-based `pid`.
 
-So the panel identifies the running program (`panel_state.cpp::on_jc`) in this
-priority order:
+The panel identifies the running program (`panel_state.cpp::on_jc`) by run
+source — it never *guesses* the program from the station set:
 
-1. **Panel-launched hint first.** If the panel itself started the run, it
-   remembers the launched program index (`launched_program_index_`). That index
-   is used **as long as it stays consistent** with the live station set — i.e.
-   every still-live station belongs to that program. This is authoritative and
-   avoids ambiguity.
-2. **Station-set inference.** Otherwise (external/app-triggered run, or the hint
-   no longer matches), it matches the live station set against the `/jp` program
-   definitions (`infer_program_index_by_stations`): collect the stations live in
-   the run's queue and pick the program whose full station set (durations > 0)
-   contains all of them with the fewest already-completed.
-3. **Fallbacks.** Failing both, it falls back to the remembered panel-launched
-   index, then to the legacy `pid`.
+1. **Scheduled run → real `pid`.** The controller reports `pid = program_index +
+   1`, so the index is known directly. Named, with the full station queue.
+2. **Panel-launched run → remembered index.** When the panel itself started the
+   run (`pid = 254`), it uses the launched program index
+   (`launched_program_index_`) **as long as it stays consistent** with the live
+   station set — i.e. every still-live station belongs to that program. This is
+   authoritative: it survives advancing/skipping down to a station shared with
+   another program, and a stale hint from a just-ended run is dropped the moment
+   the live set no longer fits. Named, with the full station queue.
+3. **Any other `pid = 254` run → generic live queue.** For a run started from the
+   OpenSprinkler app (or anything the panel didn't launch), the panel makes **no
+   attempt to identify the program**. It shows a generic "Program" header and
+   renders exactly the stations the controller reports live in `ps[]` (no
+   already-completed stations, since those are unknowable). `program_index`
+   stays `-1`.
 
-Preferring the panel hint (step 1) matters when a program's **last** station is
-also another program's **first** station: after the run drains down to that
-shared station, inference's "fewest already-completed" heuristic would otherwise
-pick the *shorter* program that starts on it. Trusting the panel-launched index
-while it remains consistent keeps the correct program (and its completed-station
-queue) on screen.
-
-**Design consequence:** for reliable identification of *externally* started runs,
-**enabled programs must have disjoint station sets** (disabled programs may
-overlap). The mock controller fixtures (`docs/mock_os.py`) honour this on purpose
-so the identification path is exercised in tests.
+**Why no station-set inference?** An earlier version matched the live station set
+against the `/jp` definitions to recover a name for case 3. That heuristic is
+inherently ambiguous once a run drains — e.g. "Morning Lawn" `{0,3,8}` advanced
+to just `{8}` also "matches" "Deep Root Quarterly" `{8,9}` and would win by the
+"fewest completed" score, rendering the *wrong* program's queue (station 9 shown
+as done). Identically-stationed programs are unresolvable from stations at all.
+Since the only runs we can identify with certainty are scheduled (case 1) and
+panel-launched (case 2) — which cover essentially all real usage — the panel
+prefers an honest live queue over a confident guess.
 
 The `run_initiated_by_panel` flag also lets an **externally scheduled** program
 run allow the screen to sleep, while a **panel-initiated** run keeps the display
@@ -316,8 +317,10 @@ Behavioral notes that were under-specified originally and are now settled:
 
 - **Advance is a controller skip** (`ssta=1`, off-then-on semantics), not a
   client-side jump.
-- **Program identification is by station-set matching**, not by `pid` (which is
-  254 for all app/panel runs) — see [§5](#5-which-program-is-running-identification).
+- **Program identification is by run source, not `pid`** (which is 254 for all
+  app/panel runs): scheduled runs use the real `pid`, panel-launched runs use the
+  remembered index, and any other `pid=254` run renders a generic live queue with
+  no name — see [§5](#5-which-program-is-running-identification).
 - Fade masks on the queue are near-invisible on the dark theme against a matching
   background; they read during scroll and were kept as-is (Greg's call).
 
@@ -331,8 +334,9 @@ Behavioral notes that were under-specified originally and are now settled:
 - **`lib/os_client`** — mock-transport native tests assert exact URL strings for
   `/jp`, `/mp`, `/cp`, `/pq` and the parse of `/jp` + extended `/jc` fields.
 - **`lib/panel_state`** — native tests cover screen classification, paused
-  fallback + frozen countdown, panel-launched `pid=254` index memory,
-  station-set identification of external runs, and pagination clamping.
+  fallback + frozen countdown, panel-launched `pid=254` index memory (kept while
+  consistent, dropped when the live set diverges), the generic live-queue
+  fallback for external `pid=254` runs, and pagination clamping.
 - **`docs/mock_os.py`** — a full controller emulator (`/jn /jo /jc /js /jp` +
   `/cm /cv /mp /cp /pq`) with fixtures of 24 stations / multiple programs
   (disjoint enabled station sets, a >9-station program for queue overflow, and a
