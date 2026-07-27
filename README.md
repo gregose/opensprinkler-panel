@@ -1,42 +1,93 @@
 # OpenSprinkler Station Control Panel
 
-Firmware for a wall-mounted 3.5″ touch panel that runs and steps through
-OpenSprinkler irrigation **stations** locally — for seasonal blow-out and spring
-testing — with no phone, app, or network credentials. It drives an OpenSprinkler
-v3 controller directly over its local HTTP API.
+A wall-mounted 3.5″ touch panel that runs and steps through your OpenSprinkler
+**stations** and **programs** locally — for seasonal blow-out, spring testing,
+and everyday manual runs — with **no phone, app, or cloud account**. It talks
+directly to your OpenSprinkler controller over its local HTTP API on your own
+network.
 
-## Hardware
+![The panel on its idle, connected screen](site/assets/img/screenshots/home-connected.png)
+
+📖 **[User manual](https://www.nullmethod.com/opensprinkler-panel/)** ·
+⚡ **[Flash it in your browser](https://www.nullmethod.com/opensprinkler-panel/flash/)**
+
+## Features
+
+- **Run a single station** for an adjustable run time, then Stop or Advance to
+  the next one.
+
+  ![Manually running a single station](site/assets/img/screenshots/manual-run.png)
+
+- **Auto-advance** through your stations for a bounded pass of the whole yard.
+
+- **See and run programs** stored on the controller — name, next run, zone
+  count, and total minutes at a glance.
+
+  ![The programs list](site/assets/img/screenshots/programs-list.png)
+
+- **Drive a running program** with a live queue — advance, pause/resume, or
+  stop — all reflected against the controller's real state.
+
+  ![A program running with its live queue](site/assets/img/screenshots/program-running.png)
+
+The panel is a thin client: your OpenSprinkler controller stays the source of
+truth. Nothing leaves your LAN.
+
+## Supported hardware
 
 LCDwiki **3.5″ ESP32-32E Display** (SKU **E32R35T**, community name
 **ESP32-3248S035R**, a "CYD"):
 
-- Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E) — dual-core LX6, 520 KB SRAM,
-  **no PSRAM**, 4 MB flash
-- 320×480 **TN** panel, **ST7796U** over SPI → mounted landscape (**480×320**)
-- **XPT2046 resistive** touch on the **same SPI bus** as the display
-- Wall-powered via 5 V / Type-C (optional passive Li backup; no battery gauge)
+- **Product page:** <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
+- **Buy it:** <https://www.amazon.com/dp/B0D93MBWC2>
 
-Full pin map and rationale in [`docs/03-architecture.md`](docs/03-architecture.md).
+Classic **ESP32-WROOM-32E** (no PSRAM, 4 MB flash), **ST7796U** 480×320 display,
+**XPT2046 resistive** touch on the same SPI bus, USB-C 5 V power. Get the
+**resistive** touch version; capacitive variants aren't supported yet. Full
+detail in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/)
+and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).
 
-## Software stack
+## Flash it in your browser
 
-PlatformIO · stock **`espressif32@7.0.1`** platform · Arduino framework ·
-**TFT_eSPI** (ST7796U display + XPT2046 touch) · **LVGL 9** · WiFiManager ·
-ArduinoJson · Preferences (NVS).
+Install the latest firmware straight from a Chromium browser (Chrome/Edge) —
+nothing to download:
 
-## Project layout
+👉 **<https://www.nullmethod.com/opensprinkler-panel/flash/>**
+
+Then follow [first-boot setup](https://www.nullmethod.com/opensprinkler-panel/configuration/)
+to enter Wi-Fi plus your OpenSprinkler host and device password. The complete
+[user manual](https://www.nullmethod.com/opensprinkler-panel/) covers flashing,
+configuration, usage, updating, and troubleshooting.
+
+---
+
+## Development
+
+Firmware built with PlatformIO · stock **`espressif32@7.0.1`** platform ·
+Arduino framework · **TFT_eSPI** (ST7796U display + XPT2046 touch) · **LVGL 9** ·
+WiFiManager · ArduinoJson · Preferences (NVS).
+
+The design docs under [`docs/`](docs/) are the in-repo source of truth — start
+with [`docs/README.md`](docs/README.md). Bench/flash tooling is documented in
+[`tools/README.md`](tools/README.md).
+
+### Project layout
 
 ```
-docs/                 Design docs — the source of truth (read docs/README.md first)
-src/                  Firmware entry point (hardware glue: display/touch/LVGL/WiFi)
-lib/station_model/    Hardware-independent domain logic (grid, navigation, bitmasks)
-test/                 Native (host) unit tests — run in CI, no board needed
-docs/mock_os.py       OpenSprinkler controller emulator for developing without hardware
-docs/test_mock_os.py  Contract/connection tests for the emulator (run in CI)
-platformio.ini        Build config: `cyd-35r` (firmware) + `native` (tests)
+docs/          Design docs — the source of truth (read docs/README.md first)
+src/           Firmware entry point (hardware glue: display/touch/LVGL/WiFi)
+lib/           Hardware-independent domain logic (pure C++, native-testable)
+test/          Native (host) unit tests — run in CI, no board needed
+tools/         Local flash & debug helpers (see tools/README.md)
+docs/mock_os.py  OpenSprinkler controller emulator for developing without hardware
+platformio.ini   Build config: cyd-35r (firmware) + native (tests)
 ```
 
-## Building & testing
+Hardware-independent logic (domain models, API client, parsing, state machines)
+lives in `lib/*` as pure C++ with injected transports, so it's covered by native
+Unity tests; Arduino/hardware glue stays thin in `src/`.
+
+### Building & testing
 
 > Builds and tests run in **CI and cloud sessions**, not on a local machine.
 > The ESP32 toolchain is pinned in `platformio.ini`, so every environment builds
@@ -45,66 +96,43 @@ platformio.ini        Build config: `cyd-35r` (firmware) + `native` (tests)
 ```bash
 pio test -e native      # hardware-independent unit tests
 pio run  -e cyd-35r     # compile the firmware
-pio run  -e cyd-35r -t upload && pio device monitor   # flash + serial (local, with board)
 ```
 
-## Flashing without a local toolchain
+`.github/workflows/ci.yml` runs the native tests, compiles the firmware, and
+publishes a flashable `cyd-35r-firmware` artifact on every push/PR;
+`release.yml` publishes release binaries (including `merged-firmware.bin`, which
+the hosted browser flasher installs) on a `v*` tag; `zizmor.yml` security-audits
+the workflows themselves; and `copilot-setup-steps.yml` pre-installs the same
+toolchain for cloud sessions. Full CI/CD reference in
+[`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
 
-Cloud CI builds the firmware on every push and pull request, then uploads a
-`cyd-35r-firmware` artifact with this layout:
+### Flashing & debugging locally
 
-```text
-merged-firmware.bin
-bootloader.bin
-partitions.bin
-boot_app0.bin
-firmware.bin
-flash/index.html
-flash/manifest.json
-```
-
-- **Primary path, local flash/debug:** install only `esptool` + `pyserial`, then use
-  [`tools/flash.sh`](tools/flash.sh) to download a branch or PR artifact and write
-  `merged-firmware.bin` at `0x0`. Use [`tools/monitor.sh`](tools/monitor.sh) for a
-  115200 serial monitor. Full workflow in [`tools/README.md`](tools/README.md); the
-  end-to-end **hardware validation runbook** (emulator-first + OTA-first loop,
-  screenshot-driven checks, NVS backup/restore) is in
-  [`docs/06-hardware-validation-loop.md`](docs/06-hardware-validation-loop.md).
-- **Browser flashing:** after extracting the artifact, open `flash/index.html` in
-  Chrome or Edge and flash over WebSerial with ESP Web Tools.
-- **Fallback:** `python3 -m esptool --chip esp32 --port <port> write_flash 0x0 merged-firmware.bin`
-  flashes the merged image directly.
+[`tools/flash.sh`](tools/flash.sh) downloads a branch/PR/release build and
+writes `merged-firmware.bin` over USB (`--release` grabs the latest release);
+[`tools/ota.sh`](tools/ota.sh) pushes updates over Wi-Fi;
+[`tools/panel.py`](tools/panel.py) pulls pixel-exact screenshots and injects
+synthetic touch. See [`tools/README.md`](tools/README.md) for the full workflow.
 
 ### Develop without the controller
 
 ```bash
-python3 docs/mock_os.py            # serves the OpenSprinkler API on :8080 (24 fake stations, 10 programs)
+python3 docs/mock_os.py            # serves the OpenSprinkler API on :8080 (24 fake stations, programs)
 python3 docs/mock_os.py --schedule # also fire programs at their scheduled start times
 python3 docs/test_mock_os.py       # run the emulator's contract/connection tests
 ```
 
 Point the panel's configured host at `your-machine-ip:8080`. The emulator serves
-every endpoint the firmware uses — `/jn`, `/jo`, `/jc`, `/js`, `/jp` and
-`/cm`, `/cv`, `/mp`, `/cp`, `/pq` — and models the sequential run queue,
-programs, pause, and the `en=1`-on-running-station no-op. See the header of
-`docs/mock_os.py` for CLI flags and the debug endpoints (`/_run`, `/_reset`,
-`/_state`).
+every endpoint the firmware uses (`/jn`, `/jo`, `/jc`, `/js`, `/jp` and `/cm`,
+`/cv`, `/mp`, `/cp`, `/pq`) and models the sequential run queue, programs, pause,
+and the `en=1`-on-running-station no-op.
 
-## Continuous integration
+### Documentation site
 
-`.github/workflows/ci.yml` runs the native unit tests, compiles the firmware, and
-publishes the flashable firmware artifact on every push/PR.
-`.github/workflows/release.yml` builds and publishes a GitHub Release (production
-+ diagnostic firmware) when a `v*` tag is pushed.
-`.github/workflows/zizmor.yml` security-audits the workflows themselves, and
-`.github/workflows/copilot-setup-steps.yml` pre-installs the **same** Python +
-PlatformIO + esptool toolchain for Copilot cloud sessions, so CI and cloud
-development stay in lockstep. Full reference — jobs, the tag-driven release
-process, asset set, and workflow conventions — in
-[`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
+### Documentation site
 
-## Roadmap
-
-Milestones **M0–M8** are tracked as GitHub issues/milestones; see
-[`docs/04-agent-kickoff.md`](docs/04-agent-kickoff.md) for the build order and
-per-milestone "done when" criteria.
+The public user manual lives under [`site/`](site/) (Just the Docs, Jekyll) and
+deploys to GitHub Pages via `.github/workflows/pages.yml`. The `docs/` folder is
+the developer source of truth and is **not** published to the site. See
+[`docs/08-docs-site.md`](docs/08-docs-site.md) for how to maintain the manual,
+flasher, and Pages build.

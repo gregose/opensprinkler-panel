@@ -1,0 +1,36 @@
+title: OpenSprinkler Station Control Panel
+description: Run and step OpenSprinkler stations and programs locally from a wall-mounted touch panel — no phone, app, or cloud.
+
+theme: just-the-docs
+
+url: https://www.nullmethod.com
+baseurl: /opensprinkler-panel
+
+# Clean directory-style URLs (e.g. /flashing/) to match the links used in the
+# README and across pages.
+permalink: pretty
+
+# Light default color scheme — intentionally NOT the app's dark/teal look.
+color_scheme: light
+
+search_enabled: true
+
+# Link to the source repository in the site's aux nav.
+aux_links:
+  "GitHub":
+    - "https://github.com/gregose/opensprinkler-panel"
+aux_links_new_tab: true
+
+callouts:
+  note:
+    title: Note
+    color: blue
+  warning:
+    title: Warning
+    color: red
+
+# Files that are not part of the published manual.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

@@ -11,3 +11,10 @@ logs/
 .venv/
 .nvs-backups/
 .bench-tmp/
+
+# Jekyll (site/) build output
+_site/
+site/.jekyll-cache/
+site/.jekyll-metadata
+site/Gemfile.lock
+site/vendor/
