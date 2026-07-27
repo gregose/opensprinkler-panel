@@ -10,19 +10,23 @@ The first time the panel boots (or after a fresh flash), it has no Wi-Fi or
 controller settings, so it starts a **captive-portal setup** so you can enter
 them from your phone or laptop.
 
-![The Wi-Fi setup captive portal]({{ '/assets/img/screenshots/setup-portal.png' | relative_url }})
+![The OSPanel-Setup captive-portal menu]({{ '/assets/img/screenshots/setup-portal.png' | relative_url }})
 
 ## Connect and configure
 
 1. On boot with no settings, the panel creates a temporary Wi-Fi access point
    named **`OSPanel-Setup`**.
 2. Join that network from a phone or laptop. A configuration page opens
-   automatically (a captive portal).
+   automatically (a captive portal). Tap **Configure** to open the settings
+   form.
 3. Fill in:
-   - **Wi-Fi network + password** — the network the panel will join.
+   - **SSID + Password** — the Wi-Fi network the panel will join.
    - **OpenSprinkler host** — the IP address or hostname of your controller
      (for example `192.168.1.100`).
-   - **Device password** — your OpenSprinkler device password.
+   - **OpenSprinkler device password** — your OpenSprinkler device password.
+
+   ![The captive-portal configuration form]({{ '/assets/img/screenshots/setup-portal-config.png' | relative_url }})
+
 4. Save. The panel stores the settings in its onboard flash (**NVS**), reboots,
    joins your Wi-Fi, and connects to the controller.
 

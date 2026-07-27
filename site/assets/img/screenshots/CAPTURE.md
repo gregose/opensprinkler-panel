@@ -1,9 +1,9 @@
 # Screenshot capture checklist
 
-The images in this folder are **1×1 transparent placeholders**. The real
-screenshots must be captured on the physical panel (they can't be generated
-without hardware) and dropped in here at the exact same filenames, replacing the
-placeholders.
+The panel screenshots have been captured (see the status column below); this
+file remains the reference for what each image should show and how to re-shoot
+it. Any not-yet-captured image is a **1×1 transparent placeholder** that must be
+replaced, on the physical panel, at the exact same filename.
 
 Capture them with the bench screenshot tool
 ([`tools/panel.py`](../../../../tools/README.md)), which pulls a pixel-exact
@@ -27,7 +27,8 @@ to point the panel at the **mock controller** (`docs/mock_os.py`), which serves
 | `manual-run.png` | A single station running: `STATION N` eyebrow, station name, large amber countdown, **Next ›** and **■ Stop** buttons, active pill highlighted. | Tap a station pill from idle. Capture while the countdown is a clean value (e.g. after setting Run time to 1:00). |
 | `programs-list.png` | Programs list: `PROGRAMS` header, several program rows each with name, next-run/zones/minutes meta line, Enable/Disable + **Run ›** buttons. | Tap **≡ Programs** from idle. Use `docs/mock_os.py` so multiple programs (incl. a disabled one) are present. |
 | `program-running.png` | Program running: left column `STATION N OF M`, station name, big countdown; right column live queue with a ✓ completed row, the current ▶ row, and upcoming rows; **Next ›**, **Pause**, **■ Stop**. | From the programs list tap **Run ›** on a multi-station program (the mock's >9-station program shows the windowed queue nicely). Capture a few stations in. |
-| `setup-portal.png` | First-boot WiFiManager captive portal: the config form with Wi-Fi network, OpenSprinkler host, and device password fields. | Boot a freshly-flashed panel (empty NVS). Join the `OSPanel-Setup` AP and screenshot the portal page from the connecting device's browser (this one is a browser screenshot, not `panel.py`). |
+| `setup-portal.png` | **Captured.** First-boot WiFiManager captive-portal landing menu (`OSPanel-Setup` with Configure / Info / Update / Exit). | Boot a freshly-flashed panel (empty NVS), join the `OSPanel-Setup` AP, and screenshot the portal landing page from the connecting device's browser. |
+| `setup-portal-config.png` | **Captured.** The captive-portal configuration form: SSID + Password, OpenSprinkler host, device password, OTA password, sleep timeout, remote-debug-log fields. | Tap **Configure** in the portal and screenshot the form (leave fields blank to avoid capturing credentials). Browser screenshot, not `panel.py`. |
 
 Notes:
 
