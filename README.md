@@ -1,4 +1,4 @@
-# OpenSprinkler Station Control Panel
+# OpenSprinkler Panel
 
 A 3.5" touch panel for running and stepping OpenSprinkler stations and programs. It provides local control directly to your OpenSprinkler controller over its HTTP API, on your own network.
 
@@ -22,8 +22,6 @@ A 3.5" touch panel for running and stepping OpenSprinkler stations and programs.
 - Drive a running program with a live queue: advance, pause/resume, or stop, reflected against the controller's state.
 
   ![A program running with its live queue](site/assets/img/screenshots/program-running.png)
-
-The panel is a thin client; the OpenSprinkler controller stays the source of truth.
 
 ## Supported hardware
 

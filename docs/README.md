@@ -1,4 +1,4 @@
-# OpenSprinkler Station Control Panel — Build Handoff
+# OpenSprinkler Panel: Build Handoff
 
 A 3.5″ touch panel that lets a sprinkler tech run and step through
 irrigation **stations** locally — for seasonal blow-out and spring testing —

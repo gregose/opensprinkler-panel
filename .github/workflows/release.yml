@@ -117,7 +117,7 @@ jobs:
           url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/merged-firmware.bin"
           cat > "$stage/manifest.json" <<EOF
           {
-            "name": "OpenSprinkler Station Control Panel",
+            "name": "OpenSprinkler Panel",
             "version": "${VERSION}",
             "new_install_prompt_erase": true,
             "builds": [

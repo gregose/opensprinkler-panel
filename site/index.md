@@ -4,7 +4,7 @@ layout: default
 nav_order: 1
 ---
 
-# OpenSprinkler Station Control Panel
+# OpenSprinkler Panel
 
 A 3.5″ touch panel for running and stepping your OpenSprinkler stations and
 programs. It provides local control directly to your OpenSprinkler controller
@@ -14,11 +14,6 @@ over its HTTP API, on your own network.
 
 [Flash it in your browser →]({{ '/flashing/' | relative_url }}){: .btn .btn-primary }
 [Supported hardware]({{ '/hardware/' | relative_url }}){: .btn }
-
-{: .note }
-The panel is a **thin client**. Your OpenSprinkler controller stays the source
-of truth; the panel just gives you a dedicated control to run and step
-stations and programs without reaching for a phone.
 
 ## What it does
 
