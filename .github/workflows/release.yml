@@ -36,15 +36,19 @@ jobs:
           # already checks out the pushed tag ref.
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Resolve build metadata
         id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.tag }}"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$INPUT_TAG"
           else
             version="${GITHUB_REF#refs/tags/}"
           fi
@@ -58,20 +62,20 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Cache PlatformIO
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.platformio
-            ~/.cache/pip
-          key: pio-fw-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      # No PlatformIO build cache here (unlike ci.yml): a release publishes
+      # signed-off binaries, so it builds from a clean runner every time to
+      # avoid a poisoned cache tainting a released image. Releases are rare, so
+      # the extra minute is worth the supply-chain safety.
       - name: Install PlatformIO
         run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}" "esptool==${{ env.ESPTOOL_VERSION }}"
 
       # Production firmware (M6 UI). Build + package BEFORE the diag build, which
       # overwrites the shared .pio/build toolchain outputs that merge_bin reads.
       - name: Build production firmware (cyd-35r)
-        run: GIT_SHA=${{ steps.meta.outputs.sha }} FW_VERSION=${{ steps.meta.outputs.version }} pio run -e cyd-35r
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+          FW_VERSION: ${{ steps.meta.outputs.version }}
+        run: pio run -e cyd-35r
       - name: Package production firmware
         run: tools/package-firmware.sh cyd-35r release/production --web
 
@@ -79,7 +83,10 @@ jobs:
       # packaged because building this env perturbs the shared .pio/build output
       # dir (it would wipe cyd-35r's bootloader.bin before merge_bin runs).
       - name: Build diagnostic firmware (cyd-35r-diag)
-        run: GIT_SHA=${{ steps.meta.outputs.sha }} FW_VERSION=${{ steps.meta.outputs.version }} pio run -e cyd-35r-diag
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+          FW_VERSION: ${{ steps.meta.outputs.version }}
+        run: pio run -e cyd-35r-diag
       - name: Package diagnostic firmware
         run: tools/package-firmware.sh cyd-35r-diag release/diag
 
@@ -133,14 +140,19 @@ jobs:
           echo "stage=${stage}" >> "$GITHUB_OUTPUT"
           ls -l "$stage"
 
+      # Publish via the gh CLI rather than a third-party action: it removes a
+      # release-path supply-chain dependency (nothing extra to pin/trust), it's
+      # what tools/flash.sh already uses, and zizmor flags softprops as a
+      # superfluous action. `create` on the first run, `upload --clobber` on a
+      # workflow_dispatch re-run against an existing release.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ steps.meta.outputs.version }}
-          name: ${{ steps.meta.outputs.version }}
-          generate_release_notes: true
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          files: |
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files=(
             release/assets/merged-firmware.bin
             release/assets/bootloader.bin
             release/assets/partitions.bin
@@ -150,3 +162,13 @@ jobs:
             release/assets/diag-firmware.bin
             release/assets/manifest.json
             release/assets/SHA256SUMS
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" --clobber "${files[@]}"
+          else
+            create_flags=(--title "$VERSION" --generate-notes)
+            if [[ "$PRERELEASE" == "true" ]]; then
+              create_flags+=(--prerelease)
+            fi
+            gh release create "$VERSION" "${create_flags[@]}" "${files[@]}"
+          fi

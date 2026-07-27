@@ -22,12 +22,21 @@ env:
   PROD_ARTIFACT_BASE: "cyd-35r-firmware"
   DIAG_ARTIFACT_BASE: "cyd-35r-diag-firmware"
 
+# Least-privilege default token: every job here only reads the repo (tests +
+# firmware build). Artifact uploads use the Actions API, which the read token
+# already covers. Declared at the top level so no job silently inherits the
+# broad default GITHUB_TOKEN scopes.
+permissions:
+  contents: read
+
 jobs:
   native-tests:
     name: Unit tests (native)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -48,6 +57,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -60,6 +71,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -73,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -92,7 +107,9 @@ jobs:
       # Production firmware (M6 UI). Build + package BEFORE the diag build, which
       # overwrites the shared .pio/build toolchain outputs that merge_bin reads.
       - name: Build production firmware (cyd-35r)
-        run: GIT_SHA=${{ steps.meta.outputs.sha }} pio run -e cyd-35r
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+        run: pio run -e cyd-35r
       - name: Package production firmware
         run: tools/package-firmware.sh cyd-35r firmware-artifact/production --web
       - name: Upload production firmware artifact
@@ -105,7 +122,9 @@ jobs:
       # packaged because building this env perturbs the shared .pio/build output
       # dir (it would wipe cyd-35r's bootloader.bin before merge_bin runs).
       - name: Build diagnostic firmware (cyd-35r-diag)
-        run: GIT_SHA=${{ steps.meta.outputs.sha }} pio run -e cyd-35r-diag
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+        run: pio run -e cyd-35r-diag
       - name: Package diagnostic firmware
         run: tools/package-firmware.sh cyd-35r-diag firmware-artifact/diag
       - name: Upload diagnostic firmware artifact

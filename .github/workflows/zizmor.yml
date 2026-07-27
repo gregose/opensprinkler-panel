@@ -1,0 +1,50 @@
+name: Workflow security (zizmor)
+
+# Static security analysis of our own GitHub Actions workflows with zizmor
+# (https://docs.zizmor.sh). This matters now that release.yml can publish signed
+# firmware to a GitHub Release: a compromised or careless workflow is a
+# supply-chain risk. zizmor catches template injection, credential persistence,
+# cache poisoning, over-broad token permissions, unpinned actions, and similar
+# issues before they ship.
+#
+# This repo is private, so we don't upload SARIF to code scanning (that needs
+# GitHub Advanced Security). Instead zizmor prints GitHub annotations inline on
+# the PR and fails the job on any finding.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # Workflow security is cheap to check on every PR, and a workflow can be
+    # touched indirectly (e.g. a renamed script it calls), so we don't
+    # path-filter this.
+
+# zizmor is pinned here alongside the rest of the pip toolchain so it upgrades
+# deliberately, matching how ci.yml pins PlatformIO/esptool.
+env:
+  PYTHON_VERSION: "3.11"
+  ZIZMOR_VERSION: "1.28.0"
+
+# Least privilege: zizmor only needs to read the checked-out workflow files.
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    name: Audit workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install zizmor
+        run: pip install "zizmor==${{ env.ZIZMOR_VERSION }}"
+      - name: Audit workflows
+        # --format=github emits inline PR annotations; a non-zero exit on any
+        # finding fails the job. GITHUB_TOKEN enables zizmor's online audits
+        # (e.g. resolving whether `uses:` refs are pinned to a real commit).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --format=github .github/workflows/
