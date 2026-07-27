@@ -7,7 +7,7 @@ nav_order: 5
 # Using the panel
 
 Once connected, the panel builds its station grid from your controller's own
-station list — the count, names, and which stations are enabled all come from
+station list: the count, names, and which stations are enabled all come from
 the controller. Disabled and master/pump stations don't appear.
 
 ## Idle / connected
@@ -30,7 +30,7 @@ toggle, and a **≡ Programs** button.
   **Run time** and the panel switches to the running view: the station number,
   its name, and a large countdown.
 - **Run time − / +** adjusts the run time (0:15 to 10:00, in 15-second steps,
-  default 1:00). Changing it applies to the **next** run — re-tap the running
+  default 1:00). Changing it applies to the **next** run; re-tap the running
   station to apply a new time immediately.
 - **■ Stop** stops everything and returns to idle. No confirmation.
 
@@ -39,7 +39,7 @@ toggle, and a **≡ Programs** button.
 ## Advance and jump
 
 - **Next ›** moves to the next station and runs it for the current run time.
-  Manual Advance **wraps** — after the last station it goes back to the first —
+  Manual Advance **wraps**: after the last station it goes back to the first,
   and skips disabled stations.
 - **Tap a different station** in the grid to jump straight to it (the current
   one turns off, the new one turns on).
@@ -51,8 +51,8 @@ Toggle **Auto-advance** on to cycle the yard automatically:
 - **Off (default):** when the run time elapses, the station stops and the panel
   returns to idle.
 - **On:** when the run time elapses, the panel automatically starts the **next**
-  station. A full auto pass **stops after the last station** — it does not loop
-  — so an automatic pass is a bounded test that can't water forever.
+  station. A full auto pass **stops after the last station**; it does not loop,
+  so an automatic pass is a bounded test that can't water forever.
 
 ## Programs
 
@@ -62,8 +62,8 @@ Tap **≡ Programs** to open the list of programs stored on your controller.
 
 Each row shows the program name, when it next runs, the number of zones, and the
 total minutes, plus an **Enable / Disable** toggle and a **Run ›** button. The
-panel never creates, edits, or reschedules programs — that stays in the
-OpenSprinkler app — it only runs them and toggles their enabled flag.
+panel never creates, edits, or reschedules programs; that stays in the
+OpenSprinkler app. It only runs them and toggles their enabled flag.
 
 ### Running a program
 
@@ -74,21 +74,21 @@ screen:
 
 - **Left:** the current station (`STATION N OF M`), its name, and a big
   countdown for the current station's remaining time.
-- **Right:** a live **queue** of the program's stations — completed ones marked
+- **Right:** a live **queue** of the program's stations: completed ones marked
   with a check, the current one marked with a play (or pause) glyph, and the
   rest upcoming, with a total time remaining at the top.
 
 Controls during a program run:
 
-- **Next ›** — advance to the next station in the program.
-- **Pause / Resume** — pause toggles a fixed **10-minute** pause with automatic
+- **Next ›**: advance to the next station in the program.
+- **Pause / Resume**: pause toggles a fixed **10-minute** pause with automatic
   resume; the status bar shows **Program paused** and a **Resumes in M:SS**
   countdown. Tapping Pause again (or Resume) cancels the pause.
-- **■ Stop** — stop everything immediately and return to idle.
+- **■ Stop**: stop everything immediately and return to idle.
 
 {: .note }
 The controller is always the source of truth. If a station stops on the
-controller — a cap is reached, or someone uses the app — the panel updates to
+controller (a cap is reached, or someone uses the app), the panel updates to
 match on its next poll.
 
 ## Sleep
