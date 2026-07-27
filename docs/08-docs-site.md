@@ -1,4 +1,4 @@
-# 07 — Documentation site & user manual
+# 08 — Documentation site & user manual
 
 How to maintain the **public** user manual and the hosted web flasher that ship
 from this repo. This is a maintainer/agent reference; it is **not** published on

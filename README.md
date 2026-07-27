@@ -101,8 +101,10 @@ pio run  -e cyd-35r     # compile the firmware
 `.github/workflows/ci.yml` runs the native tests, compiles the firmware, and
 publishes a flashable `cyd-35r-firmware` artifact on every push/PR;
 `release.yml` publishes release binaries (including `merged-firmware.bin`, which
-the hosted browser flasher installs). `copilot-setup-steps.yml` pre-installs the
-same toolchain for cloud sessions.
+the hosted browser flasher installs) on a `v*` tag; `zizmor.yml` security-audits
+the workflows themselves; and `copilot-setup-steps.yml` pre-installs the same
+toolchain for cloud sessions. Full CI/CD reference in
+[`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
 
 ### Flashing & debugging locally
 
@@ -127,6 +129,10 @@ and the `en=1`-on-running-station no-op.
 
 ### Documentation site
 
+### Documentation site
+
 The public user manual lives under [`site/`](site/) (Just the Docs, Jekyll) and
 deploys to GitHub Pages via `.github/workflows/pages.yml`. The `docs/` folder is
-the developer source of truth and is **not** published to the site.
+the developer source of truth and is **not** published to the site. See
+[`docs/08-docs-site.md`](docs/08-docs-site.md) for how to maintain the manual,
+flasher, and Pages build.
