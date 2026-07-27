@@ -18,12 +18,13 @@ workflow — keep these in lockstep:
 |------|---------|-------------------|
 | Python | `3.11` | `ci.yml`, `release.yml`, `zizmor.yml` (`PYTHON_VERSION`), `copilot-setup-steps.yml` |
 | PlatformIO | `6.1.19` | `ci.yml`, `release.yml` (`PLATFORMIO_VERSION`), `copilot-setup-steps.yml` |
-| esptool | `5.3.1` | `ci.yml`, `release.yml` (`ESPTOOL_VERSION`), `copilot-setup-steps.yml` |
+| esptool | `5.3.1` | `ci.yml`, `release.yml` (`ESPTOOL_VERSION`), `copilot-setup-steps.yml`, `tools/requirements.txt` |
 | ESP32 platform | `espressif32@7.0.1` | `platformio.ini` (the single source) |
 
 > If you bump any of these, change it in **all** of the files above in the same
-> PR. The `zizmor` workflow (below) will flag drift-prone patterns but does not
-> check version equality — that's on the author.
+> PR. This is enforced in CI: the `toolchain-consistency` job (below) runs
+> `tools/check_toolchain_consistency.py`, which scrapes every location and fails
+> the build if any tool resolves to more than one version.
 
 Every third-party action is **pinned by commit SHA** (with a trailing
 `# vX.Y.Z` comment), not by tag, so a re-tagged action can't silently change
@@ -93,6 +94,7 @@ use the Actions API, which the read token already covers).
 |-----|--------------|
 | `native-tests` | `pio test -e native` — the hardware-independent `lib/*` unit tests. |
 | `tools-tests` | `python3 tools/test_panel.py` — bench probe tool tests (stdlib only). |
+| `toolchain-consistency` | `python3 tools/check_toolchain_consistency.py` — fails if the pinned versions disagree across `platformio.ini` and the workflows. |
 | `mock-os-tests` | `python3 docs/test_mock_os.py` — OpenSprinkler emulator contract tests. |
 | `firmware-build` | Builds + packages prod, then diag; uploads two artifacts. |
 
@@ -265,6 +267,8 @@ flashing works from either the per-artifact `flash/` page or a release's
 - Set `persist-credentials: false` on `actions/checkout`.
 - Never interpolate `${{ … }}` directly into a `run:` script — pass values via
   `env:` and reference the shell variable, to avoid template injection.
-- Keep Python/PlatformIO/esptool versions identical to the table at the top.
+- Keep Python/PlatformIO/esptool versions identical to the table at the top —
+  enforced by `tools/check_toolchain_consistency.py` in the
+  `toolchain-consistency` CI job.
 - Add any new `platformio.ini` dependency to `copilot-setup-steps.yml`.
 - Run `zizmor .github/workflows/` (and `actionlint`) before pushing.
