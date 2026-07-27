@@ -1588,13 +1588,18 @@ static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
 // program-run screens). These surfaces have their own widgets, so they simply
 // build at the taller geometry — no runtime resize needed.
 static constexpr int FULL_BOTTOM   = SCREEN_H - 4;                  // 316
-static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H;        // 264
+// Lift the program-run action row off the very bottom edge so Next/Pause/Stop
+// are easier to reach. Still sits lower than the manual-run row (ACTION_Y=156)
+// — a modest raise, not a full match.
+static constexpr int PROG_ACTION_LIFT = 40;
+static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H - PROG_ACTION_LIFT; // 224
 static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left panel above the action row
 static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
 static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
 
-// Shared navigation-button height for visual continuity across the "Programs >"
-// entry button, the programs-list "Back" button, and the pager ‹ › arrows.
+// Shared navigation-button height for visual continuity across the
+// programs-list "Back" button and the pager ‹ › arrows. (The "Programs" entry
+// button on the home screen instead matches the run-time stepper height.)
 static constexpr int NAV_BTN_H = 36;
 // Programs-list pager dot indicators (shared by build + per-frame re-centring).
 static constexpr int PROG_DOT_W = 10, PROG_DOT_H = 10, PROG_DOT_GAP = 8;
@@ -2043,17 +2048,19 @@ static void build_ui() {
         // "Programs" entry button — vertically centred in the space between the
         // Auto-advance row and the panel's bottom edge (biased a few px lower so
         // it reads as centred in the column rather than hugging Auto-advance).
-        // Height matches the Back button + pager arrows (NAV_BTN_H) for nav
-        // button continuity across screens.
-        static constexpr int PROG_BTN_H = NAV_BTN_H;
+        // Height matches the run-time stepper (STEP_H) so the right column reads
+        // as one family of controls. A leading list glyph reads as "a list of
+        // programs" (the screen it opens); text uses CLR_TEXT like the other
+        // secondary buttons (-, +, Pause) rather than a teal accent.
+        static constexpr int PROG_BTN_H = STEP_H;
         static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
         const int aa_bottom = AA_Y + AA_H;
         int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
         if (prog_btn_y > PANEL_USABLE_H - PROG_BTN_H) {
             prog_btn_y = PANEL_USABLE_H - PROG_BTN_H;
         }
-        btn_programs = make_btn(pnl, "Programs " LV_SYMBOL_RIGHT,
-                                CLR_LINE, CLR_TEAL, &lv_font_montserrat_16, 8);
+        btn_programs = make_btn(pnl, LV_SYMBOL_LIST " Programs",
+                                CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
         lv_obj_set_size(btn_programs, PANEL_CONTENT_W, PROG_BTN_H);
         lv_obj_align(btn_programs, LV_ALIGN_TOP_LEFT, 0, prog_btn_y);
         lv_obj_add_event_cb(btn_programs, ev_open_programs, LV_EVENT_CLICKED, nullptr);
@@ -2631,7 +2638,12 @@ static void ui_update() {
                 const bool is_current = (e.sid == pr.current_sid);
                 const bool is_done = e.done;
 
-                const char* mark = is_current ? LV_SYMBOL_PLAY
+                // Current station shows a play glyph while running; when the
+                // queue is paused it flips to a pause glyph so the list mirrors
+                // the paused state (and the "Resume" button / amber status word).
+                const char* current_mark =
+                    v.paused ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY;
+                const char* mark = is_current ? current_mark
                                    : (is_done ? LV_SYMBOL_OK : "");
                 lv_label_set_text(qrow_mark[r], mark);
                 lv_obj_set_style_text_color(qrow_mark[r],
@@ -2680,10 +2692,12 @@ static void ui_update() {
                 const int pid = idx + 1;
                 const bool en = prog.enabled;
 
-                // Enable/disable icon + name — dimmed when disabled (icon +
-                // colour convey state; no chip, no "Disabled" word).
+                // Enable/disable icon + name. Different SHAPES per state so
+                // disabled doesn't just read as a dimmer "on": a power glyph
+                // (teal) when enabled, a flat dash (muted) when disabled. The
+                // dimmed name and Enable/Disable button reinforce it.
                 lv_label_set_text(prog_row_icon[r],
-                                  en ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE);
+                                  en ? LV_SYMBOL_POWER : LV_SYMBOL_MINUS);
                 lv_obj_set_style_text_color(prog_row_icon[r],
                     hex_color(en ? CLR_TEAL : CLR_MUTED), 0);
                 lv_label_set_text(prog_row_name[r], prog.name.c_str());

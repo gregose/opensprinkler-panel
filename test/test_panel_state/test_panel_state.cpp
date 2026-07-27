@@ -448,12 +448,12 @@ void test_program_run_counts_up_through_full_station_set() {
   TEST_ASSERT_TRUE(pr.queue[0].done);
 }
 
-void test_external_program_run_identified_by_station_set() {
+void test_external_program_run_shows_live_queue_without_identity() {
   // A manual/app-launched run (NOT panel-initiated) reports pid=254 with no
-  // program index. Program index 1 owns stations {1,2,3}; station 1 has already
-  // finished (dropped from ps). The matcher must recover index 1 purely from the
-  // live station set and count up through the fixed M=3 with station 1 marked
-  // done — i.e. the fix works even when the panel didn't start the run.
+  // program index. We deliberately do NOT try to guess which saved program it
+  // is (station-set matching is ambiguous once a run drains) — we simply render
+  // the live queue as reported: program_index stays -1 (generic "Program"
+  // header), and only the stations still present in ps[] are shown.
   Fixture f(4);
   JpData jp;
   jp.nprogs = 2;
@@ -479,12 +479,11 @@ void test_external_program_run_identified_by_station_set() {
 
   const auto& pr = f.ps.view().prog_run;
   TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
-  TEST_ASSERT_EQUAL_INT(1, pr.program_index);           // recovered P2 by match
-  TEST_ASSERT_EQUAL_INT(3, pr.station_count);           // fixed full total M
+  TEST_ASSERT_EQUAL_INT(-1, pr.program_index);          // NOT identified
+  TEST_ASSERT_EQUAL_INT(2, pr.station_count);           // only live stations
   TEST_ASSERT_EQUAL_INT(2, pr.current_sid);
-  TEST_ASSERT_EQUAL_INT(2, pr.current_station_number);  // done(1) -> current #2
-  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
-  TEST_ASSERT_TRUE(pr.queue[0].done);                   // station 1 completed
+  TEST_ASSERT_EQUAL_INT(1, pr.current_station_number);  // first of the live set
+  TEST_ASSERT_EQUAL_INT(2, (int)pr.queue.size());       // 2,3 (1 has drained)
 }
 
 void test_program_run_classified_as_program_running_phase() {
@@ -838,15 +837,32 @@ void test_paused_program_resume_clock_ticks_down() {
 }
 
 // A panel-initiated program run reports pid=254 in /jc (program_index=-1). The
-// panel must remember which program it launched so the UI can label it.
+// panel must remember which program it launched so the UI can label it, as long
+// as the live station set is consistent with that program's definition.
 void test_panel_launched_run_remembers_program_index() {
   Fixture f;
-  f.ps.set_program_list(make_jp(3));
+  JpData jp;
+  jp.nprogs = 3;
+  Program p0;
+  p0.enabled = true;
+  p0.name = "P1";
+  p0.durations = {0, 0, 0};
+  Program p1;
+  p1.enabled = true;
+  p1.name = "P2";
+  p1.durations = {120, 0, 0};  // program 1 owns station 0
+  Program p2;
+  p2.enabled = true;
+  p2.name = "P3";
+  p2.durations = {0, 0, 0};
+  jp.programs = {p0, p1, p2};
+  f.ps.set_program_list(jp);
 
   f.ps.run_program_intent(1);  // 0-based index 1 (program "P2")
   f.ps.mark_desired_delivered();
 
-  // Controller reports a run-once/manual program run (pid=254).
+  // Controller reports a run-once/manual program run (pid=254) on station 0,
+  // which belongs to the launched program, so the hint is trusted.
   f.ps.on_jc(make_jc_program_running(0, 120, 254), 1000);
   TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
   // program_model can't derive the index from pid=254, so the panel restores it.
@@ -860,6 +876,99 @@ void test_scheduled_run_keeps_model_program_index() {
   f.ps.set_program_list(make_jp(3));
   f.ps.on_jc(make_jc_program_running(0, 120, 2), 1000);  // pid=2 -> index 1
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
+}
+
+// Regression: a panel-launched program whose FINAL station is shared with a
+// different (shorter) program must not be mis-identified as that other program
+// once it drains down to the shared station. "Morning Lawn" {0,3,8} advanced
+// twice reports only station 8 (pid=254); station 8 is also the first station
+// of "Deep Root Quarterly" {8,9}. Station-set inference alone would pick Deep
+// Root (fewer completed stations) and render its queue (station 9 shown as
+// "done"). The authoritative panel-launched index must win because it's still
+// consistent with the live station set.
+void test_panel_launched_run_survives_drain_to_shared_final_station() {
+  Fixture f(10);
+  JpData jp;
+  jp.nprogs = 2;
+  Program morning;
+  morning.enabled = true;
+  morning.name = "Morning Lawn";
+  morning.durations.assign(10, 0);
+  morning.durations[0] = 600;
+  morning.durations[3] = 600;
+  morning.durations[8] = 900;  // final station, shared with Deep Root
+  Program deep;
+  deep.enabled = false;
+  deep.name = "Deep Root Quarterly";
+  deep.durations.assign(10, 0);
+  deep.durations[8] = 1200;  // first station, shared with Morning Lawn
+  deep.durations[9] = 1200;
+  jp.programs = {morning, deep};
+  f.ps.set_program_list(jp);
+
+  f.ps.run_program_intent(0);  // panel launches Morning Lawn (index 0)
+  f.ps.mark_desired_delivered();
+
+  // Controller state after two "Next" skips: stations 0 and 3 finished and
+  // dropped out of ps[]; only station 8 runs, reported as pid=254.
+  JcData jc = make_jc_idle(10);
+  jc.devt = 1000;
+  jc.sbits[8 / 8] |= static_cast<uint8_t>(1u << (8 % 8));
+  jc.ps[8] = PsEntry{254, 300, 950, 0};  // running (station 8)
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, pr.program_index);   // Morning Lawn, NOT Deep Root(1)
+  TEST_ASSERT_EQUAL_INT(3, pr.station_count);   // full Morning Lawn set {0,3,8}
+  TEST_ASSERT_EQUAL_INT(8, pr.current_sid);
+  TEST_ASSERT_EQUAL_INT(3, pr.current_station_number);  // done(0),done(3),cur(8)
+  TEST_ASSERT_EQUAL_INT(3, (int)pr.queue.size());
+  TEST_ASSERT_TRUE(pr.queue[0].done);   // station 0 completed
+  TEST_ASSERT_TRUE(pr.queue[1].done);   // station 3 completed
+  TEST_ASSERT_FALSE(pr.queue[2].done);  // station 8 current
+  // Deep Root's station 9 (Parkway) must NOT appear in the queue.
+  for (const auto& q : pr.queue) {
+    TEST_ASSERT_NOT_EQUAL_INT(9, q.sid);
+  }
+}
+
+// Guard: the panel-launched hint is only trusted while it stays consistent with
+// the live station set. If the launched run ends and a DIFFERENT program's
+// station appears under pid=254, the stale hint must be dropped. Since we no
+// longer guess the program from the station set, the run then renders generic
+// (program_index = -1) rather than being mislabelled as the launched program.
+void test_panel_hint_dropped_when_stations_diverge() {
+  Fixture f(10);
+  JpData jp;
+  jp.nprogs = 2;
+  Program launched;
+  launched.enabled = true;
+  launched.name = "Launched";
+  launched.durations.assign(10, 0);
+  launched.durations[0] = 600;
+  launched.durations[3] = 600;  // owns {0,3}
+  Program other;
+  other.enabled = true;
+  other.name = "Other";
+  other.durations.assign(10, 0);
+  other.durations[5] = 300;  // owns {5}, disjoint from Launched
+  jp.programs = {launched, other};
+  f.ps.set_program_list(jp);
+
+  f.ps.run_program_intent(0);  // panel launched index 0
+  f.ps.mark_desired_delivered();
+
+  // A pid=254 run is now showing station 5, which is NOT in the launched
+  // program — the hint is inconsistent and must not be applied. We do not infer
+  // a replacement, so the run stays generic (program_index = -1).
+  JcData jc = make_jc_idle(10);
+  jc.devt = 1000;
+  jc.sbits[5 / 8] |= static_cast<uint8_t>(1u << (5 % 8));
+  jc.ps[5] = PsEntry{254, 200, 950, 0};
+  f.ps.on_jc(jc, 1000);
+
+  TEST_ASSERT_EQUAL_INT(-1, f.ps.view().prog_run.program_index);  // generic
 }
 
 // ---------------------------------------------------------------------------
@@ -909,7 +1018,7 @@ int main(int, char**) {
   RUN_TEST(test_manual_run_classified_as_running_phase);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
-  RUN_TEST(test_external_program_run_identified_by_station_set);
+  RUN_TEST(test_external_program_run_shows_live_queue_without_identity);
   RUN_TEST(test_idle_jc_stays_idle_phase);
   RUN_TEST(test_program_run_then_idle_returns_to_idle_phase);
   RUN_TEST(test_jc_fields_stored_in_view);
@@ -948,6 +1057,8 @@ int main(int, char**) {
   RUN_TEST(test_paused_program_resume_clock_ticks_down);
   RUN_TEST(test_panel_launched_run_remembers_program_index);
   RUN_TEST(test_scheduled_run_keeps_model_program_index);
+  RUN_TEST(test_panel_launched_run_survives_drain_to_shared_final_station);
+  RUN_TEST(test_panel_hint_dropped_when_stations_diverge);
 
   // M9 — set_program_list
   RUN_TEST(test_set_program_list_updates_cache);

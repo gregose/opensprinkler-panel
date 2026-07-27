@@ -6,46 +6,27 @@
 namespace osp {
 
 namespace {
-// Identify which saved program a run belongs to by matching the live /jc
-// station set against each program's station definition. A manual or
-// app-launched program run reports pid=254 (no program index in /jc), so this
-// recovers the index regardless of what started the run — matching by station
-// set works for scheduled, panel- and externally-launched runs alike. Picks
-// the program that contains every currently-queued station with the fewest
-// already-completed stations (closest match). Returns -1 if none match.
-int infer_program_index_by_stations(const JpData& jp,
-                                    const std::vector<ProgramPsEntry>& ps,
-                                    int pid) {
-  std::vector<int> live;
+// True when every station currently queued for `pid` in the live ps[] belongs
+// to program `prog_idx`'s definition (and at least one such station exists).
+// Used to decide whether a panel-launched program index still describes the
+// live run: while a run drains toward its final station(s) the panel-remembered
+// index is authoritative, but if the live set no longer fits that program
+// (e.g. the launched run ended and a different pid=254 run has started) the
+// hint must be dropped rather than mislabelling the new run.
+bool live_stations_in_program(const JpData& jp,
+                              const std::vector<ProgramPsEntry>& ps,
+                              int pid, int prog_idx) {
+  if (prog_idx < 0 || prog_idx >= static_cast<int>(jp.programs.size())) {
+    return false;
+  }
+  const auto& durs = jp.programs[prog_idx].durations;
+  bool any = false;
   for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
-    if (ps[sid].pid == pid) live.push_back(sid);
+    if (ps[sid].pid != pid) continue;
+    any = true;
+    if (!(sid < static_cast<int>(durs.size()) && durs[sid] > 0)) return false;
   }
-  if (live.empty()) return -1;
-
-  int best = -1;
-  int best_extra = -1;
-  for (int i = 0; i < static_cast<int>(jp.programs.size()); ++i) {
-    const auto& durs = jp.programs[i].durations;
-    int setsize = 0;
-    for (int d : durs) {
-      if (d > 0) ++setsize;
-    }
-    bool contains_all = true;
-    for (int sid : live) {
-      if (!(sid >= 0 && sid < static_cast<int>(durs.size()) && durs[sid] > 0)) {
-        contains_all = false;
-        break;
-      }
-    }
-    if (!contains_all) continue;
-    const int extra = setsize - static_cast<int>(live.size());  // completed
-    if (extra < 0) continue;
-    if (best < 0 || extra < best_extra) {
-      best = i;
-      best_extra = extra;
-    }
-  }
-  return best;
+  return any;
 }
 }  // namespace
 
@@ -133,13 +114,10 @@ void PanelState::enter_program_running(const ProgramRunState& prog_state) {
   }
   view_.countdown_s = std::max(0, cd);
   last_countdown_tick_ms_ = now_ms_;
-  // A manual program run reports pid=254 in /jc, so program_model can't know
-  // which program it is (program_index=-1). If the panel launched it, restore
-  // the remembered index so the UI can label the running screen.
-  if (view_.prog_run.program_index < 0 && run_initiated_by_panel_ &&
-      launched_program_index_ >= 0) {
-    view_.prog_run.program_index = launched_program_index_;
-  }
+  // Note: program_index is resolved authoritatively in on_jc() before this
+  // runs (real pid -> index; pid=254 -> panel hint if consistent, else -1).
+  // We deliberately do NOT re-apply the panel hint here, so a stale hint can't
+  // bypass the consistency check and mislabel an external run.
   // Only force-wake the display if the panel itself initiated this run.
   // External/scheduled runs let the normal sleep timeout apply.
   if (newly_entered && run_initiated_by_panel_) {
@@ -448,10 +426,17 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     //                     panel-launched hint if the match is ambiguous.
     int eff_idx = prog_state.program_index;
     if (eff_idx < 0) {
-      eff_idx = infer_program_index_by_stations(jp_cache_, ps, 254);
-    }
-    if (eff_idx < 0 && run_initiated_by_panel_ && launched_program_index_ >= 0) {
-      eff_idx = launched_program_index_;
+      // pid=254: a manual/app/panel program run with no program index in /jc.
+      // We label the run *only* when the panel itself started it — the
+      // remembered index is authoritative and we keep using it as long as it
+      // stays consistent with the live station set (a stale hint from a just-
+      // ended run can't leak into a new one). For any other pid=254 run (started
+      // from the OpenSprinkler app or elsewhere) we do NOT guess which program
+      // it is: leave program_index = -1 and render the live queue as reported.
+      if (run_initiated_by_panel_ && launched_program_index_ >= 0 &&
+          live_stations_in_program(jp_cache_, ps, 254, launched_program_index_)) {
+        eff_idx = launched_program_index_;
+      }
     }
     if (eff_idx >= 0 && eff_idx < static_cast<int>(jp_cache_.programs.size())) {
       const auto& durs = jp_cache_.programs[eff_idx].durations;

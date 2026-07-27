@@ -35,9 +35,13 @@ state.
 
 ## 2. Where it lives / navigation
 
-- **Entry:** a **`Programs ›`** button in the right-hand settings panel, below
-  the Run-time stepper and Auto-advance toggle. It is shown when idle or during
-  a **manual** station run; it is hidden while a **program** is running.
+- **Entry:** a **`≡ Programs`** button (leading `LV_SYMBOL_LIST` glyph, no
+  chevron) in the right-hand settings panel, below the Run-time stepper and
+  Auto-advance toggle. Styled like the other secondary buttons — `CLR_LINE`
+  fill, `CLR_TEXT` label — and sized to the Run-time stepper height (`STEP_H`,
+  44 px) so the right column reads as one family of controls. It is shown when
+  idle or during a **manual** station run; it is hidden while a **program** is
+  running.
 - Tapping it swaps the station grid for the full-width **Programs list** panel.
 - **`‹ Back`** (top-right of the list header) returns to the previous screen.
 - The list header title is **`PROGRAMS`** (caps, left).
@@ -56,7 +60,7 @@ Each row:
 
 | Element | Detail |
 |---|---|
-| **State icon** | `LV_SYMBOL_OK` (✓, teal) when enabled, `LV_SYMBOL_CLOSE` (✗, muted) when disabled. |
+| **State icon** | Distinct shapes per state: `LV_SYMBOL_POWER` (⏻, teal) when enabled, `LV_SYMBOL_MINUS` (–, muted `CLR_MUTED`) when disabled — so disabled reads as "off", not just a dimmer "on". |
 | **Program name** | montserrat_16, one line. Ellipsized (`…`) if it overflows — the label is height-pinned to a single line so a long name never wraps into the meta line. Dimmed (`CLR_MUTED`) when the program is disabled. |
 | **Meta line** | `<when> • <N> zones • <M> min` (montserrat_12, muted). See below. |
 | **Enable / Disable** button | Toggles the program's enabled flag on the controller. Label reflects current state: `Disable` when enabled, `Enable` when disabled. |
@@ -77,7 +81,8 @@ Each row:
 - **Disabled programs still show a next run.** The next-run is computed from the
   schedule regardless of the enabled flag (an enabled copy is evaluated), so the
   meta line always reads "when it *would* run." Disabled state is conveyed by the
-  ✗ icon and dimming, **not** by a "Disabled" word in the text.
+  muted dash (–) icon (vs the teal power ⏻ when enabled) and name dimming,
+  **not** by a "Disabled" word in the text.
 
 ### Pagination
 
@@ -135,8 +140,9 @@ queue (`ps[]`):
 - **Rows** (up to `MAX_QROWS = 9`), each: a marker, station name, and the
   station's **full configured duration** (static — it does **not** count down;
   the only ticking number is the big countdown on the left).
-  - **Current** station: `▶` (`LV_SYMBOL_PLAY`, teal), name in `CLR_TEXT`,
-    duration teal.
+  - **Current** station: `▶` (`LV_SYMBOL_PLAY`, teal) while running; the glyph
+    flips to `⏸` (`LV_SYMBOL_PAUSE`, teal) while the queue is **paused** so the
+    row mirrors the paused state. Name in `CLR_TEXT`, duration teal.
   - **Completed** stations: `✓` (`LV_SYMBOL_OK`, muted), name + duration dimmed.
   - **Upcoming** stations: no marker, name in `CLR_TEXT`, duration muted.
 - **Windowing:** when a program has more than 9 stations, the list windows around
@@ -160,6 +166,7 @@ queue (`ps[]`):
 - A **`Resumes in M:SS`** line appears (from the controller's pause countdown
   `pt`), showing time until auto-resume.
 - The `Pause` button label becomes `Resume`.
+- In the queue list, the current station's `▶` marker flips to a `⏸` pause glyph.
 
 ---
 
@@ -170,17 +177,34 @@ The controller does **not** always tell the panel which program is running:
 panel `Run ›` *and* a run started from the OpenSprinkler app), and `pid = 99` for
 a manual single-station run. Only scheduled runs carry a real 1-based `pid`.
 
-So the panel identifies the running program by **matching the live station set
-against the `/jp` program definitions**
-(`panel_state.cpp::infer_program_index_by_stations`): it collects the stations
-live in the run's queue and picks the program whose full station set (durations
-> 0) contains all of them with the fewest already-completed. It falls back to a
-remembered panel-launched index, then to the legacy `pid`.
+The panel identifies the running program (`panel_state.cpp::on_jc`) by run
+source — it never *guesses* the program from the station set:
 
-**Design consequence:** for reliable identification, **enabled programs must have
-disjoint station sets** (disabled programs may overlap). The mock controller
-fixtures (`docs/mock_os.py`) honour this on purpose so the identification path is
-exercised in tests.
+1. **Scheduled run → real `pid`.** The controller reports `pid = program_index +
+   1`, so the index is known directly. Named, with the full station queue.
+2. **Panel-launched run → remembered index.** When the panel itself started the
+   run (`pid = 254`), it uses the launched program index
+   (`launched_program_index_`) **as long as it stays consistent** with the live
+   station set — i.e. every still-live station belongs to that program. This is
+   authoritative: it survives advancing/skipping down to a station shared with
+   another program, and a stale hint from a just-ended run is dropped the moment
+   the live set no longer fits. Named, with the full station queue.
+3. **Any other `pid = 254` run → generic live queue.** For a run started from the
+   OpenSprinkler app (or anything the panel didn't launch), the panel makes **no
+   attempt to identify the program**. It shows a generic "Program" header and
+   renders exactly the stations the controller reports live in `ps[]` (no
+   already-completed stations, since those are unknowable). `program_index`
+   stays `-1`.
+
+**Why no station-set inference?** An earlier version matched the live station set
+against the `/jp` definitions to recover a name for case 3. That heuristic is
+inherently ambiguous once a run drains — e.g. "Morning Lawn" `{0,3,8}` advanced
+to just `{8}` also "matches" "Deep Root Quarterly" `{8,9}` and would win by the
+"fewest completed" score, rendering the *wrong* program's queue (station 9 shown
+as done). Identically-stationed programs are unresolvable from stations at all.
+Since the only runs we can identify with certainty are scheduled (case 1) and
+panel-launched (case 2) — which cover essentially all real usage — the panel
+prefers an honest live queue over a confident guess.
 
 The `run_initiated_by_panel` flag also lets an **externally scheduled** program
 run allow the screen to sleep, while a **panel-initiated** run keeps the display
@@ -256,9 +280,12 @@ Reuses the panel's existing palette and fonts (see `01` §5). Programs-specific:
   inactive dots / neutral buttons, `CLR_BG` panel.
 - **Fonts:** montserrat 12 (meta), 16 (name/list title/queue), 20 (Back / pager
   arrows), 24 (running station name), `ui_font_countdown_48` (big ticker).
-- **Icons:** `LV_SYMBOL_OK` ✓, `LV_SYMBOL_CLOSE` ✗, `LV_SYMBOL_PLAY` ▶,
-  `LV_SYMBOL_BULLET` • (meta separator), `LV_SYMBOL_RIGHT` › (Run/Next),
-  `LV_SYMBOL_LEFT` ‹ (Back), `LV_SYMBOL_STOP` ■. All built into the montserrat
+- **Icons:** `LV_SYMBOL_POWER` ⏻ / `LV_SYMBOL_MINUS` – (program enabled/disabled
+  state), `LV_SYMBOL_OK` ✓ (completed queue station), `LV_SYMBOL_PLAY` ▶ /
+  `LV_SYMBOL_PAUSE` ⏸ (current queue station — pause when the run is paused),
+  `LV_SYMBOL_LIST` ≡ (Programs entry button), `LV_SYMBOL_BULLET` • (meta
+  separator), `LV_SYMBOL_RIGHT` › (Run/Next), `LV_SYMBOL_LEFT` ‹ (Back),
+  `LV_SYMBOL_STOP` ■. All built into the montserrat
   symbol font (no custom glyphs, no `\u…` literals that render as tofu).
 - **Casing:** eyebrow/caption micro-labels are UPPERCASE (`PROGRAMS`,
   `STATION N OF M`); content/buttons are sentence case (`Run ›`, `Pause`,
@@ -279,7 +306,7 @@ follows — this list is why the original mockup is **not** committed as referen
 | Original design | As shipped |
 |---|---|
 | Pager with **"Page N of M"** text label | Dots + `‹` / `›` arrows, no page text; dots re-centre live. |
-| **"Disabled"** word tag on disabled rows | ✗ icon + dimmed name only; no word. Next-run still computed and shown. |
+| **"Disabled"** word tag on disabled rows | Teal power (⏻) enabled vs muted dash (–) disabled + dimmed name; no word. Next-run still computed and shown. |
 | Row action **`View ›` / `● Running now`** for the active program | Row button is always **`Run ›`**; the running program is reflected by the screen switching to the program-run view, not by a per-row state. |
 | Status **"Running program"** | **"Program running"** (and "Program paused"). |
 | Queue rows counting down per-row | Queue rows show **static** full durations; only the left-column big countdown ticks. |
@@ -290,8 +317,10 @@ Behavioral notes that were under-specified originally and are now settled:
 
 - **Advance is a controller skip** (`ssta=1`, off-then-on semantics), not a
   client-side jump.
-- **Program identification is by station-set matching**, not by `pid` (which is
-  254 for all app/panel runs) — see [§5](#5-which-program-is-running-identification).
+- **Program identification is by run source, not `pid`** (which is 254 for all
+  app/panel runs): scheduled runs use the real `pid`, panel-launched runs use the
+  remembered index, and any other `pid=254` run renders a generic live queue with
+  no name — see [§5](#5-which-program-is-running-identification).
 - Fade masks on the queue are near-invisible on the dark theme against a matching
   background; they read during scroll and were kept as-is (Greg's call).
 
@@ -305,8 +334,9 @@ Behavioral notes that were under-specified originally and are now settled:
 - **`lib/os_client`** — mock-transport native tests assert exact URL strings for
   `/jp`, `/mp`, `/cp`, `/pq` and the parse of `/jp` + extended `/jc` fields.
 - **`lib/panel_state`** — native tests cover screen classification, paused
-  fallback + frozen countdown, panel-launched `pid=254` index memory,
-  station-set identification of external runs, and pagination clamping.
+  fallback + frozen countdown, panel-launched `pid=254` index memory (kept while
+  consistent, dropped when the live set diverges), the generic live-queue
+  fallback for external `pid=254` runs, and pagination clamping.
 - **`docs/mock_os.py`** — a full controller emulator (`/jn /jo /jc /js /jp` +
   `/cm /cv /mp /cp /pq`) with fixtures of 24 stations / multiple programs
   (disjoint enabled station sets, a >9-station program for queue overflow, and a
