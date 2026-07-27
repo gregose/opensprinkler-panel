@@ -1,15 +1,16 @@
 name: Workflow security (zizmor)
 
 # Static security analysis of our own GitHub Actions workflows with zizmor
-# (https://docs.zizmor.sh). This matters now that release.yml can publish signed
+# (https://docs.zizmor.sh). This matters because release.yml can publish signed
 # firmware to a GitHub Release: a compromised or careless workflow is a
 # supply-chain risk. zizmor catches template injection, credential persistence,
 # cache poisoning, over-broad token permissions, unpinned actions, and similar
 # issues before they ship.
 #
-# This repo is private, so we don't upload SARIF to code scanning (that needs
-# GitHub Advanced Security). Instead zizmor prints GitHub annotations inline on
-# the PR and fails the job on any finding.
+# zizmor emits SARIF that is uploaded to GitHub code scanning, so findings show
+# up in the repo's Security tab and inline on PRs. On top of that, the "Fail on
+# findings" step below gates the build directly, so PRs are blocked on any
+# finding without needing a code-scanning ruleset configured.
 on:
   push:
     branches: [main]
@@ -24,9 +25,13 @@ env:
   PYTHON_VERSION: "3.11"
   ZIZMOR_VERSION: "1.28.0"
 
-# Least privilege: zizmor only needs to read the checked-out workflow files.
+# security-events: write lets the SARIF upload populate code scanning. contents
+# and actions stay read-only (actions:read lets upload-sarif read workflow run
+# info).
 permissions:
   contents: read
+  security-events: write
+  actions: read
 
 jobs:
   zizmor:
@@ -41,10 +46,29 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install zizmor
         run: pip install "zizmor==${{ env.ZIZMOR_VERSION }}"
-      - name: Audit workflows
-        # --format=github emits inline PR annotations; a non-zero exit on any
-        # finding fails the job. GITHUB_TOKEN enables zizmor's online audits
-        # (e.g. resolving whether `uses:` refs are pinned to a real commit).
+      - name: Run zizmor
+        # SARIF output for code scanning. GITHUB_TOKEN enables zizmor's online
+        # audits (e.g. resolving whether `uses:` refs are pinned to a real
+        # commit). In --format=sarif mode zizmor always exits 0, so the "Fail on
+        # findings" step below is what actually gates the build.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: zizmor --format=github .github/workflows/
+        run: zizmor --format=sarif .github/workflows/ > results.sarif
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        # Tolerated during the window before code scanning is enabled on this
+        # repo; the "Fail on findings" step is the authoritative pass/fail so a
+        # not-yet-available Security tab never silently drops a real finding.
+        continue-on-error: true
+        with:
+          sarif_file: results.sarif
+          category: zizmor
+      - name: Fail on findings
+        run: |
+          count="$(jq '[.runs[].results[]] | length' results.sarif)"
+          if [[ "$count" -gt 0 ]]; then
+            echo "::error::zizmor reported $count finding(s); see the run log / Security tab."
+            zizmor --format=plain .github/workflows/ || true
+            exit 1
+          fi
+          echo "zizmor: no findings."
