@@ -25,10 +25,10 @@ A 3.5" touch panel for running and stepping OpenSprinkler stations and programs.
 
 ## Supported hardware
 
-LCDwiki 3.5" ESP32-32E Display (SKU E32R35T, community name ESP32-3248S035R, a "CYD"):
+Hosyond 3.5" ESP32 display (SKU E32R35T, community name ESP32-3248S035R, a "CYD"). The same board is sold under several brands; validated on the Hosyond unit:
 
-- Product page: <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
 - Buy it: <https://www.amazon.com/dp/B0D93MBWC2>
+- Reference wiki: <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
 
 Classic ESP32-WROOM-32E (no PSRAM, 4 MB flash), ST7796U 480x320 display, XPT2046 resistive touch on the same SPI bus, USB-C 5 V power. Use the resistive touch version; capacitive variants aren't supported yet. Full detail in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/) and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).
 
