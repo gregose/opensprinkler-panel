@@ -26,6 +26,6 @@ To change Wi-Fi or controller settings you do not need to re-flash; see [Reconfi
 The firmware also supports **over-the-air (OTA)** updates over Wi-Fi, which
 preserve your saved settings. OTA is only active when you set an OTA password
 during [setup]({{ '/configuration/' | relative_url }}), and it's driven from the
-command line rather than the browser. See the
-[repository](https://github.com/gregose/opensprinkler-panel) `tools/` and
-`docs/` folders for the OTA workflow.
+command line rather than the browser. The OTA workflow is documented in the
+[`tools/`](https://github.com/gregose/opensprinkler-panel/tree/main/tools) and
+[`docs/`](https://github.com/gregose/opensprinkler-panel/tree/main/docs) folders.

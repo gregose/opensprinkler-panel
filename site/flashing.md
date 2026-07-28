@@ -39,6 +39,7 @@ driver for your board (**CH340** or **CP210x**). See
 ## Advanced: command-line flashing
 
 If you'd rather flash from a terminal, the repository ships a
-`tools/flash.sh --release` helper that downloads the latest release and writes
-it over USB. See the [repository](https://github.com/gregose/opensprinkler-panel)
+[`tools/flash.sh --release`](https://github.com/gregose/opensprinkler-panel/blob/main/tools/flash.sh)
+helper that downloads the latest release and writes it over USB. See the
+[`tools/` README](https://github.com/gregose/opensprinkler-panel/tree/main/tools)
 for details.
