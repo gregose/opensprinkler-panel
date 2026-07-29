@@ -10,7 +10,7 @@
 
 - [ ] Native unit tests (`pio test -e native`)
 - [ ] Firmware build (`pio run -e cyd-35r`)
-- [ ] On hardware (LCDwiki ESP32-3248S035R panel)
+- [ ] On hardware (Hosyond ESP32-3248S035R panel)
 
 <!-- Describe what you ran and the results. -->
 

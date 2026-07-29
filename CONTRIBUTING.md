@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for your interest in improving this project! This is firmware for a
-3.5" resistive-touch CYD panel (LCDwiki ESP32-3248S035R) that
+3.5" resistive-touch CYD panel (Hosyond ESP32-3248S035R) that
 runs and steps OpenSprinkler stations over the controller's local HTTP API.
 
 ## Before You Start

@@ -2,11 +2,11 @@
 
 ## Target
 
-- **Board:** LCDwiki **3.5″ ESP32-32E Display** — SKU **E32R35T**, community name **ESP32-3248S035R** (a "CYD" / Cheap Yellow Display). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E module, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB flash), 320×480 **TN** TFT, **ST7796U** display over 4-wire SPI, **XPT2046 resistive** touch over the **same SPI bus**, RGB status LED, on-board Li-battery charge circuit (no fuel gauge), BOOT + RESET side buttons, TF slot (unused), Type-C for power + flashing.
+- **Board:** Hosyond **3.5″ ESP32 display** (SKU **E32R35T**, community name **ESP32-3248S035R**) (a "CYD" / Cheap Yellow Display). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E module, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB flash), 320×480 **TN** TFT, **ST7796U** display over 4-wire SPI, **XPT2046 resistive** touch over the **same SPI bus**, RGB status LED, on-board Li-battery charge circuit (no fuel gauge), BOOT + RESET side buttons, TF slot (unused), Type-C for power + flashing.
 - **Orientation:** landscape, **480×320**. (TN panel — pick the landscape flip whose best viewing angle faces the installed direction; tune during bring-up.)
 - **Power:** 5 V via Type-C (wall). Optional 3.7 V Li backup on the JST header (JP2), charged on-board (TP4054); no fuel gauge, but **battery voltage is sensed on GPIO34** (`BAT_ADC`, ÷2 divider) for a coarse charge indicator (see below).
 
-### Pin map (from the LCDwiki E32R35T wiki — ground truth; verify on the physical board)
+### Pin map (from the LCDwiki E32R35T wiki: ground truth; verify on the physical board)
 
 | Function | ESP32 GPIO | Notes |
 |---|---|---|

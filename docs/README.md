@@ -24,7 +24,7 @@ This folder is the complete package for a coding agent to build the firmware.
 
 ## Decisions already locked (do not re-litigate)
 
-- **Hardware:** LCDwiki **3.5″ ESP32-32E Display** (SKU **E32R35T**; community name **ESP32-3248S035R**, a "CYD"). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E, dual LX6, 520 KB SRAM, **no PSRAM**, 4 MB flash); 320×480 **TN** panel, **ST7796U** display over SPI; **XPT2046 resistive** touch over the **same SPI bus**. Mounted landscape → **480×320**. Wall-powered via 5 V / Type-C (optional Li-battery backup, no fuel gauge — no battery monitoring). See `03` for the full pin map.
+- **Hardware:** Hosyond **3.5″ ESP32 display** (SKU **E32R35T**; community name **ESP32-3248S035R**, a "CYD"). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E, dual LX6, 520 KB SRAM, **no PSRAM**, 4 MB flash); 320×480 **TN** panel, **ST7796U** display over SPI; **XPT2046 resistive** touch over the **same SPI bus**. Mounted landscape → **480×320**. Wall-powered via 5 V / Type-C (optional Li-battery backup, no fuel gauge, no battery monitoring). See `03` for the full pin map.
 - **Terminology:** "**Station**" everywhere (industry standard), 1-based in the UI, 0-based `sid` in the API.
 - **UX:** single screen. Idle → pick a station. Running → step / jump / stop. One **Auto-advance** toggle is the only mode switch. Run time doubles as the per-station safety timeout. Full detail in `01`.
 - **Framework:** PlatformIO with the **stock `espressif32`** platform + Arduino framework, **TFT_eSPI** (drives both the ST7796U display and XPT2046 touch) + **LVGL 9.x**. (No pioarduino: this is a classic ESP32, not an S3, so the official platform builds fine.) Rationale in `03`.

@@ -29,7 +29,7 @@ labels: bug
 
 ## Hardware / board
 
-<!-- e.g. LCDwiki ESP32-3248S035R (CYD 3.5" resistive). -->
+<!-- e.g. Hosyond ESP32-3248S035R (CYD 3.5" resistive). -->
 
 ## OpenSprinkler firmware version
 
