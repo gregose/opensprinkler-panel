@@ -1,11 +1,21 @@
-# OpenSprinkler Panel
+<h1 align="center">OpenSprinkler Panel</h1>
 
-A 3.5" touch panel for running and stepping OpenSprinkler stations and programs. It provides local control directly to your OpenSprinkler controller over its HTTP API, on your own network.
+<p align="center">
+  A 3.5" touch panel for running and stepping <a href="https://opensprinkler.com/">OpenSprinkler</a> stations and programs.<br>
+  Local control directly to your OpenSprinkler controller over its HTTP API, on your own network.
+</p>
 
-![The panel on its idle, connected screen](site/assets/img/screenshots/home-connected.png)
+<p align="center">
+  <a href="https://www.nullmethod.com/opensprinkler-panel/"><img alt="User manual" src="https://img.shields.io/badge/%F0%9F%93%96%20User%20manual-2ea44f?style=for-the-badge"></a>
+  &nbsp;&nbsp;
+  <a href="https://www.nullmethod.com/opensprinkler-panel/flash/"><img alt="Flash in your browser" src="https://img.shields.io/badge/%E2%9A%A1%20Flash%20in%20your%20browser-1f6feb?style=for-the-badge"></a>
+</p>
 
-[User manual](https://www.nullmethod.com/opensprinkler-panel/)
-[Flash it in your browser](https://www.nullmethod.com/opensprinkler-panel/flash/)
+<p align="center">
+  <img src="site/assets/img/screenshots/program-running.png" alt="A program running with its live queue" width="72%">
+</p>
+
+New to OpenSprinkler? It's an open-source sprinkler/irrigation controller; learn more at [opensprinkler.com](https://opensprinkler.com/).
 
 ## Features
 
@@ -21,13 +31,12 @@ A 3.5" touch panel for running and stepping OpenSprinkler stations and programs.
 
 - Drive a running program with a live queue: advance, pause/resume, or stop, reflected against the controller's state.
 
-  ![A program running with its live queue](site/assets/img/screenshots/program-running.png)
-
 ## Supported hardware
 
 Hosyond 3.5" ESP32 display (SKU E32R35T, community name ESP32-3248S035R, a "CYD"). The same board is sold under several brands; validated on the Hosyond unit:
 
-- Buy it: <https://www.amazon.com/dp/B0D93MBWC2>
+- Buy it (affiliate link, supports the project): <https://link.amazon/B072rCpB0>
+- Buy it (non-affiliate): <https://www.amazon.com/dp/B0D93MBWC2>
 - Reference wiki: <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
 
 Classic ESP32-WROOM-32E (no PSRAM, 4 MB flash), ST7796U 480x320 display, XPT2046 resistive touch on the same SPI bus, USB-C 5 V power. Use the resistive touch version; capacitive variants aren't supported yet. Full detail in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/) and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).

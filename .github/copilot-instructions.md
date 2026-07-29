@@ -52,3 +52,11 @@ Classic ESP32 (ESP32-WROOM-32E), **no PSRAM**, 4MB flash. Display and XPT2046
 resistive touch share ONE SPI bus — keep the touch clock low (~2.5MHz) while the
 display runs fast. LVGL draw buffers must be small/partial (internal RAM only).
 See `docs/03-architecture.md` for the authoritative pin map.
+
+## Pull request labels
+
+Release notes are auto-generated from merged PRs and grouped by label via
+`.github/release.yml`. Always apply one primary label to a PR so it is
+categorized correctly: `enhancement` (features), `bug` (fixes), `documentation`,
+`hardware`, `infra` (build/CI/tooling), or `dependencies`. Unlabeled PRs fall
+under "Other changes".
