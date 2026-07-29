@@ -59,6 +59,21 @@ CI runs on every pull request and must pass before merge. The jobs are:
 
 Please run at least `pio test -e native` locally before opening a PR.
 
+## Pull request labels
+
+Release notes are generated automatically from merged pull requests, grouped by
+label (see [`.github/release.yml`](.github/release.yml)). Apply one primary
+label to every PR so it lands in the right section of the release notes:
+
+- `enhancement` for new features
+- `bug` for bug fixes
+- `documentation` for docs and the user manual
+- `hardware` for board / hardware support
+- `infra` for build, CI, and tooling
+- `dependencies` for dependency updates
+
+A PR with none of these falls under "Other changes".
+
 ## Pull Request Checklist
 
 See the [pull request template](.github/PULL_REQUEST_TEMPLATE.md). At a minimum,

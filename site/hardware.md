@@ -10,7 +10,8 @@ The firmware targets the **Hosyond 3.5″ ESP32 display**, a common "cheap yello
 display" (CYD) board with a resistive touchscreen. The same board is sold under
 several brands; this firmware was validated on the Hosyond unit linked below.
 
-- **Buy it:** [Amazon: B0D93MBWC2](https://www.amazon.com/dp/B0D93MBWC2)
+- **Buy it (affiliate link, supports the project):** [Amazon (affiliate)](https://link.amazon/B072rCpB0)
+- **Buy it (non-affiliate):** [Amazon: B0D93MBWC2](https://www.amazon.com/dp/B0D93MBWC2)
 - **Reference wiki (pin map, specs):** [lcdwiki.com: 3.5inch ESP32-32E Display](https://www.lcdwiki.com/3.5inch_ESP32-32E_Display)
 
 You may also see this board sold under other brands, as **SKU E32R35T**, or by

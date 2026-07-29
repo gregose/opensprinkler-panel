@@ -6,9 +6,11 @@ nav_order: 1
 
 # OpenSprinkler Panel
 
-A 3.5″ touch panel for running and stepping your OpenSprinkler stations and
+A 3.5″ touch panel for running and stepping your [OpenSprinkler](https://opensprinkler.com/) stations and
 programs. It provides local control directly to your OpenSprinkler controller
-over its HTTP API, on your own network.
+over its HTTP API, on your own network. New to OpenSprinkler? It's an
+open-source sprinkler/irrigation controller; learn more at
+[opensprinkler.com](https://opensprinkler.com/).
 
 ![The panel on its idle, connected screen]({{ '/assets/img/screenshots/home-connected.png' | relative_url }})
 
