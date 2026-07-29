@@ -57,5 +57,6 @@ useful when diagnosing a problem or capturing screenshots:
 They are off by default. When enabled, they listen on the panel's network
 interface, so anything that can reach the panel on your network can use them. If
 you want to use them, see the
-[repository](https://github.com/gregose/opensprinkler-panel) `tools/` and
-`docs/` folders for setup details.
+[`tools/`](https://github.com/gregose/opensprinkler-panel/tree/main/tools) and
+[`docs/`](https://github.com/gregose/opensprinkler-panel/tree/main/docs) folders
+for setup details.
