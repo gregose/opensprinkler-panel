@@ -1,0 +1,29 @@
+# Configures GitHub's automatically-generated release notes (the --generate-notes
+# used by .github/workflows/release.yml). PRs are grouped into the first category
+# whose label they match; the catch-all must stay last.
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  categories:
+    - title: New features
+      labels:
+        - enhancement
+    - title: Bug fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Hardware
+      labels:
+        - hardware
+    - title: Build, CI & tooling
+      labels:
+        - infra
+    - title: Dependencies
+      labels:
+        - dependencies
+        - github_actions
+        - python
+    - title: Other changes
+      labels:
+        - "*"
