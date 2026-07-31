@@ -869,6 +869,44 @@ void test_panel_launched_run_remembers_program_index() {
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.program_index);
 }
 
+// Regression: on real hardware the first /jc poll(s) after tapping a program can
+// still report idle before the controller reflects the /mp run. The panel-
+// launched identity must survive that handshake so the run is labelled with the
+// program name and full station set, not a generic shrinking "Program".
+void test_panel_launched_identity_survives_idle_before_run_starts() {
+  Fixture f;
+  JpData jp;
+  jp.nprogs = 3;
+  Program p0;
+  p0.enabled = true;
+  p0.name = "P1";
+  p0.durations = {0, 0, 0};
+  Program p1;
+  p1.enabled = true;
+  p1.name = "P2";
+  p1.durations = {120, 0, 0};  // owns station 0
+  Program p2;
+  p2.enabled = true;
+  p2.name = "P3";
+  p2.durations = {0, 0, 0};
+  jp.programs = {p0, p1, p2};
+  f.ps.set_program_list(jp);
+
+  f.ps.run_program_intent(1);     // 0-based index 1 ("P2")
+  f.ps.mark_desired_delivered();  // /mp issued
+
+  // Race: a poll still shows idle (controller has not scheduled the queue yet).
+  f.ps.on_jc(make_jc_idle(), 1000);
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::RunProgram,
+                        (int)f.ps.desired().kind);
+
+  // Controller now reflects the run (pid=254 -> program_index=-1 from the model).
+  f.ps.on_jc(make_jc_program_running(0, 120, 254), 3000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1,
+                        f.ps.view().prog_run.program_index);  // labelled, not -1
+}
+
 // A scheduled (non-panel) program run reports a real 1-based pid, so the model
 // resolves the index directly and the panel must NOT override it.
 void test_scheduled_run_keeps_model_program_index() {
@@ -1056,6 +1094,7 @@ int main(int, char**) {
   RUN_TEST(test_program_total_remaining_ticks_down_between_polls);
   RUN_TEST(test_paused_program_resume_clock_ticks_down);
   RUN_TEST(test_panel_launched_run_remembers_program_index);
+  RUN_TEST(test_panel_launched_identity_survives_idle_before_run_starts);
   RUN_TEST(test_scheduled_run_keeps_model_program_index);
   RUN_TEST(test_panel_launched_run_survives_drain_to_shared_final_station);
   RUN_TEST(test_panel_hint_dropped_when_stations_diverge);
