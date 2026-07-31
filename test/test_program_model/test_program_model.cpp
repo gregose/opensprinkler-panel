@@ -375,6 +375,27 @@ void test_run_state_full_station_set_paused_picks_pending_station() {
   TEST_ASSERT_EQUAL_INT(3, s.current_station_number);
 }
 
+void test_program_run_eyebrow_text() {
+  // Identified program: position through the fixed full set.
+  TEST_ASSERT_EQUAL_STRING("STATION 2 OF 10",
+                           osp::program_run_eyebrow(1, 2, 10).c_str());
+  // Identified but nothing currently running (finishing).
+  TEST_ASSERT_EQUAL_STRING("FINISHING",
+                           osp::program_run_eyebrow(0, 0, 5).c_str());
+  // Unidentified external run: honest remaining count, plural.
+  TEST_ASSERT_EQUAL_STRING("3 STATIONS LEFT",
+                           osp::program_run_eyebrow(-1, 1, 3).c_str());
+  // Unidentified, singular.
+  TEST_ASSERT_EQUAL_STRING("1 STATION LEFT",
+                           osp::program_run_eyebrow(-1, 1, 1).c_str());
+  // Unidentified while finishing still reports the count it knows.
+  TEST_ASSERT_EQUAL_STRING("4 STATIONS LEFT",
+                           osp::program_run_eyebrow(-1, 0, 4).c_str());
+  // No stations queued.
+  TEST_ASSERT_EQUAL_STRING("STATION",
+                           osp::program_run_eyebrow(1, 2, 0).c_str());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_load_program_decodes_flags_and_helpers);
@@ -390,5 +411,6 @@ int main(int, char**) {
   RUN_TEST(test_run_state_classification_idle_manual_program_and_run_once);
   RUN_TEST(test_run_state_full_station_set_counts_up_and_marks_done);
   RUN_TEST(test_run_state_full_station_set_paused_picks_pending_station);
+  RUN_TEST(test_program_run_eyebrow_text);
   return UNITY_END();
 }

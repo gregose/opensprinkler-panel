@@ -1,6 +1,8 @@
 #include "program_model.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 
 namespace osp {
 namespace {
@@ -344,6 +346,25 @@ ProgramRunState resolve_program_run_state(
     state.current_station_number = current_idx + 1;
   }
   return state;
+}
+
+std::string program_run_eyebrow(int program_index,
+                                int current_station_number,
+                                int station_count) {
+  if (station_count <= 0) return "STATION";
+  char buf[24];
+  if (program_index < 0) {
+    // Unidentified external run: honest remaining count, no false "of M".
+    snprintf(buf, sizeof(buf), "%d STATION%s LEFT", station_count,
+             station_count == 1 ? "" : "S");
+    return buf;
+  }
+  if (current_station_number > 0) {
+    snprintf(buf, sizeof(buf), "STATION %d OF %d", current_station_number,
+             station_count);
+    return buf;
+  }
+  return "FINISHING";
 }
 
 }  // namespace osp
