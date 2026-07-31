@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock OpenSprinkler controller — a faithful stand-in for the controller's local
+Mock OpenSprinkler controller - a faithful stand-in for the controller's local
 HTTP API so the panel firmware (and humans) can be developed and manually tested
 without the live sprinkler hardware.
 
@@ -21,7 +21,7 @@ lib/os_client):
     GET /jc   controller status poll (devt, sbits, ps, RSSI, pause)
     GET /jp   program definitions (pd[] tuples)     [M9]
     GET /js   light status (sn[], nstations)
-    GET /cm   run/stop one station (sid,en,t[,ssta])
+    GET /cm   append/stop one manual station (sid,en,t[,ssta])
     GET /cv   stop all (rsn=1)
     GET /mp   run a program now (pid, 0-based)       [M9]  -> reports pid 254
     GET /cp   enable/disable a program (pid,en)       [M9]
@@ -36,10 +36,11 @@ Debug helpers (not part of the real API, prefixed with an underscore):
     GET /_state            dump internal queue/pause state as JSON
 
 Faithful behaviours modelled:
-  * Sequential stations — only one station runs at a time; a program enqueues its
-    stations and they run back-to-back.
-  * The "en=1 on an already-running station is a NO-OP" quirk — so advance/extend
-    must off-then-on, exactly like the real firmware.
+  * Sequential stations - only one station runs at a time; program stations and
+    manual /cm?en=1 stations run back-to-back.
+  * Manual /cm?en=1 requests append pid 99 entries to the queue. Requesting a
+    station already anywhere in the queue is a no-op, exactly like the real
+    firmware.
   * A manual program run (/mp) reports pid 254 in /jc (no program index); a
     *scheduled* run (/_run or --schedule) reports the 1-based program id. This is
     what makes the panel identify the running program by its station set.
@@ -78,7 +79,7 @@ FLAG_STARTTIME_FIXED = 1 << 6
 FLAG_DATERANGE = 1 << 7
 # bits 2-3 = oddeven, bits 4-5 = ProgramType (0 = Weekly)
 
-# Weekday bitmask helpers — the firmware uses wd = (sun0 + 6) % 7, i.e. Monday=0.
+# Weekday bitmask helpers - the firmware uses wd = (sun0 + 6) % 7, i.e. Monday=0.
 MON, TUE, WED, THU, FRI, SAT, SUN = (1 << i for i in range(7))
 EVERY_DAY = 0x7F
 
@@ -107,7 +108,7 @@ DEFAULT_NAMES = [
     "Front Lawn", "Driveway Strip", "North Beds", "Back Lawn", "Back Beds",
     "Patio Pots", "Side Yard", "Veg Garden", "Rear Rotors", "Parkway",
     "Front Rotors", "Mailbox Bed", "Pool Deck", "Fence Line",
-    "Northeast Perimeter Drip Line Extension",  # 14 — intentionally long
+    "Northeast Perimeter Drip Line Extension",  # 14 - intentionally long
     "Orchard Row", "Greenhouse Mist", "Raised Beds", "Herb Spiral",
     "Compost Corner", "Rain Garden", "Swale Line", "Berry Patch",
     "Cutting Garden",
@@ -173,27 +174,27 @@ def default_programs(n_stations: int) -> list[ProgramDef]:
         return v
 
     return [
-        # Morning Lawn — every day 06:00 — lawns + rotors
+        # Morning Lawn - every day 06:00 - lawns + rotors
         ProgramDef("Morning Lawn", True, EVERY_DAY, 6 * 60,
                    durs({0: 600, 3: 600, 8: 900})),
-        # Garden Drip — Mon/Wed/Fri 05:30 — beds + veg
+        # Garden Drip - Mon/Wed/Fri 05:30 - beds + veg
         ProgramDef("Garden Drip", True, MON | WED | FRI, 5 * 60 + 30,
                    durs({2: 300, 4: 300, 7: 420})),
-        # Evening Patio — DISABLED — 18:30 — pots + pool deck
+        # Evening Patio - DISABLED - 18:30 - pots + pool deck
         ProgramDef("Evening Patio", False, EVERY_DAY, 18 * 60 + 30,
                    durs({5: 120, 12: 180})),
-        # Full System Test — every day 04:00 — 11 stations, overflows the
+        # Full System Test - every day 04:00 - 11 stations, overflows the
         # queue window; includes the long-named station 14.
         ProgramDef("Full System Test", True, EVERY_DAY, 4 * 60,
                    durs({1: 300, 6: 240, 9: 360, 10: 300, 11: 180, 13: 240,
                          14: 600, 15: 300, 16: 420, 17: 240, 18: 180})),
-        # Backyard Soak — Tue/Thu 07:00 — deep soak beds
+        # Backyard Soak - Tue/Thu 07:00 - deep soak beds
         ProgramDef("Backyard Soak", True, TUE | THU, 7 * 60,
                    durs({19: 900, 20: 720})),
-        # Front Curb Strip — DISABLED — Sat/Sun 06:30 — curb strips
+        # Front Curb Strip - DISABLED - Sat/Sun 06:30 - curb strips
         ProgramDef("Front Curb Strip", False, SAT | SUN, 6 * 60 + 30,
                    durs({21: 300, 22: 240})),
-        # Northeast Perimeter ... — ENABLED — long NAME for the programs-list
+        # Northeast Perimeter ... - ENABLED - long NAME for the programs-list
         # ellipsis test; uses only the one otherwise-unused station (23) so the
         # enabled set stays disjoint.
         ProgramDef("Northeast Perimeter & Back Forty Seasonal Deep-Soak Cycle",
@@ -210,7 +211,7 @@ def default_programs(n_stations: int) -> list[ProgramDef]:
 
 
 # ---------------------------------------------------------------------------
-# The controller model — all state lives here so tests can spin up an isolated
+# The controller model - all state lives here so tests can spin up an isolated
 # instance without touching module globals.
 # ---------------------------------------------------------------------------
 class MockController:
@@ -377,13 +378,12 @@ class MockController:
                     return {"result": R_DATA_MISSING}
                 if t < 1 or t > 64800:
                     return {"result": R_OUT_OF_RANGE}
-                # QUIRK: en=1 on the already-running station changes nothing.
-                if self._queue and self._queue[0]["sid"] == sid and not self._paused:
+                # A station already scheduled anywhere in the queue is a no-op.
+                if any(e["sid"] == sid for e in self._queue):
                     return {"result": R_OK}
-                # Manual single-station run -> pid 99, replaces the queue.
-                self._queue = [{"sid": sid, "total": t, "rem": t, "pid": 99}]
-                self._paused = False
-                self._last_tick = local_epoch()
+                self._queue.append(
+                    {"sid": sid, "total": t, "rem": t, "pid": 99}
+                )
             else:
                 if skip:
                     # Skip-advance: drop the head, next station takes over.

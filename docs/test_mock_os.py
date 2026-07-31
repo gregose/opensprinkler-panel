@@ -5,14 +5,14 @@ Connection + API-contract tests for the mock OpenSprinkler controller.
 These are the "connection tests" that let you trust the mock as a manual-testing
 stand-in: they boot the mock on an ephemeral local port and exercise every
 endpoint the panel firmware uses, asserting the exact JSON shape and the tricky
-behaviours (the en=1 no-op quirk, sequential program queue, pid 254 vs real pid,
-pause, enable/disable).
+behaviours (manual and program queues, en=1 no-op, pid 254 vs real pid, pause,
+enable/disable).
 
 Run:
     python3 docs/test_mock_os.py            # verbose unittest run
     python3 -m unittest docs.test_mock_os   # via unittest discovery
 
-Pure standard library — no pytest / third-party deps.
+Pure standard library - no pytest / third-party deps.
 """
 
 import json
@@ -135,6 +135,9 @@ class CmStationTests(MockServerCase):
                 return sid
         return None
 
+    def _is_on(self, jc, sid):
+        return bool(jc["sbits"][sid >> 3] & (1 << (sid & 7)))
+
     def test_run_station_turns_it_on(self):
         self.assertEqual(self.get("/cm", sid=0, en=1, t=120)["result"], 1)
         jc = self.get("/jc")
@@ -150,6 +153,67 @@ class CmStationTests(MockServerCase):
         rem2 = self.get("/jc")["ps"][0][1]
         self.assertLessEqual(rem2, rem1)          # counting down, not reset to 600
         self.assertLess(rem2, 300)                # definitely not the new 600
+
+    def test_manual_runs_append_in_order(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/cm", sid=2, en=1, t=240)
+
+        jc = self.get("/jc")
+        self.assertEqual(jc["ps"][1][0], 99)
+        self.assertEqual(jc["ps"][2][0], 99)
+        self.assertLessEqual(jc["ps"][1][2], jc["devt"])
+        self.assertGreater(jc["ps"][1][1], 0)
+        self.assertLessEqual(jc["ps"][1][1], 120)
+        self.assertTrue(self._is_on(jc, 1))
+        self.assertEqual(jc["ps"][2][1], 240)
+        self.assertGreater(jc["ps"][2][2], jc["devt"])
+        self.assertFalse(self._is_on(jc, 2))
+
+        state = self.get("/_state")
+        self.assertEqual([e["sid"] for e in state["queue"]], [1, 2])
+        self.assertEqual([e["pid"] for e in state["queue"]], [99, 99])
+
+    def test_duplicate_manual_append_is_noop(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/cm", sid=2, en=1, t=240)
+        self.assertEqual(self.get("/cm", sid=1, en=1, t=600)["result"], 1)
+
+        queue = self.get("/_state")["queue"]
+        self.assertEqual([e["sid"] for e in queue], [1, 2])
+        self.assertEqual(len(queue), 2)
+        self.assertEqual(queue[0]["total"], 120)
+
+    def test_skip_advance_drains_manual_queue_head(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/cm", sid=2, en=1, t=240)
+        self.assertEqual(self.get("/cm", sid=1, en=0, ssta=1)["result"], 1)
+
+        jc = self.get("/jc")
+        self.assertEqual(jc["ps"][1], [0, 0, 0, 0])
+        self.assertEqual(jc["ps"][2][0], 99)
+        self.assertGreater(jc["ps"][2][1], 0)
+        self.assertLessEqual(jc["ps"][2][1], 240)
+        self.assertLessEqual(jc["ps"][2][2], jc["devt"])
+        self.assertTrue(self._is_on(jc, 2))
+
+    def test_cv_stops_manual_queue(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/cm", sid=2, en=1, t=240)
+        self.assertEqual(self.get("/cv", rsn=1)["result"], 1)
+
+        jc = self.get("/jc")
+        self.assertTrue(all(e == [0, 0, 0, 0] for e in jc["ps"]))
+        self.assertEqual(self.get("/_state")["queue"], [])
+
+    def test_manual_append_does_not_resume_paused_queue(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/pq", dur=300)
+        self.get("/cm", sid=2, en=1, t=240)
+
+        jc = self.get("/jc")
+        self.assertEqual(jc["pq"], 1)
+        queue = self.get("/_state")["queue"]
+        self.assertEqual([e["sid"] for e in queue], [1, 2])
 
     def test_stop_station(self):
         self.get("/cm", sid=0, en=1, t=120)
@@ -185,6 +249,16 @@ class ProgramRunTests(MockServerCase):
         # Exactly the program's stations are in the queue.
         queued = {sid for sid, e in enumerate(jc["ps"]) if e[0] == 254}
         self.assertEqual(queued, set(prog0.station_sids()))
+
+    def test_mp_replaces_manual_queue(self):
+        self.get("/cm", sid=1, en=1, t=120)
+        self.get("/cm", sid=2, en=1, t=240)
+        self.assertEqual(self.get("/mp", pid=0)["result"], 1)
+
+        state = self.get("/_state")
+        self.assertTrue(state["queue"])
+        self.assertTrue(all(e["pid"] == 254 for e in state["queue"]))
+        self.assertFalse(any(e["pid"] == 99 for e in state["queue"]))
 
     def test_program_runs_sequentially(self):
         self.get("/mp", pid=0)
