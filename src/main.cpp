@@ -1693,6 +1693,7 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
 
     slot.val = lv_label_create(slot.box);
     lv_obj_set_width(slot.val, 29);
+    lv_label_set_long_mode(slot.val, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(slot.val, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(slot.val, hex_color(CLR_MUTED), 0);
@@ -1700,6 +1701,7 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
 
     slot.unit = lv_label_create(slot.box);
     lv_obj_set_width(slot.unit, 14);
+    lv_label_set_long_mode(slot.unit, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.unit, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(slot.unit, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(slot.unit, hex_color(CLR_MUTED), 0);
