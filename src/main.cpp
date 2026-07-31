@@ -1692,7 +1692,7 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     slot.val = lv_label_create(slot.box);
-    lv_obj_set_width(slot.val, 29);
+    lv_obj_set_width(slot.val, 27);
     lv_label_set_long_mode(slot.val, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(slot.val, &lv_font_montserrat_12, 0);
@@ -1700,10 +1700,11 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
     lv_label_set_text(slot.val, "0");
 
     slot.unit = lv_label_create(slot.box);
-    lv_obj_set_width(slot.unit, 14);
+    lv_obj_set_width(slot.unit, 16);
     lv_label_set_long_mode(slot.unit, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.unit, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(slot.unit, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_letter_space(slot.unit, -1, 0);
     lv_obj_set_style_text_color(slot.unit, hex_color(CLR_MUTED), 0);
     lv_label_set_text(slot.unit, "mA");
 
@@ -1898,7 +1899,7 @@ static void build_ui() {
         lv_obj_t* left_group = lv_obj_create(bar);
         lv_obj_remove_style_all(left_group);
         lv_obj_set_style_bg_opa(left_group, LV_OPA_TRANSP, 0);
-        lv_obj_set_size(left_group, 250, TOP_H);
+        lv_obj_set_size(left_group, 220, TOP_H);
         lv_obj_set_style_pad_column(left_group, 6, 0);
         lv_obj_clear_flag(left_group, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_layout(left_group, LV_LAYOUT_FLEX);
@@ -1913,7 +1914,7 @@ static void build_ui() {
         lv_label_set_text(lbl_drop, LV_SYMBOL_TINT);
 
         lbl_name = lv_label_create(left_group);
-        lv_obj_set_width(lbl_name, 1);
+        lv_obj_set_size(lbl_name, 1, 14);
         lv_obj_set_flex_grow(lbl_name, 1);
         lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_12, 0);

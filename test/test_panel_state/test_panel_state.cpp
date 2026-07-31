@@ -1157,7 +1157,7 @@ void test_a2plus_top_bar_status_precedence() {
   v.link = LinkState::Reconnecting;
   TEST_ASSERT_EQUAL_INT((int)TopBarState::Reconnecting,
                         (int)resolve_top_bar_state(v));
-  TEST_ASSERT_EQUAL_STRING("RECONNECTING\xE2\x80\xA6",
+  TEST_ASSERT_EQUAL_STRING("RECONNECTING...",
                            top_bar_status_text(v).c_str());
 
   v.link = LinkState::Offline;
@@ -1171,7 +1171,7 @@ void test_a2plus_top_bar_status_precedence() {
   v.show_syncing = true;
   TEST_ASSERT_EQUAL_INT((int)TopBarState::Syncing,
                         (int)resolve_top_bar_state(v));
-  TEST_ASSERT_EQUAL_STRING("SYNCING\xE2\x80\xA6",
+  TEST_ASSERT_EQUAL_STRING("SYNCING...",
                            top_bar_status_text(v).c_str());
 }
 

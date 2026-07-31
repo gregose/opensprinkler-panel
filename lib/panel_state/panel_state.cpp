@@ -57,11 +57,11 @@ TopBarState resolve_top_bar_state(const PanelView& view) {
 std::string top_bar_status_text(const PanelView& view) {
   switch (resolve_top_bar_state(view)) {
     case TopBarState::Syncing:
-      return "SYNCING\xE2\x80\xA6";
+      return "SYNCING...";
     case TopBarState::AuthError:
       return "AUTH ERROR";
     case TopBarState::Reconnecting:
-      return "RECONNECTING\xE2\x80\xA6";
+      return "RECONNECTING...";
     case TopBarState::Offline:
       return "OFFLINE";
     case TopBarState::Disabled:
