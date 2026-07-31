@@ -375,6 +375,58 @@ void test_run_state_full_station_set_paused_picks_pending_station() {
   TEST_ASSERT_EQUAL_INT(3, s.current_station_number);
 }
 
+void test_manual_queue_state_resolves_multiple_stations() {
+  std::vector<ProgramPsEntry> ps(3);
+  ps[0] = ProgramPsEntry{99, 40, 950, 0};
+  ps[2] = ProgramPsEntry{99, 30, 1100, 0};
+
+  ProgramRunState s = resolve_manual_queue_state(ps, 1000);
+
+  TEST_ASSERT_EQUAL_INT((int)RunClass::ManualRun, (int)s.run_class);
+  TEST_ASSERT_EQUAL_INT(-1, s.program_index);
+  TEST_ASSERT_EQUAL_INT(2, (int)s.queue.size());
+  TEST_ASSERT_EQUAL_INT(0, s.queue[0].sid);
+  TEST_ASSERT_TRUE(s.queue[0].started);
+  TEST_ASSERT_EQUAL_INT(90, s.queue[0].total_seconds);
+  TEST_ASSERT_EQUAL_INT(2, s.queue[1].sid);
+  TEST_ASSERT_FALSE(s.queue[1].started);
+  TEST_ASSERT_EQUAL_INT(30, s.queue[1].total_seconds);
+  TEST_ASSERT_EQUAL_INT(0, s.current_sid);
+  TEST_ASSERT_EQUAL_INT(1, s.current_station_number);
+  TEST_ASSERT_EQUAL_INT(2, s.station_count);
+  TEST_ASSERT_EQUAL_INT(70, s.total_remaining_seconds);
+  TEST_ASSERT_EQUAL_STRING(
+      "2 STATIONS LEFT",
+      osp::program_run_eyebrow(
+          s.program_index, s.current_station_number, s.station_count).c_str());
+}
+
+void test_manual_queue_state_resolves_single_station() {
+  std::vector<ProgramPsEntry> ps(2);
+  ps[1] = ProgramPsEntry{99, 25, 975, 0};
+
+  ProgramRunState s = resolve_manual_queue_state(ps, 1000);
+
+  TEST_ASSERT_EQUAL_INT((int)RunClass::ManualRun, (int)s.run_class);
+  TEST_ASSERT_EQUAL_INT(1, (int)s.queue.size());
+  TEST_ASSERT_EQUAL_INT(1, s.station_count);
+  TEST_ASSERT_EQUAL_STRING(
+      "1 STATION LEFT",
+      osp::program_run_eyebrow(
+          s.program_index, s.current_station_number, s.station_count).c_str());
+}
+
+void test_manual_queue_state_non_manual_returns_empty_queue() {
+  std::vector<ProgramPsEntry> ps(1);
+  ps[0] = ProgramPsEntry{254, 20, 980, 0};
+
+  ProgramRunState s = resolve_manual_queue_state(ps, 1000);
+
+  TEST_ASSERT_EQUAL_INT((int)RunClass::ProgramRun, (int)s.run_class);
+  TEST_ASSERT_TRUE(s.queue.empty());
+  TEST_ASSERT_EQUAL_INT(0, s.station_count);
+}
+
 void test_program_run_eyebrow_text() {
   // Identified program: position through the fixed full set.
   TEST_ASSERT_EQUAL_STRING("STATION 2 OF 10",
@@ -411,6 +463,9 @@ int main(int, char**) {
   RUN_TEST(test_run_state_classification_idle_manual_program_and_run_once);
   RUN_TEST(test_run_state_full_station_set_counts_up_and_marks_done);
   RUN_TEST(test_run_state_full_station_set_paused_picks_pending_station);
+  RUN_TEST(test_manual_queue_state_resolves_multiple_stations);
+  RUN_TEST(test_manual_queue_state_resolves_single_station);
+  RUN_TEST(test_manual_queue_state_non_manual_returns_empty_queue);
   RUN_TEST(test_program_run_eyebrow_text);
   return UNITY_END();
 }

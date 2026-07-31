@@ -93,6 +93,13 @@ struct Fixture {
   }
 };
 
+static void start_panel_manual(Fixture& f, int sid, int rem, uint32_t now_ms) {
+  f.ps.select_station(sid);
+  f.ps.mark_desired_delivered();
+  f.ps.on_jc(make_jc_running(sid, 58), now_ms - 1);
+  f.ps.on_jc(make_jc_running(sid, rem), now_ms);
+}
+
 void test_initial_state_is_idle_and_connected() {
   Fixture f;
   const PanelView& v = f.ps.view();
@@ -142,7 +149,7 @@ void test_confirmed_poll_clears_run_intent_and_enters_running() {
 void test_running_station_dead_reckons_between_polls() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 45), 1000);
+  start_panel_manual(f, 1, 45, 1000);
   f.ps.tick(3000);
 
   TEST_ASSERT_EQUAL_INT(43, f.ps.view().countdown_s);
@@ -151,7 +158,7 @@ void test_running_station_dead_reckons_between_polls() {
 void test_run_time_change_while_running_updates_value_without_requeue() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  start_panel_manual(f, 1, 50, 1000);
   f.ps.set_run_time(180);
 
   TEST_ASSERT_EQUAL_INT(180, f.ps.view().run_time_s);
@@ -165,7 +172,7 @@ void test_run_time_change_while_running_updates_value_without_requeue() {
 void test_run_time_change_while_running_used_on_advance() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  start_panel_manual(f, 1, 50, 1000);
   f.ps.set_run_time(180);
   f.ps.advance();
 
@@ -178,7 +185,7 @@ void test_reselect_running_station_restarts_with_new_run_time() {
   Fixture f;
 
   // Station 1 is confirmed running with 50 s left.
-  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  start_panel_manual(f, 1, 50, 1000);
   TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
   TEST_ASSERT_EQUAL_INT((int)IntentKind::None, (int)f.ps.desired().kind);
@@ -197,7 +204,7 @@ void test_reselect_running_station_restarts_with_new_run_time() {
 void test_advance_queues_next_station_without_changing_confirmed_running_sid() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 50), 1000);
+  start_panel_manual(f, 1, 50, 1000);
   f.ps.advance();
 
   TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
@@ -207,7 +214,7 @@ void test_advance_queues_next_station_without_changing_confirmed_running_sid() {
 void test_prev_wraps_and_queues_previous_station() {
   Fixture f(3);
 
-  f.ps.on_jc(make_jc_running(0, 50), 1000);
+  start_panel_manual(f, 0, 50, 1000);
   f.ps.prev();
 
   TEST_ASSERT_EQUAL_INT(2, f.ps.desired().sid);
@@ -216,7 +223,7 @@ void test_prev_wraps_and_queues_previous_station() {
 void test_stop_queues_stop_until_idle_confirmed() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 40), 1000);
+  start_panel_manual(f, 1, 40, 1000);
   f.ps.stop();
 
   TEST_ASSERT_EQUAL_INT((int)IntentKind::Stop, (int)f.ps.desired().kind);
@@ -260,7 +267,7 @@ void test_link_state_distinguishes_reconnecting_offline_and_auth() {
 void test_offline_countdown_to_zero_holds_running_at_zero_until_jc_confirms_idle() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 1), 1000);
+  start_panel_manual(f, 1, 1, 1000);
   f.ps.on_link_offline(1500);
   f.ps.tick(2000);
 
@@ -280,7 +287,7 @@ void test_auto_advance_queues_next_station_after_close_confirmation() {
   Fixture f(3);
 
   f.ps.set_auto_advance(true);
-  f.ps.on_jc(make_jc_running(0, 1), 1000);
+  start_panel_manual(f, 0, 1, 1000);
   f.ps.tick(2000);
 
   TEST_ASSERT_TRUE(f.ps.awaiting_close());
@@ -300,7 +307,7 @@ void test_last_auto_advance_station_finishes_idle() {
   Fixture f(2);
 
   f.ps.set_auto_advance(true);
-  f.ps.on_jc(make_jc_running(1, 1), 1000);
+  start_panel_manual(f, 1, 1, 1000);
   f.ps.tick(2000);
   TEST_ASSERT_TRUE(f.ps.awaiting_close());
   TEST_ASSERT_FALSE(f.ps.has_desired());
@@ -400,7 +407,7 @@ void test_idle_timer_survives_repeated_jc_polls() {
 void test_running_to_idle_transition_resets_idle_clock() {
   Fixture f;
 
-  f.ps.on_jc(make_jc_running(1, 60), 10000);
+  start_panel_manual(f, 1, 60, 10000);
   TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
 
   // Station stops -> transition back to idle at t=50000.
@@ -417,10 +424,46 @@ void test_running_to_idle_transition_resets_idle_clock() {
 
 void test_manual_run_classified_as_running_phase() {
   Fixture f;
-  // pid=99 means manual run
+  f.ps.select_station(0);
+  f.ps.mark_desired_delivered();
   f.ps.on_jc(make_jc_running(0, 45), 1000);
   TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
   TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+}
+
+void test_external_manual_queue_uses_program_running_phase() {
+  Fixture f(3);
+  JcData jc = make_jc_idle(3);
+  jc.ps[0] = PsEntry{99, 45, 950, 0};
+  jc.ps[2] = PsEntry{99, 30, 1100, 0};
+  jc.sbits[0] |= 0x01;
+
+  f.ps.on_jc(jc, 1000);
+
+  const auto& pr = f.ps.view().prog_run;
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(-1, pr.program_index);
+  TEST_ASSERT_EQUAL_INT(2, pr.station_count);
+  TEST_ASSERT_EQUAL_INT(1, pr.current_station_number);
+}
+
+void test_external_manual_queue_stays_program_running_when_one_remains() {
+  Fixture f(3);
+  JcData two = make_jc_idle(3);
+  two.ps[0] = PsEntry{99, 45, 950, 0};
+  two.ps[2] = PsEntry{99, 30, 1100, 0};
+  two.sbits[0] |= 0x01;
+  f.ps.on_jc(two, 1000);
+
+  JcData one = make_jc_idle(3);
+  one.devt = 1100;
+  one.ps[2] = PsEntry{99, 25, 1050, 0};
+  one.sbits[0] |= 0x04;
+  f.ps.on_jc(one, 2000);
+
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().prog_run.station_count);
+  TEST_ASSERT_EQUAL_INT(2, f.ps.view().prog_run.current_sid);
 }
 
 void test_program_run_counts_up_through_full_station_set() {
@@ -548,7 +591,7 @@ void test_open_programs_list_only_from_idle() {
 
 void test_open_programs_list_not_allowed_while_running() {
   Fixture f;
-  f.ps.on_jc(make_jc_running(0, 45), 1000);
+  start_panel_manual(f, 0, 45, 1000);
   f.ps.open_programs_list();
   TEST_ASSERT_FALSE(f.ps.view().showing_programs_list);
 }
@@ -1054,6 +1097,8 @@ int main(int, char**) {
 
   // M9 — program screen classification
   RUN_TEST(test_manual_run_classified_as_running_phase);
+  RUN_TEST(test_external_manual_queue_uses_program_running_phase);
+  RUN_TEST(test_external_manual_queue_stays_program_running_when_one_remains);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
   RUN_TEST(test_external_program_run_shows_live_queue_without_identity);
