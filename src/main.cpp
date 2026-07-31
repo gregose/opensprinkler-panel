@@ -2579,22 +2579,17 @@ static void ui_update() {
 
         // Program name — shown only as the queue-list header (right panel),
         // not on the status column (matches the mockup).
-        const char* prog_name = "Program";  // safe ASCII until /jp loads
+        const char* prog_name = "Station Queue";  // generic header until a program is identified
         if (pr.program_index >= 0 &&
                 pr.program_index < static_cast<int>(progs.size())) {
             prog_name = progs[pr.program_index].name.c_str();
         }
 
-        // Eyebrow: "STATION N OF M"
-        if (pr.station_count > 0 && pr.current_station_number > 0) {
-            snprintf(buf, sizeof(buf), "STATION %d OF %d",
-                     pr.current_station_number, pr.station_count);
-        } else if (pr.station_count > 0) {
-            snprintf(buf, sizeof(buf), "FINISHING");
-        } else {
-            snprintf(buf, sizeof(buf), "STATION");
-        }
-        lv_label_set_text(lbl_prog_eyebrow, buf);
+        // Eyebrow: identified program -> "STATION N OF M"; unidentified/external
+        // run -> honest "N STATIONS LEFT" (we do not know the full set/position).
+        const std::string eyebrow = osp::program_run_eyebrow(
+            pr.program_index, pr.current_station_number, pr.station_count);
+        lv_label_set_text(lbl_prog_eyebrow, eyebrow.c_str());
 
         // Headline: current station name.
         if (pr.current_sid >= 0 &&

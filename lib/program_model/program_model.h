@@ -120,4 +120,17 @@ ProgramRunState resolve_program_run_state(
     long now_local_epoch,
     const std::vector<ProgramStation>* program_stations = nullptr);
 
+// Eyebrow text for the program-run screen's left status column.
+//   Identified program (program_index >= 0): "STATION N OF M" - position
+//     through the full ordered station set (M fixed).
+//   Unidentified/external run (program_index < 0): we do not know the full set
+//     or our place in it, so report the honest remaining-station count instead
+//     of a misleading "N OF M": "N STATIONS LEFT" (singular "1 STATION LEFT").
+//     station_count here is the number of stations still queued, the currently
+//     running one included.
+//   No stations queued: "STATION".
+std::string program_run_eyebrow(int program_index,
+                                int current_station_number,
+                                int station_count);
+
 }  // namespace osp
