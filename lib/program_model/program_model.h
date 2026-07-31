@@ -120,6 +120,15 @@ ProgramRunState resolve_program_run_state(
     long now_local_epoch,
     const std::vector<ProgramStation>* program_stations = nullptr);
 
+// Resolve a manual station queue from the live /jc `ps[]` entries.
+//
+// When any entry has pid=99, the returned state contains every live manual
+// station in start-time order, with program_index=-1. Otherwise the state
+// retains the detected run class and has an empty queue.
+ProgramRunState resolve_manual_queue_state(
+    const std::vector<ProgramPsEntry>& ps,
+    long now_local_epoch);
+
 // Eyebrow text for the program-run screen's left status column.
 //   Identified program (program_index >= 0): "STATION N OF M" - position
 //     through the full ordered station set (M fixed).

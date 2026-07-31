@@ -466,10 +466,21 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     }
   }
 
+  const bool external_manual =
+      prog_state.run_class == RunClass::ManualRun && !run_initiated_by_panel_;
+  ProgramRunState manual_q;
+  if (external_manual) {
+    manual_q = resolve_manual_queue_state(ps, static_cast<long>(jc.devt));
+  }
+
   if (prog_state.run_class == RunClass::ProgramRun) {
     await_close_ = false;
     await_close_at_ms_ = 0;
     enter_program_running(prog_state);
+  } else if (external_manual && !manual_q.queue.empty()) {
+    await_close_ = false;
+    await_close_at_ms_ = 0;
+    enter_program_running(manual_q);
   } else if (jc_running_sid != -1) {
     await_close_ = false;
     await_close_at_ms_ = 0;

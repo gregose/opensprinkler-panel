@@ -117,6 +117,58 @@ int pick_pid(const std::vector<ProgramPsEntry>& ps, int nprogs, RunClass& cls) {
   return 0;
 }
 
+void build_live_queue_state(const std::vector<ProgramPsEntry>& ps,
+                            int pid,
+                            long now_local_epoch,
+                            ProgramRunState& state) {
+  struct Ordered {
+    ProgramQueueEntry e;
+    long start;
+  };
+  std::vector<Ordered> ordered;
+
+  for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
+    const ProgramPsEntry& in = ps[sid];
+    if (in.pid != pid) continue;
+
+    ProgramQueueEntry q;
+    q.sid = sid;
+    q.remaining_seconds = std::max(0, in.rem);
+    q.started = in.start != 0 && in.start <= now_local_epoch;
+    if (q.started) {
+      const long elapsed = std::max(0L, now_local_epoch - in.start);
+      q.total_seconds = q.remaining_seconds + static_cast<int>(elapsed);
+    } else {
+      q.total_seconds = q.remaining_seconds;
+    }
+
+    ordered.push_back(Ordered{q, in.start});
+  }
+
+  std::stable_sort(ordered.begin(), ordered.end(),
+                   [](const Ordered& a, const Ordered& b) {
+                     return a.start < b.start;
+                   });
+
+  int current_idx = -1;
+  long latest_started = -1;
+  for (int i = 0; i < static_cast<int>(ordered.size()); ++i) {
+    state.queue.push_back(ordered[i].e);
+    state.total_remaining_seconds += ordered[i].e.remaining_seconds;
+    if (ordered[i].e.started && ordered[i].e.remaining_seconds > 0 &&
+        ordered[i].start >= latest_started) {
+      latest_started = ordered[i].start;
+      current_idx = i;
+    }
+  }
+
+  state.station_count = static_cast<int>(state.queue.size());
+  if (current_idx >= 0) {
+    state.current_sid = state.queue[current_idx].sid;
+    state.current_station_number = current_idx + 1;
+  }
+}
+
 }  // namespace
 
 int Program::station_count() const {
@@ -299,52 +351,21 @@ ProgramRunState resolve_program_run_state(
   }
 
   // ---- Legacy path: reconstruct only from the live ps[] entries. ----------
-  struct Ordered {
-    ProgramQueueEntry e;
-    long start;
-  };
-  std::vector<Ordered> ordered;
+  build_live_queue_state(ps, pid, now_local_epoch, state);
+  return state;
+}
 
-  for (int sid = 0; sid < static_cast<int>(ps.size()); ++sid) {
-    const ProgramPsEntry& in = ps[sid];
-    if (in.pid != pid) continue;
+ProgramRunState resolve_manual_queue_state(
+    const std::vector<ProgramPsEntry>& ps,
+    long now_local_epoch) {
+  ProgramRunState state;
+  RunClass cls = RunClass::Idle;
+  const int pid = pick_pid(ps, 98, cls);
+  state.run_class = cls;
+  if (cls != RunClass::ManualRun) return state;
 
-    ProgramQueueEntry q;
-    q.sid = sid;
-    q.remaining_seconds = std::max(0, in.rem);
-    q.started = in.start != 0 && in.start <= now_local_epoch;
-    if (q.started) {
-      const long elapsed = std::max(0L, now_local_epoch - in.start);
-      q.total_seconds = q.remaining_seconds + static_cast<int>(elapsed);
-    } else {
-      q.total_seconds = q.remaining_seconds;
-    }
-
-    ordered.push_back(Ordered{q, in.start});
-  }
-
-  std::stable_sort(ordered.begin(), ordered.end(),
-                   [](const Ordered& a, const Ordered& b) {
-                     return a.start < b.start;
-                   });
-
-  int current_idx = -1;
-  long latest_started = -1;
-  for (int i = 0; i < static_cast<int>(ordered.size()); ++i) {
-    state.queue.push_back(ordered[i].e);
-    state.total_remaining_seconds += ordered[i].e.remaining_seconds;
-    if (ordered[i].e.started && ordered[i].e.remaining_seconds > 0 &&
-        ordered[i].start >= latest_started) {
-      latest_started = ordered[i].start;
-      current_idx = i;
-    }
-  }
-
-  state.station_count = static_cast<int>(state.queue.size());
-  if (current_idx >= 0) {
-    state.current_sid = state.queue[current_idx].sid;
-    state.current_station_number = current_idx + 1;
-  }
+  state.program_index = -1;
+  build_live_queue_state(ps, pid, now_local_epoch, state);
   return state;
 }
 
