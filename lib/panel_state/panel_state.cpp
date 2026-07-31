@@ -475,9 +475,23 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     await_close_at_ms_ = 0;
     enter_running(jc_running_sid, jc_running_rem);
   } else {
-    // Idle: clear run_initiated flag so backlight/sleep behave normally.
-    run_initiated_by_panel_ = false;
-    view_.run_initiated_by_panel = false;
+    // A panel-launched program run is confirmed asynchronously: we issue /mp,
+    // then wait for a /jc that reports the run. On real hardware the first
+    // poll(s) after tapping the program can still report idle (the controller
+    // has not scheduled the queue yet). While that RunProgram intent is still
+    // pending we must NOT wipe the panel-launched identity
+    // (run_initiated_by_panel_ / launched_program_index_): doing so makes the
+    // run come back as a generic "Program" with a live-shrinking queue instead
+    // of the launched program's name and full station set. The
+    // live_stations_in_program() consistency guard in the ProgramRun path still
+    // prevents a stale hint from mislabelling a genuinely different run.
+    const bool program_launch_pending =
+        (desired_.kind == IntentKind::RunProgram);
+    if (!program_launch_pending) {
+      // Idle: clear run_initiated flag so backlight/sleep behave normally.
+      run_initiated_by_panel_ = false;
+      view_.run_initiated_by_panel = false;
+    }
     if (await_close_) {
       finish_idle_transition();
     } else if (desired_.kind == IntentKind::Stop) {
@@ -485,7 +499,15 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
       clear_desired();
       return;
     } else if (has_desired()) {
-      enter_idle();
+      if (program_launch_pending) {
+        // Preserve the launched program index across enter_idle() so the next
+        // poll that reports pid=254 can still label the run.
+        const int saved_launched = launched_program_index_;
+        enter_idle();
+        launched_program_index_ = saved_launched;
+      } else {
+        enter_idle();
+      }
     } else if (view_.phase == Phase::Running ||
                view_.phase == Phase::ProgramRunning) {
       finish_idle_transition();
