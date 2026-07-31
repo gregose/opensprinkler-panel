@@ -1922,7 +1922,7 @@ static void build_ui() {
         lv_label_set_text(lbl_name, "controller");
 
         lbl_status = lv_label_create(left_group);
-        lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_letter_space(lbl_status, 1, 0);
         lv_obj_set_style_text_color(lbl_status, hex_color(CLR_TEAL), 0);
         lv_label_set_text(lbl_status, "");
