@@ -10,6 +10,8 @@
 //   DOWN <x> <y>      -> synthesize touch-down (press held)
 //   MOVE <x> <y>      -> synthesize a move while pressed
 //   UP                -> synthesize touch-up (release)
+//   BATT <0..100>     -> override displayed battery percent for bench validation
+//   BATT AUTO         -> return battery display to the physical ADC
 //
 // This translation unit is intentionally free of Arduino/LVGL/network deps so
 // it compiles and is unit-tested natively (env:native), per the project's
@@ -29,6 +31,8 @@ enum class Cmd : uint8_t {
     Down,     // DOWN x y
     Move,     // MOVE x y
     Up,       // UP
+    Battery,  // BATT percent; value stored in x
+    BatteryAuto,  // BATT AUTO
     Invalid,  // unrecognized verb or malformed arguments
 };
 

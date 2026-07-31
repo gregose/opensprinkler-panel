@@ -98,6 +98,21 @@ static void test_max_coord_ok() {
     assert_cmd("MOVE 32767 32767", Cmd::Move, 32767, 32767);
 }
 
+static void test_battery_override() {
+    Command c = parse_command("BATT 28");
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Cmd::Battery),
+                          static_cast<int>(c.cmd));
+    TEST_ASSERT_EQUAL_INT(28, c.x);
+    assert_cmd("batt auto", Cmd::BatteryAuto, 0, 0);
+}
+
+static void test_battery_override_rejects_invalid_percent() {
+    assert_cmd("BATT 101", Cmd::Invalid, 0, 0);
+    assert_cmd("BATT -1", Cmd::Invalid, 0, 0);
+    assert_cmd("BATT", Cmd::Invalid, 0, 0);
+    assert_cmd("BATT AUTO NOW", Cmd::Invalid, 0, 0);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_shot);
@@ -117,5 +132,7 @@ int main(int, char**) {
     RUN_TEST(test_negative_coord_invalid);
     RUN_TEST(test_coord_overflow_invalid);
     RUN_TEST(test_max_coord_ok);
+    RUN_TEST(test_battery_override);
+    RUN_TEST(test_battery_override_rejects_invalid_percent);
     return UNITY_END();
 }

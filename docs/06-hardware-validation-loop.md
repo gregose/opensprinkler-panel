@@ -65,6 +65,8 @@ finger, and results are objective pixels instead of "looks about right".
 ./tools/panel.py --host <panel-ip> move 60 40           # drag while pressed
 ./tools/panel.py --host <panel-ip> up                   # release
 ./tools/panel.py --host <panel-ip> raw "TAP 10 20"      # send a raw line
+./tools/panel.py --host <panel-ip> raw "BATT 28"         # bench-only battery %
+./tools/panel.py --host <panel-ip> raw "BATT AUTO"       # return to physical ADC
 ```
 
 Coordinates are in the panel's display space (480×320, origin top-left) — the

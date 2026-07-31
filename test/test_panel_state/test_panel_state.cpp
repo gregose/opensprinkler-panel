@@ -1155,8 +1155,10 @@ void test_a2plus_top_bar_status_precedence() {
                         (int)resolve_top_bar_state(v));
 
   v.link = LinkState::Reconnecting;
-  TEST_ASSERT_EQUAL_INT((int)TopBarState::Offline,
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Reconnecting,
                         (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("RECONNECTING\xE2\x80\xA6",
+                           top_bar_status_text(v).c_str());
 
   v.link = LinkState::Offline;
   TEST_ASSERT_EQUAL_INT((int)TopBarState::Offline,

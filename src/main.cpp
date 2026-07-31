@@ -200,6 +200,7 @@ static bool g_touch_was_pressed = false;
 static volatile bool     g_sleeping_snapshot   = false;
 static volatile uint32_t g_idle_ms_snapshot    = 0;
 static volatile uint32_t g_sleep_to_ms_snapshot = 0;
+static volatile int g_batt_override_percent = -1;
 static TaskHandle_t g_ui_task_handle = nullptr;
 static TaskHandle_t g_net_task_handle = nullptr;
 
@@ -417,6 +418,12 @@ static void handle_bench_command(const char* line) {
             break;
         case bench::Cmd::Up:
             inj_push(0, 0, false);
+            break;
+        case bench::Cmd::Battery:
+            g_batt_override_percent = c.x;
+            break;
+        case bench::Cmd::BatteryAuto:
+            g_batt_override_percent = -1;
             break;
         case bench::Cmd::Invalid:
             g_hw_serial->printf("[BENCH] ignoring bad command: %s\n", line);
@@ -2572,6 +2579,7 @@ static void ui_update() {
     uint32_t rule_color = CLR_TEALDIM;
     switch (top_state) {
         case osp::TopBarState::Syncing:
+        case osp::TopBarState::Reconnecting:
             drop_color = CLR_AMBER;
             name_color = CLR_MUTED;
             status_color = CLR_AMBER;
@@ -2599,7 +2607,8 @@ static void ui_update() {
     lv_obj_set_style_text_color(lbl_name, hex_color(name_color), 0);
     lv_obj_set_style_text_color(lbl_status, hex_color(status_color), 0);
     lv_obj_set_style_bg_color(top_accent, hex_color(rule_color), 0);
-    update_drop_pulse(top_state == osp::TopBarState::Syncing);
+    update_drop_pulse(top_state == osp::TopBarState::Syncing ||
+                      top_state == osp::TopBarState::Reconnecting);
 
     obj_set_hidden(current_slot.box, !v.has_current);
     if (v.has_current) {
@@ -2621,7 +2630,12 @@ static void ui_update() {
     // state-of-charge. Always shown — an absent cell floats the sense node high
     // (indistinguishable from full), so there is no reliable "no battery" state.
     poll_battery();
-    update_batt_glyph(batt_glyph, g_batt.percent(), g_batt.tier());
+    const int battery_percent =
+        g_batt_override_percent >= 0 ? g_batt_override_percent
+                                     : g_batt.percent();
+    update_batt_glyph(
+        batt_glyph, battery_percent,
+        osp::battery_tier_from_percent(battery_percent));
 
     // Phase visibility
     obj_set_hidden(pnl_idle,       any_running || show_programs);

@@ -45,10 +45,8 @@ std::string format_rain_delay(int seconds_remaining) {
 TopBarState resolve_top_bar_state(const PanelView& view) {
   if (view.show_syncing) return TopBarState::Syncing;
   if (view.link == LinkState::AuthError) return TopBarState::AuthError;
-  if (view.link == LinkState::Offline ||
-      view.link == LinkState::Reconnecting) {
-    return TopBarState::Offline;
-  }
+  if (view.link == LinkState::Reconnecting) return TopBarState::Reconnecting;
+  if (view.link == LinkState::Offline) return TopBarState::Offline;
   if (!view.enabled) return TopBarState::Disabled;
   if (view.rain_delay_seconds_remaining > 0) {
     return TopBarState::RainDelay;
@@ -62,6 +60,8 @@ std::string top_bar_status_text(const PanelView& view) {
       return "SYNCING\xE2\x80\xA6";
     case TopBarState::AuthError:
       return "AUTH ERROR";
+    case TopBarState::Reconnecting:
+      return "RECONNECTING\xE2\x80\xA6";
     case TopBarState::Offline:
       return "OFFLINE";
     case TopBarState::Disabled:

@@ -26,6 +26,7 @@ enum class TopBarState {
   Clean,
   Syncing,
   AuthError,
+  Reconnecting,
   Offline,
   Disabled,
   RainDelay,
