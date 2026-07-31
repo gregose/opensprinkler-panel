@@ -45,6 +45,7 @@ struct JnData {
 struct JoData {
   int mas = 0;   // primary master station (1-based; 0 = none)
   int mas2 = 0;  // secondary master station (1-based; 0 = none)
+  std::string dname;  // controller display name (empty when not configured)
 };
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,11 @@ struct JcData {
   int rssi = 0;                  // controller Wi-Fi RSSI, dBm (0 if absent)
   int sunrise = 0;               // minutes since midnight
   int sunset = 0;                // minutes since midnight
+  int en = 1;                    // operation enable (1 = enabled)
+  int rd = 0;                    // rain delay active flag
+  int rdst = 0;                  // rain delay stop epoch
+  int curr = 0;                  // measured controller current, mA
+  bool has_curr = false;         // distinguishes present 0 from absent curr
   int pq = 0;                    // paused flag
   int pt = 0;                    // pause seconds remaining
   std::vector<uint8_t> sbits;   // per-board on/off bitmask (trailing 0)

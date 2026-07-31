@@ -22,6 +22,15 @@ enum class LinkState {
   AuthError,
 };
 
+enum class TopBarState {
+  Clean,
+  Syncing,
+  AuthError,
+  Offline,
+  Disabled,
+  RainDelay,
+};
+
 enum class IntentKind {
   None,
   Run,
@@ -48,6 +57,12 @@ struct PanelView {
   bool auto_advance = false;
   int ctrl_rssi = 0;
   LinkState link = LinkState::Connected;
+  std::string controller_identity;
+  bool enabled = true;
+  int rain_delay_seconds_remaining = 0;
+  int current_ma = 0;
+  bool has_current = false;
+  bool show_syncing = false;
 
   // M9: program screen navigation and run state
   bool showing_programs_list = false;
@@ -82,6 +97,9 @@ class PanelState {
   void on_link_offline(uint32_t now_ms);
   void on_auth_error(uint32_t now_ms);
   void set_station_list_loaded(bool loaded);
+  void set_refreshing(bool refreshing);
+  void set_controller_identity(const JoData& jo,
+                               const std::string& configured_host);
 
   // M9: programs list data (injected from network task after fetch_jp)
   void set_program_list(const JpData& jp);
@@ -141,6 +159,7 @@ class PanelState {
   uint32_t await_close_at_ms_ = 0;
   bool desired_delivered_ = false;
   bool await_close_ = false;
+  bool refreshing_ = false;
   bool initialized_ = false;
   bool run_initiated_by_panel_ = false;
   // 0-based index of a program the panel launched via /mp. Manual program runs
@@ -158,8 +177,13 @@ class PanelState {
   void begin_await_close();
   void finish_idle_transition();
   void reconcile_desired_after_jc();
+  void update_sync_view();
   bool desired_matches_confirmed() const;
   bool should_allow_sleep() const;  // true when sleep timer is permitted to fire
 };
+
+std::string format_rain_delay(int seconds_remaining);
+TopBarState resolve_top_bar_state(const PanelView& view);
+std::string top_bar_status_text(const PanelView& view);
 
 }  // namespace osp

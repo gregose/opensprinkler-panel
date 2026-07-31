@@ -18,13 +18,14 @@ separate **Programs** feature (list + program-run screens) is documented in
 `05-programs.md`; it is reached from the settings panel and is out of scope here.
 
 ### Top bar (always, 26 px tall)
-- **Left — panel status:** a water-droplet identity glyph (`LV_SYMBOL_TINT`) followed by the current status word — `Connected` / `Syncing...` / `Running` / `Program running` / `Program paused` / `Reconnecting...` / `Controller offline` / `Auth error`. The glyph is **static** (Wi-Fi/RSSI is shown by the right-hand meters, so a Wi-Fi glyph here would be redundant) and only **recolours** with state: teal (healthy), amber (syncing/reconnecting/paused), red (offline/auth error). The explicit warning/refresh affordance is carried by the large idle banner + status text below, not by swapping this glyph.
-- **Right — two indicators:**
-  - **PANEL** signal — the panel's own Wi-Fi RSSI (`WiFi.RSSI()`, read locally), as 4 bars.
-  - **CTRL** signal — the controller's Wi-Fi RSSI, from the `RSSI` field in the same `/jc` poll (`02`), as 4 bars. When the controller is unreachable, show `— —`; PANEL stays valid, which is the diagnostic ("panel's fine, controller's the problem").
-- **No battery indicator.** This board has no fuel gauge and is wall-powered, so battery monitoring is dropped (see `03`). Where the mockup shows a battery glyph, omit it.
-- Bar mapping (both signals), RSSI→bars: ≥ −55 = 4, −65…−55 = 3 (teal); −72…−65 = 2 (amber); −82…−72 = 1 (red); < −82 = 0.
-- No station count here — the grid conveys that.
+- **Left identity:** three independent labels show a water droplet, controller identity, and optional colored status text. Identity prefers `/jo.dname` and falls back to the configured host/IP. The droplet represents controller reachability: teal when reachable, amber while syncing, and red when the controller is unavailable or rejects authentication.
+- **Status precedence:** Syncing first, then connection/auth issues, then `DISABLED`, then `RAIN DELAY <duration>` only while operation is enabled, otherwise empty. Disabled suppresses rain delay. Status text is amber for syncing, red for auth/offline/disabled, and teal for rain delay.
+- **Motion:** the droplet pulses from full to 35% opacity over a 1.2 s ping-pong cycle only while syncing. Idle, watering, and program-running states keep it fully static.
+- **Right fixed slots, left to right:** controller current in mA when `/jc.curr` is present, a 2 x 16 px teal-dim divider, `P` panel RSSI, `C` controller RSSI, and the ADC-backed battery glyph plus percent. A present zero current remains visible as dim `0 mA`; an absent field hides the full current slot. Fixed widths keep changing digits from shifting neighboring metrics.
+- **Calm numerics:** live current uses normal text, idle zero uses muted text, and a healthy battery percent uses `CLR_LEDE`. Low/critical battery percent and glyph use their amber/red tier color.
+- **State accent:** a 3 px rule spans the bottom of the bar. It is teal-dim for normal/rain, amber for syncing, and red for disabled/offline/auth.
+- Bar mapping (both signals), RSSI→bars: ≥ −55 = 4, −65…−55 = 3 (teal); −72…−65 = 2 (amber); −82…−72 = 1 (red); < −82 = 0. The controller meter clears while syncing or disconnected, while the panel meter stays live.
+- Long controller identities ellipsize before the status label; the right cluster remains pinned. No station count appears here because the grid already conveys it.
 
 ### Idle state
 - **Left panel:** a prompt, not a station. Heading **"Select a station"**, sub-line **"Tap a station below to start"** (teal). No station number, no countdown, no Advance/Stop nav.

@@ -104,6 +104,11 @@ bool parse_jc(const std::string& body, JcData& out) {
   out.rssi = doc["RSSI"] | 0;
   out.sunrise = doc["sunrise"] | 0;
   out.sunset = doc["sunset"] | 0;
+  out.en = doc["en"] | 1;
+  out.rd = doc["rd"] | 0;
+  out.rdst = doc["rdst"] | 0;
+  out.has_curr = doc["curr"].is<int>();
+  out.curr = out.has_curr ? doc["curr"].as<int>() : 0;
   out.pq = doc["pq"] | 0;
   out.pt = doc["pt"] | 0;
 
@@ -193,9 +198,11 @@ bool parse_jp(const std::string& body, JpData& out) {
 bool parse_jo(const std::string& body, JoData& out) {
   JsonDocument doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
+  if (!doc["mas"].is<int>()) return false;
   // /jo carries the master station options. Missing keys => no master (0).
-  out.mas = doc["mas"] | 0;
+  out.mas = doc["mas"].as<int>();
   out.mas2 = doc["mas2"] | 0;
+  out.dname = doc["dname"] | "";
   return true;
 }
 
