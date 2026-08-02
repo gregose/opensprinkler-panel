@@ -60,6 +60,23 @@
 /** lv_tick_set_cb() lets LVGL call millis() directly (set in setup()).     */
 #define LV_TICK_CUSTOM 0   /* we call lv_tick_inc() from a timer instead */
 
+/* ---- Host simulator (sim env only) ------------------------------------- */
+/* OSP_SIM is defined ONLY by the native `sim` PlatformIO env. It enables the
+ * LVGL SDL driver so the host can open an optional preview window. Everything
+ * else above (color depth, fonts, widgets) is shared UNCHANGED with the ESP32
+ * firmware, so the sim renders byte-identical Montserrat glyphs. The firmware
+ * build never defines OSP_SIM, so LV_USE_SDL stays 0 there.                 */
+#if defined(OSP_SIM)
+  #define LV_USE_SDL              1
+  #define LV_SDL_INCLUDE_PATH     <SDL.h>
+  #define LV_SDL_RENDER_MODE      LV_DISPLAY_RENDER_MODE_DIRECT
+  #define LV_SDL_BUF_COUNT        1
+  #define LV_SDL_FULLSCREEN       0
+  #define LV_SDL_DIRECT_EXIT      1
+  /* lv_snapshot_take() support so the headless path can grab the framebuffer. */
+  #define LV_USE_SNAPSHOT         1
+#endif
+
 /* ---- Fonts ------------------------------------------------------------- */
 /** Built-in Montserrat variants used by the panel UI.  Others disabled to
  *  reduce flash usage (~3–4 KB per unused size).                           */

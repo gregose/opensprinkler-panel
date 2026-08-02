@@ -42,6 +42,8 @@
 #include "station_model.h"
 #include "battery_monitor.h"
 #include "ui_font_countdown_48.h"
+#include "ui_theme.h"
+#include "top_bar.h"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,9 +60,8 @@ static constexpr int LEDC_RES_BITS = 8;
 static constexpr uint8_t BACKLIGHT_ON  = 255;
 static constexpr uint8_t BACKLIGHT_OFF = 0;
 
-static constexpr int SCREEN_W = 480;
-static constexpr int SCREEN_H = 320;
-// Draw buffer: 480×4 pixels — keeps BSS small on the no-PSRAM ESP32.
+// SCREEN_W / SCREEN_H now live in lib/ui/ui_theme.h (shared with the sim).
+// Draw buffer: 480x4 pixels - keeps BSS small on the no-PSRAM ESP32.
 static constexpr int DRAW_BUF_LINES = 40;
 static constexpr unsigned long BOOT_HOLD_EDIT_MS    = 3000;
 static constexpr unsigned long BOOT_HOLD_FACTORY_MS = 10000;
@@ -105,26 +106,8 @@ static constexpr const char* DEFAULT_PW_MD5 = "a6d82bced638de3def1e9bbb4983225c"
 static constexpr const char* DEFAULT_OS_HOST = "192.168.1.100";
 static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
 
-// Visual tokens (docs/01 §5).
-static constexpr uint32_t CLR_BG    = 0x07100f;
-static constexpr uint32_t CLR_TEXT  = 0xe9f2ef;
-static constexpr uint32_t CLR_MUTED = 0x7f938f;
-static constexpr uint32_t CLR_TEAL  = 0x35d0c3;
-static constexpr uint32_t CLR_AMBER = 0xf2a63b;
-static constexpr uint32_t CLR_RED   = 0xff5b5b;
-static constexpr uint32_t CLR_LINE  = 0x1a2e2b;
-static constexpr uint32_t CLR_TEALDIM = 0x1c6a64;  // accent rule / dim chip border
-static constexpr uint32_t CLR_LEDE    = 0xc3d3cf;  // supporting body text
-
-// Build an lv_color_t from a 0xRRGGBB constant.
-static inline lv_color_t hex_color(uint32_t hex) {
-    return lv_color_make((hex >> 16) & 0xFF, (hex >> 8) & 0xFF, hex & 0xFF);
-}
-
-static inline void obj_set_hidden(lv_obj_t* obj, bool hidden) {
-    if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-    else        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
-}
+// Visual tokens (CLR_*), hex_color() and obj_set_hidden() now live in
+// lib/ui/ui_theme.h so the firmware and the host sim share one definition.
 
 // ---------------------------------------------------------------------------
 // Hardware objects
@@ -1340,36 +1323,18 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 // ---------------------------------------------------------------------------
 // UI widgets
 // ---------------------------------------------------------------------------
-// Top bar
+// Top bar (widget builders + structs live in lib/ui/top_bar.{h,cpp}; the
+// firmware and the sim link the same code). These globals hold the handles the
+// builder returns so the rest of main.cpp can drive per-frame updates.
 static lv_obj_t* lbl_drop       = nullptr;
 static lv_obj_t* lbl_name       = nullptr;
 static lv_obj_t* lbl_status     = nullptr;
 static lv_obj_t* top_accent     = nullptr;
 
-struct CurrentSlot {
-    lv_obj_t* box  = nullptr;
-    lv_obj_t* val  = nullptr;
-    lv_obj_t* unit = nullptr;
-};
-static CurrentSlot current_slot;
-
-// Signal-meter widget: 4 ascending bar rectangles (Part 3).
-struct SigMeter {
-    lv_obj_t* bars[4] = {};
-};
-static SigMeter sig_panel;
-static SigMeter sig_ctrl;
-
-// Battery gauge widget: a battery pictogram (outline + terminal nub + inner
-// fill scaled by state-of-charge) followed by a "NN%" label. Sits to the right
-// of the PANEL/CTRL meters in the same top-bar group.
-struct BattGlyph {
-    lv_obj_t* body = nullptr;  // outline; border colour = tier
-    lv_obj_t* nub  = nullptr;  // terminal nub; colour = tier
-    lv_obj_t* fill = nullptr;  // inner fill; width = %, colour = tier
-    lv_obj_t* pct  = nullptr;  // "NN%" label
-};
-static BattGlyph batt_glyph;
+static osp::ui::CurrentSlot current_slot;
+static osp::ui::SigMeter    sig_panel;
+static osp::ui::SigMeter    sig_ctrl;
+static osp::ui::BattGlyph   batt_glyph;
 
 static void set_drop_text_opa(void* obj, int32_t value) {
     lv_obj_set_style_text_opa(static_cast<lv_obj_t*>(obj),
@@ -1627,9 +1592,9 @@ static void ev_touch_any(lv_event_t* e) {
 // UI construction
 // ---------------------------------------------------------------------------
 
-// Layout constants (all in pixels, 480×320 landscape).
-static constexpr int TOP_H    = 26;
-static constexpr int GRID_H   = 112;  // 108→112: container=92px fits 2×pill_h(40)+gap(6)+pad(4)=90px
+// Layout constants (all in pixels, 480x320 landscape). TOP_H comes from
+// lib/ui/ui_theme.h (shared with the sim).
+static constexpr int GRID_H   = 112;  // 108->112: container=92px fits 2xpill_h(40)+gap(6)+pad(4)=90px
 static constexpr int ACTION_H = 52;
 static constexpr int RIGHT_W  = 190;
 static constexpr int LEFT_W   = SCREEN_W - RIGHT_W;  // 290 px
@@ -1660,197 +1625,6 @@ static constexpr int PROG_DOT_W = 10, PROG_DOT_H = 10, PROG_DOT_GAP = 8;
 static constexpr int PROG_ARROW_W = 46;  // pager arrow button width
 
 
-// ---------------------------------------------------------------------------
-// Signal-meter helpers (Part 3)
-// ---------------------------------------------------------------------------
-
-static CurrentSlot build_current_slot(lv_obj_t* parent) {
-    CurrentSlot slot;
-    slot.box = lv_obj_create(parent);
-    lv_obj_remove_style_all(slot.box);
-    lv_obj_set_style_bg_opa(slot.box, LV_OPA_TRANSP, 0);
-    lv_obj_set_size(slot.box, 46, TOP_H);
-    lv_obj_set_style_pad_column(slot.box, 2, 0);
-    lv_obj_clear_flag(slot.box, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(slot.box, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(slot.box, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(slot.box, LV_FLEX_ALIGN_END,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    slot.val = lv_label_create(slot.box);
-    lv_obj_set_width(slot.val, 26);
-    lv_label_set_long_mode(slot.val, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(slot.val, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_style_text_font(slot.val, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(slot.val, hex_color(CLR_MUTED), 0);
-    lv_label_set_text(slot.val, "0");
-
-    slot.unit = lv_label_create(slot.box);
-    lv_obj_set_width(slot.unit, 18);
-    lv_label_set_long_mode(slot.unit, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(slot.unit, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(slot.unit, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(slot.unit, hex_color(CLR_MUTED), 0);
-    lv_label_set_text(slot.unit, "mA");
-
-    return slot;
-}
-
-// Build a compact drawn RSSI meter into `parent` (a pre-created flex-row group).
-// Layout: "P"/"C" label followed by 4 ascending bar rectangles.
-static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt) {
-    SigMeter m;
-
-    // Flex-row outer container — transparent, no border, no padding.
-    lv_obj_t* row = lv_obj_create(parent);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_size(row, LV_SIZE_CONTENT, TOP_H);
-    lv_obj_set_style_pad_column(row, 3, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // "P" / "C" text label.
-    lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, txt);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_color(lbl, hex_color(CLR_MUTED), 0);
-
-    // 22×10 sub-container for the 4 ascending bar rects (absolute layout).
-    lv_obj_t* bc = lv_obj_create(row);
-    lv_obj_remove_style_all(bc);
-    lv_obj_set_style_bg_opa(bc, LV_OPA_TRANSP, 0);
-    lv_obj_set_size(bc, 22, 10);   // width: 4 bars×4 px + 3 gaps×2 px = 22; height: tallest bar = 10
-    lv_obj_clear_flag(bc, LV_OBJ_FLAG_SCROLLABLE);
-
-    static const int bh[4] = {4, 6, 8, 10};
-    for (int i = 0; i < 4; ++i) {
-        m.bars[i] = lv_obj_create(bc);
-        lv_obj_set_size(m.bars[i], 4, bh[i]);
-        lv_obj_set_style_border_width(m.bars[i], 0, 0);
-        lv_obj_set_style_radius(m.bars[i], 1, 0);
-        lv_obj_set_pos(m.bars[i], i * 6, 10 - bh[i]);  // bottom-align bars
-        lv_obj_set_style_bg_color(m.bars[i], hex_color(CLR_LINE), 0);
-        lv_obj_set_style_bg_opa(m.bars[i], LV_OPA_COVER, 0);
-    }
-
-    return m;
-}
-
-// Update bar colours: first display_bars(quality, connected) bars filled,
-// remainder dim. Colour is by quality tier so the two 1-bar connected cases
-// (weak amber vs very-weak red) are distinguishable.
-static void update_sig_meter(const SigMeter& m, int quality, bool connected) {
-    const int n = osp::display_bars(quality, connected);
-    const uint32_t fill_clr = (quality >= 3) ? CLR_TEAL
-                            : (quality >= 1)  ? CLR_AMBER
-                                              : CLR_RED;
-    for (int i = 0; i < 4; ++i) {
-        lv_obj_set_style_bg_color(m.bars[i],
-            hex_color(i < n ? fill_clr : CLR_LINE), 0);
-    }
-}
-
-// Battery pictogram geometry. Body is 18×11 with a 1 px border + 1 px pad, so
-// the inner fill spans BATT_FILL_MAX_W × 7 px. A 2 px nub hangs off the right.
-static constexpr int BATT_BODY_W    = 18;
-static constexpr int BATT_BODY_H    = 11;
-static constexpr int BATT_FILL_MAX_W = BATT_BODY_W - 2 /*border*/ - 2 /*pad*/;  // 14
-
-// Build the battery gauge (pictogram + percent) into `parent`.
-static BattGlyph build_batt_glyph(lv_obj_t* parent) {
-    BattGlyph g;
-
-    // Flex-row: pictogram + percent label, small gap.
-    lv_obj_t* row = lv_obj_create(parent);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_size(row, LV_SIZE_CONTENT, TOP_H);
-    lv_obj_set_style_pad_column(row, 4, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // Pictogram holder (body + nub in absolute layout).
-    lv_obj_t* pic = lv_obj_create(row);
-    lv_obj_remove_style_all(pic);
-    lv_obj_set_style_bg_opa(pic, LV_OPA_TRANSP, 0);
-    lv_obj_set_size(pic, BATT_BODY_W + 2, BATT_BODY_H);  // +2 for the nub
-    lv_obj_clear_flag(pic, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Body outline.
-    g.body = lv_obj_create(pic);
-    lv_obj_remove_style_all(g.body);
-    lv_obj_set_size(g.body, BATT_BODY_W, BATT_BODY_H);
-    lv_obj_set_pos(g.body, 0, 0);
-    lv_obj_set_style_bg_opa(g.body, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g.body, 1, 0);
-    lv_obj_set_style_border_color(g.body, hex_color(CLR_TEAL), 0);
-    lv_obj_set_style_radius(g.body, 2, 0);
-    lv_obj_set_style_pad_all(g.body, 1, 0);
-    lv_obj_clear_flag(g.body, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Terminal nub.
-    g.nub = lv_obj_create(pic);
-    lv_obj_remove_style_all(g.nub);
-    lv_obj_set_size(g.nub, 2, 5);
-    lv_obj_set_pos(g.nub, BATT_BODY_W, (BATT_BODY_H - 5) / 2);
-    lv_obj_set_style_bg_color(g.nub, hex_color(CLR_TEAL), 0);
-    lv_obj_set_style_bg_opa(g.nub, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(g.nub, 1, 0);
-    lv_obj_clear_flag(g.nub, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Inner fill (left-anchored, width scaled by %).
-    g.fill = lv_obj_create(g.body);
-    lv_obj_remove_style_all(g.fill);
-    lv_obj_set_size(g.fill, BATT_FILL_MAX_W, 7);
-    lv_obj_set_pos(g.fill, 0, 0);
-    lv_obj_set_style_bg_color(g.fill, hex_color(CLR_TEAL), 0);
-    lv_obj_set_style_bg_opa(g.fill, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(g.fill, 1, 0);
-    lv_obj_clear_flag(g.fill, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Percent label.
-    g.pct = lv_label_create(row);
-    lv_obj_set_width(g.pct, 30);
-    lv_obj_set_style_text_align(g.pct, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_font(g.pct, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(g.pct, hex_color(CLR_LEDE), 0);
-    lv_label_set_text(g.pct, "--%");
-
-    return g;
-}
-
-// Update fill width, tier colour and percent text.
-static void update_batt_glyph(const BattGlyph& g, int percent,
-                              osp::BatteryTier tier) {
-    if (!g.body) return;
-    if (percent < 0) percent = 0;
-    if (percent > 100) percent = 100;
-    const uint32_t clr = (tier == osp::BatteryTier::Healthy) ? CLR_TEAL
-                       : (tier == osp::BatteryTier::Low)     ? CLR_AMBER
-                                                             : CLR_RED;
-    lv_obj_set_style_border_color(g.body, hex_color(clr), 0);
-    lv_obj_set_style_bg_color(g.nub, hex_color(clr), 0);
-    lv_obj_set_style_bg_color(g.fill, hex_color(clr), 0);
-    lv_obj_set_style_text_color(
-        g.pct, hex_color(tier == osp::BatteryTier::Healthy ? CLR_LEDE : clr), 0);
-
-    // Fill width tracks %, but keep a visible sliver whenever a cell is present.
-    int w = (BATT_FILL_MAX_W * percent + 50) / 100;
-    if (w < 2) w = 2;
-    if (w > BATT_FILL_MAX_W) w = BATT_FILL_MAX_W;
-    lv_obj_set_width(g.fill, w);
-
-    char b[8];
-    snprintf(b, sizeof(b), "%d%%", percent);
-    lv_label_set_text(g.pct, b);
-}
 
 // Sample the battery ADC (multisampled) on a slow cadence and feed the monitor.
 static void poll_battery() {
@@ -1871,84 +1645,17 @@ static void build_ui() {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_add_event_cb(scr, ev_touch_any, LV_EVENT_PRESSED, nullptr);
 
-    // ---- Top bar -------------------------------------------------------
+    // ---- Top bar (built by lib/ui; same code as the host sim) ----------
     {
-        lv_obj_t* bar = lv_obj_create(scr);
-        lv_obj_set_size(bar, SCREEN_W, TOP_H);
-        lv_obj_set_pos(bar, 0, 0);
-        lv_obj_set_style_bg_color(bar, hex_color(CLR_BG), 0);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_set_style_pad_all(bar, 2, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-
-        lv_obj_t* left_group = lv_obj_create(bar);
-        lv_obj_remove_style_all(left_group);
-        lv_obj_set_style_bg_opa(left_group, LV_OPA_TRANSP, 0);
-        lv_obj_set_size(left_group, 220, TOP_H);
-        lv_obj_set_style_pad_column(left_group, 6, 0);
-        lv_obj_clear_flag(left_group, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_layout(left_group, LV_LAYOUT_FLEX);
-        lv_obj_set_flex_flow(left_group, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(left_group, LV_FLEX_ALIGN_START,
-                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_align(left_group, LV_ALIGN_LEFT_MID, 4, 0);
-
-        lbl_drop = lv_label_create(left_group);
-        lv_obj_set_style_text_font(lbl_drop, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_drop, hex_color(CLR_TEAL), 0);
-        lv_label_set_text(lbl_drop, LV_SYMBOL_TINT);
-
-        lbl_name = lv_label_create(left_group);
-        lv_obj_set_size(lbl_name, 1, 14);
-        lv_obj_set_flex_grow(lbl_name, 1);
-        lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
-        lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lbl_name, hex_color(CLR_TEXT), 0);
-        lv_label_set_text(lbl_name, "controller");
-
-        lbl_status = lv_label_create(left_group);
-        lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_letter_space(lbl_status, 1, 0);
-        lv_obj_set_style_text_color(lbl_status, hex_color(CLR_TEAL), 0);
-        lv_label_set_text(lbl_status, "");
-
-        // Fixed right cluster: current, divider, panel/controller signal, battery.
-        lv_obj_t* sig_group = lv_obj_create(bar);
-        lv_obj_remove_style_all(sig_group);
-        lv_obj_set_style_bg_opa(sig_group, LV_OPA_TRANSP, 0);
-        lv_obj_set_size(sig_group, LV_SIZE_CONTENT, TOP_H);
-        lv_obj_set_style_pad_column(sig_group, 12, 0);
-        lv_obj_clear_flag(sig_group, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_layout(sig_group, LV_LAYOUT_FLEX);
-        lv_obj_set_flex_flow(sig_group, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(sig_group, LV_FLEX_ALIGN_END,
-                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_align(sig_group, LV_ALIGN_RIGHT_MID, -4, 0);
-
-        current_slot = build_current_slot(sig_group);
-        obj_set_hidden(current_slot.box, true);
-
-        lv_obj_t* divider = lv_obj_create(sig_group);
-        lv_obj_remove_style_all(divider);
-        lv_obj_set_size(divider, 2, 16);
-        lv_obj_set_style_bg_color(divider, hex_color(CLR_TEALDIM), 0);
-        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(divider, 1, 0);
-        lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
-
-        sig_panel = build_sig_meter(sig_group, "P");
-        sig_ctrl  = build_sig_meter(sig_group, "C");
-        batt_glyph = build_batt_glyph(sig_group);
-
-        top_accent = lv_obj_create(scr);
-        lv_obj_remove_style_all(top_accent);
-        lv_obj_set_size(top_accent, SCREEN_W, 3);
-        lv_obj_set_pos(top_accent, 0, TOP_H - 3);
-        lv_obj_set_style_bg_color(top_accent, hex_color(CLR_TEALDIM), 0);
-        lv_obj_set_style_bg_opa(top_accent, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(top_accent, 0, 0);
-        lv_obj_clear_flag(top_accent, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_move_foreground(top_accent);
+        osp::ui::TopBar tb = osp::ui::build_top_bar(scr);
+        lbl_drop     = tb.lbl_drop;
+        lbl_name     = tb.lbl_name;
+        lbl_status   = tb.lbl_status;
+        top_accent   = tb.top_accent;
+        current_slot = tb.current;
+        sig_panel    = tb.sig_panel;
+        sig_ctrl     = tb.sig_ctrl;
+        batt_glyph   = tb.batt;
     }
 
     // ---- Left panel: Idle ---------------------------------------------
@@ -2572,9 +2279,9 @@ static void ui_update() {
     }
 
     // Drawn RSSI bar meters (Part 3).
-    update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()),
+    osp::ui::update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()),
                      WiFi.status() == WL_CONNECTED);
-    update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi),
+    osp::ui::update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi),
                      v.link == osp::LinkState::Connected &&
                          top_state != osp::TopBarState::Syncing);
 
@@ -2585,7 +2292,7 @@ static void ui_update() {
     const int battery_percent =
         g_batt_override_percent >= 0 ? g_batt_override_percent
                                      : g_batt.percent();
-    update_batt_glyph(
+    osp::ui::update_batt_glyph(
         batt_glyph, battery_percent,
         osp::battery_tier_from_percent(battery_percent));
 
