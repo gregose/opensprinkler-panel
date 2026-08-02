@@ -106,6 +106,15 @@ blow-out use case the compressor tank absorbs it; do not attempt overlap).
 `GET /cv?pw=<md5>&rsn=1` resets/stops all stations immediately. Use this for **Stop**.
 (Other `/cv` params exist — `rbt=1` reboot, `en=` op enable, `rd=` rain delay — none are needed.)
 
+### `GET /pq` — pause / resume the queue
+`GET /pq?pw=<md5>&dur=600` pauses the running queue for a fixed 600 s (10 min)
+with **auto-resume**; any subsequent `/pq` while paused cancels the pause (resume).
+This is **controller-wide**, so it pauses **both** program runs **and** manual
+single-station `/cm` runs the same way — the panel wires it for both. The live
+pause state rides the `/jc` poll: `pq` (non-zero = paused) and `pt` (seconds until
+auto-resume), so entering/leaving paused is reconciled from the poll, not just the
+local tap. See `05` for the program-run wiring and `01` for the manual-run UI.
+
 ---
 
 ## The client's job (put together)
@@ -147,3 +156,4 @@ optimistically update the UI; the next poll confirms.
 | Advance/Jump | off current → on target (`t=RT`) |
 | Restart at new time | off current → on current (`t=RT'`) |
 | Stop all | `GET /cv?pw=…&rsn=1` |
+| Pause / resume queue | `GET /pq?pw=…&dur=600` (manual + program) |

@@ -2,6 +2,7 @@
 #include <unity.h>
 
 #include <cstring>
+#include <cstdio>
 #include <vector>
 
 #include "panel_state.h"
@@ -36,6 +37,22 @@ static JcData make_jc_running(int sid, int rem, int num_stations = 3,
   jc.ps[sid].pid = 99;
   jc.ps[sid].rem = rem;
   jc.ps[sid].start = 900;
+  return jc;
+}
+
+// A paused manual single-station run as the controller reports it: the valve is
+// OFF (station bit clear) and the queue's start is pushed into the future, but
+// the manual entry (pid=99) stays in ps[] with a frozen rem. pq/pt carry the
+// global pause and its resume countdown.
+static JcData make_jc_manual_paused(int sid, int rem, int pt,
+                                    int num_stations = 3) {
+  JcData jc = make_jc_idle(num_stations);
+  // sbits intentionally left clear (valve off while paused).
+  jc.ps[sid].pid = 99;
+  jc.ps[sid].rem = rem;
+  jc.ps[sid].start = 100000;  // scheduled far in the future while paused
+  jc.pq = 1;
+  jc.pt = pt;
   return jc;
 }
 
@@ -1186,6 +1203,148 @@ void test_a2plus_zero_current_remains_present() {
   TEST_ASSERT_EQUAL_INT(0, f.ps.view().current_ma);
 }
 
+// ---------------------------------------------------------------------------
+// #121 — manual-run Pause/Resume
+// ---------------------------------------------------------------------------
+
+// Formatting helper mirroring the UI's zero-padded "Resumes in MM:SS" line, so
+// the 09:59 -> 10:00 boundary (the widest string the layout must fit) is covered
+// by a native test rather than only on the bench.
+static std::string fmt_resume_mmss(int secs) {
+  if (secs < 0) secs = 0;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%02d:%02d", secs / 60, secs % 60);
+  return buf;
+}
+
+void test_manual_pause_intent_queues_pause_kind() {
+  Fixture f;
+  start_panel_manual(f, 0, 300, 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  f.ps.pause_toggle_intent();
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::Pause, (int)f.ps.desired().kind);
+}
+
+// The core fix: a paused manual run (valve off, start pushed forward, pid=99 in
+// ps[]) must HOLD Phase::Running instead of collapsing to Idle.
+void test_manual_run_stays_running_while_paused() {
+  Fixture f;
+  start_panel_manual(f, 0, 300, 1000);
+
+  f.ps.on_jc(make_jc_manual_paused(0, 300, 600), 2000);
+
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT(600, f.ps.view().pause_remaining_s);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+}
+
+// While paused the dead-reckoned station countdown freezes; only the resume
+// clock ticks down.
+void test_manual_paused_freezes_countdown() {
+  Fixture f;
+  start_panel_manual(f, 0, 300, 1000);
+  f.ps.on_jc(make_jc_manual_paused(0, 300, 600), 2000);
+
+  f.ps.tick(7000);  // 5s later
+
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);  // frozen
+  TEST_ASSERT_EQUAL_INT(595, f.ps.view().pause_remaining_s);
+}
+
+// On resume (pq clears) the station countdown continues from the remaining time
+// and ticks down normally again.
+void test_manual_resume_continues_remaining_time() {
+  Fixture f;
+  start_panel_manual(f, 0, 300, 1000);
+  f.ps.on_jc(make_jc_manual_paused(0, 300, 600), 2000);
+  f.ps.tick(7000);
+  TEST_ASSERT_EQUAL_INT(300, f.ps.view().countdown_s);
+
+  // Controller resumes: valve on again, remaining unchanged.
+  f.ps.on_jc(make_jc_running(0, 300), 8000);
+  TEST_ASSERT_FALSE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  f.ps.tick(11000);  // 3s later — now ticking again
+  TEST_ASSERT_EQUAL_INT(297, f.ps.view().countdown_s);
+}
+
+// Auto-advance ON: a paused station must NOT advance while paused (countdown is
+// frozen and never reaches 0), and must advance once resumed and the countdown
+// runs out.
+void test_manual_no_auto_advance_while_paused() {
+  Fixture f(3);
+  f.ps.set_auto_advance(true);
+  start_panel_manual(f, 0, 1, 1000);
+
+  // Pause with 1s left; frozen, so ticking must not trigger auto-advance.
+  f.ps.on_jc(make_jc_manual_paused(0, 1, 600), 2000);
+  f.ps.tick(60000);
+  TEST_ASSERT_FALSE(f.ps.awaiting_close());
+  TEST_ASSERT_FALSE(f.ps.has_desired());
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().countdown_s);
+
+  // Resume: countdown ticks to 0 and auto-advance queues the next station.
+  f.ps.on_jc(make_jc_running(0, 1), 61000);
+  f.ps.tick(62000);
+  TEST_ASSERT_TRUE(f.ps.awaiting_close());
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::Run, (int)f.ps.desired().kind);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+}
+
+// Reconcile-to-reality: an EXTERNAL pause and resume (no local tap) is driven
+// purely from the polled pq/pt.
+void test_manual_external_pause_resume_reconciles_from_pq() {
+  Fixture f;
+  start_panel_manual(f, 0, 300, 1000);
+  TEST_ASSERT_FALSE(f.ps.view().paused);
+
+  // External client pauses.
+  f.ps.on_jc(make_jc_manual_paused(0, 300, 480), 2000);
+  TEST_ASSERT_TRUE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT(480, f.ps.view().pause_remaining_s);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  // External client resumes.
+  f.ps.on_jc(make_jc_running(0, 300), 3000);
+  TEST_ASSERT_FALSE(f.ps.view().paused);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+}
+
+void test_manual_resume_line_mmss_formatting() {
+  TEST_ASSERT_EQUAL_STRING("09:59", fmt_resume_mmss(599).c_str());
+  TEST_ASSERT_EQUAL_STRING("10:00", fmt_resume_mmss(600).c_str());
+  TEST_ASSERT_EQUAL_STRING("00:00", fmt_resume_mmss(0).c_str());
+  TEST_ASSERT_EQUAL_STRING("00:05", fmt_resume_mmss(5).c_str());
+}
+
+// A paused run (manual or program) is deliberately NOT surfaced in the top bar:
+// the on-panel two-line PAUSED block is the sole paused indicator, so the status
+// word stays empty (Clean) while paused rather than showing "Paused" /
+// "Program paused".
+void test_manual_vs_program_paused_status_word() {
+  PanelView v;
+  v.paused = true;
+
+  v.phase = Phase::Running;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("", top_bar_status_text(v).c_str());
+
+  v.phase = Phase::ProgramRunning;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("", top_bar_status_text(v).c_str());
+
+  // Not paused, or idle -> still Clean / empty.
+  v.paused = false;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+  v.paused = true;
+  v.phase = Phase::Idle;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+}
+
 
 
 int main(int, char**) {
@@ -1275,6 +1434,16 @@ int main(int, char**) {
   RUN_TEST(test_a2plus_refreshing_is_exposed_in_view);
   RUN_TEST(test_a2plus_top_bar_status_precedence);
   RUN_TEST(test_a2plus_zero_current_remains_present);
+
+  // #121 — manual-run Pause/Resume
+  RUN_TEST(test_manual_pause_intent_queues_pause_kind);
+  RUN_TEST(test_manual_run_stays_running_while_paused);
+  RUN_TEST(test_manual_paused_freezes_countdown);
+  RUN_TEST(test_manual_resume_continues_remaining_time);
+  RUN_TEST(test_manual_no_auto_advance_while_paused);
+  RUN_TEST(test_manual_external_pause_resume_reconciles_from_pq);
+  RUN_TEST(test_manual_resume_line_mmss_formatting);
+  RUN_TEST(test_manual_vs_program_paused_status_word);
 
   return UNITY_END();
 }
