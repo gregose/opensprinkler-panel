@@ -145,3 +145,43 @@ jobs:
         with:
           name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
           path: firmware-artifact/diag/
+
+  # Host LVGL simulator (issue #123): builds the `sim` env (platform = native,
+  # LVGL + SDL2) and renders the REAL firmware top-bar code (lib/ui) to a
+  # 480x320 PNG headlessly (SDL_VIDEODRIVER=dummy, no display), then uploads it.
+  # This proves the LVGL-faithful preview pipeline works in CI.
+  sim-render:
+    name: Render top bar (host LVGL sim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Resolve build metadata
+        id: meta
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Cache PlatformIO
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-sim-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - name: Install PlatformIO
+        run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}"
+      - name: Build host sim
+        run: pio run -e sim
+      - name: Render top bar to PNG (headless)
+        env:
+          SDL_VIDEODRIVER: dummy
+        run: ./.pio/build/sim/program
+      - name: Upload rendered top-bar PNG
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sim-top-bar-${{ steps.meta.outputs.sha }}
+          path: sim/out/

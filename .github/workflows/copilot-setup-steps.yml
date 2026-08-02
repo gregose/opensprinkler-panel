@@ -38,10 +38,18 @@ jobs:
       - name: Install PlatformIO + esptool
         run: pip install "platformio==6.1.19" "esptool==5.3.1"
 
+      # SDL2 dev headers/libs for the host LVGL simulator (env:sim, issue #123).
+      # The sim links SDL2 via sdl2-config; libsdl2-dev provides both. Installed
+      # here (full network) so the sim env is buildable offline during the work
+      # phase. macOS devs use `brew install sdl2` (see sim/README.md).
+      - name: Install SDL2 (for the host LVGL sim)
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
       - name: Pre-install ESP32 + native toolchains and libraries
         run: |
           pio pkg install -e cyd-35r
           pio pkg install -e native
+          pio pkg install -e sim
 
       # Pre-warm libraries that individual milestones will add to platformio.ini
       # DURING the agent's work phase, after these setup steps have already run.
