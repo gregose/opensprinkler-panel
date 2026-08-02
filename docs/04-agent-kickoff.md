@@ -15,7 +15,7 @@ python3 test_mock_os.py     # contract/connection tests for the emulator
 
 Set the panel's `os_host` to your dev machine's `IP:8080` (the mock ignores
 `pw` unless you pass `--require-pw`). It implements `/jn`, `/jo`, `/jc`, `/js`,
-`/jp`, `/cm`, `/cv`, `/mp`, `/cp`, `/pq` and **faithfully models the
+`/jp`, `/jl`, `/cm`, `/cv`, `/mp`, `/cp`, `/pq` and **faithfully models the
 `en=1`-on-running-station no-op**, so your off-then-on logic gets exercised for
 real. Programs (M9) run sequentially with a live queue; a manual `/mp` run
 reports `pid 254` while a scheduled run (`--schedule` or the `/_run` debug

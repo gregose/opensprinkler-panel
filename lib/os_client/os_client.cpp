@@ -3,6 +3,8 @@
 #include <ArduinoJson.h>
 
 #include <cstdio>
+#include <cctype>
+#include <limits>
 
 namespace osp {
 
@@ -24,6 +26,13 @@ std::string build_jo_url(const std::string& host, const std::string& pw) {
 
 std::string build_jp_url(const std::string& host, const std::string& pw) {
   return host + "/jp?pw=" + pw;
+}
+
+std::string build_jl_url(const std::string& host, const std::string& pw,
+                         int history_days) {
+  char buf[256];
+  snprintf(buf, sizeof(buf), "/jl?pw=%s&hist=%d", pw.c_str(), history_days);
+  return host + buf;
 }
 
 std::string build_cm_url(const std::string& host, const std::string& pw,
@@ -206,6 +215,178 @@ bool parse_jo(const std::string& body, JoData& out) {
   return true;
 }
 
+namespace {
+
+bool parse_log_row(const char* data, std::size_t length, LogEntry& entry) {
+    JsonDocument doc;
+    if (deserializeJson(doc, data, length) != DeserializationError::Ok ||
+        !doc.is<JsonArray>()) {
+      return false;
+    }
+    JsonArray row = doc.as<JsonArray>();
+    if (row.size() != 4 && row.size() != 5) return false;
+    if (!row[0].is<int>() || !row[2].is<int64_t>() ||
+        !row[3].is<int64_t>()) {
+      return false;
+    }
+
+    const int pid = row[0].as<int>();
+    const int64_t duration = row[2].as<int64_t>();
+    const int64_t end_epoch = row[3].as<int64_t>();
+    if (pid < 0 || duration < 0 || end_epoch < 0 ||
+        duration > std::numeric_limits<uint32_t>::max() ||
+        end_epoch > std::numeric_limits<uint32_t>::max()) {
+      return false;
+    }
+
+    entry.pid = pid;
+    entry.duration_s = static_cast<uint32_t>(duration);
+    entry.end_epoch = static_cast<uint32_t>(end_epoch);
+    if (pid == 0) {
+      if (!row[1].is<const char*>()) return false;
+      entry.event_code = row[1].as<const char*>();
+      if (entry.event_code.empty()) return false;
+    } else {
+      if (!row[1].is<int>()) return false;
+      entry.sid = row[1].as<int>();
+      if (entry.sid < 0) return false;
+    }
+
+    if (row.size() == 5) {
+      if (!row[4].is<float>()) return false;
+      entry.has_flow = true;
+      entry.flow = row[4].as<float>();
+    }
+    return true;
+}
+
+}  // namespace
+
+JlParser::JlParser(std::vector<LogEntry>& out, std::size_t max_entries,
+                   LogEntryFilter filter)
+    : out_(out), max_entries_(max_entries), filter_(std::move(filter)) {
+  out_.clear();
+  item_.reserve(kMaxRowBytes);
+}
+
+void JlParser::append_item_char(char c) {
+  if (item_.size() < kMaxRowBytes) {
+    item_.push_back(c);
+  } else {
+    item_too_long_ = true;
+  }
+}
+
+void JlParser::finish_item() {
+  if (!item_too_long_) {
+    LogEntry entry;
+    if (parse_log_row(item_.data(), item_.size(), entry) &&
+        (!filter_ || filter_(entry))) {
+      if (max_entries_ > 0 && out_.size() == max_entries_) {
+        out_.erase(out_.begin());
+      }
+      out_.push_back(std::move(entry));
+    }
+  }
+  item_.clear();
+  item_too_long_ = false;
+}
+
+bool JlParser::feed(const char* data, std::size_t length) {
+  if (invalid_) return false;
+
+  for (std::size_t i = 0; i < length; ++i) {
+    const char c = data[i];
+    if (finished_) {
+      if (!std::isspace(static_cast<unsigned char>(c))) {
+        invalid_ = true;
+        return false;
+      }
+      continue;
+    }
+
+    if (!started_) {
+      if (std::isspace(static_cast<unsigned char>(c))) continue;
+      if (c != '[') {
+        invalid_ = true;
+        return false;
+      }
+      started_ = true;
+      continue;
+    }
+
+    if (!reading_item_) {
+      if (std::isspace(static_cast<unsigned char>(c))) continue;
+      if (c == ']') {
+        if (value_required_) {
+          invalid_ = true;
+          return false;
+        }
+        finished_ = true;
+        continue;
+      }
+      if (c == ',') {
+        invalid_ = true;
+        return false;
+      }
+      reading_item_ = true;
+      value_required_ = false;
+      depth_ = 0;
+      in_string_ = false;
+      escaped_ = false;
+    }
+
+    if (in_string_) {
+      append_item_char(c);
+      if (escaped_) {
+        escaped_ = false;
+      } else if (c == '\\') {
+        escaped_ = true;
+      } else if (c == '"') {
+        in_string_ = false;
+      }
+      continue;
+    }
+
+    if (c == '"') {
+      in_string_ = true;
+      append_item_char(c);
+    } else if (c == '[' || c == '{') {
+      ++depth_;
+      append_item_char(c);
+    } else if (c == ']' || c == '}') {
+      if (c == ']' && depth_ == 0) {
+        finish_item();
+        reading_item_ = false;
+        finished_ = true;
+      } else if (depth_ == 0) {
+        invalid_ = true;
+        return false;
+      } else {
+        --depth_;
+        append_item_char(c);
+      }
+    } else if (c == ',' && depth_ == 0) {
+      finish_item();
+      reading_item_ = false;
+      value_required_ = true;
+    } else {
+      append_item_char(c);
+    }
+  }
+  return !invalid_;
+}
+
+bool JlParser::finish() const {
+  return started_ && finished_ && !invalid_ && !reading_item_;
+}
+
+bool parse_jl(const std::string& body, std::vector<LogEntry>& out,
+              std::size_t max_entries) {
+  JlParser parser(out, max_entries);
+  return parser.feed(body.data(), body.size()) && parser.finish();
+}
+
 OsResult parse_result(const std::string& body) {
   JsonDocument doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) {
@@ -236,8 +417,11 @@ std::vector<ProgramPsEntry> to_program_ps(const JcData& jc) {
 // ---------------------------------------------------------------------------
 
 OsClient::OsClient(const std::string& host, const std::string& pw_md5,
-                   Transport xport)
-    : host_(host), pw_hex_(pw_md5), transport_(std::move(xport)) {}
+                   Transport xport, LogTransport log_xport)
+    : host_(host),
+      pw_hex_(pw_md5),
+      transport_(std::move(xport)),
+      log_transport_(std::move(log_xport)) {}
 
 bool OsClient::fetch_jn(JnData& out) {
   const std::string body = transport_(build_jn_url(host_, pw_hex_));
@@ -298,6 +482,31 @@ bool OsClient::fetch_jp(JpData& out) {
     return false;
   }
   if (parse_jp(body, out)) {
+    connected_ = true;
+    last_result_ = OsResult::Ok;
+    return true;
+  }
+  last_result_ = parse_result(body);
+  connected_ = false;
+  return false;
+}
+
+bool OsClient::fetch_jl(std::vector<LogEntry>& out, int history_days,
+                        std::size_t max_entries) {
+  const std::string url = build_jl_url(host_, pw_hex_, history_days);
+  if (log_transport_) {
+    last_result_ = log_transport_(url, max_entries, out);
+    connected_ = last_result_ == OsResult::Ok;
+    return connected_;
+  }
+
+  const std::string body = transport_(url);
+  if (body.empty()) {
+    connected_ = false;
+    last_result_ = OsResult::NetworkError;
+    return false;
+  }
+  if (parse_jl(body, out, max_entries)) {
     connected_ = true;
     last_result_ = OsResult::Ok;
     return true;

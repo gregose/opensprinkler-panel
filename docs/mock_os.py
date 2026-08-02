@@ -20,6 +20,7 @@ lib/os_client):
     GET /jo   controller options (master station indices)
     GET /jc   controller status poll (devt, sbits, ps, RSSI, current, pause)
     GET /jp   program definitions (pd[] tuples)     [M9]
+    GET /jl   run and event history (oldest first)  [#127]
     GET /js   light status (sn[], nstations)
     GET /cm   append/stop one manual station (sid,en,t[,ssta])
     GET /cv   stop all (rsn=1)
@@ -94,6 +95,26 @@ def local_epoch() -> int:
 def fixed_start(minutes: int) -> list[int]:
     """Encode a single fixed daily start time (minutes since midnight)."""
     return [minutes, -1, -1, -1]  # -1 slots are 'disabled' (bit15 set)
+
+
+def default_history() -> list[list]:
+    """Realistic /jl rows spanning programs, manual runs, events, and flow."""
+    now = local_epoch()
+    day = 24 * 60 * 60
+    rows = [
+        [1, 0, 600, now - 8 * day],
+        [1, 3, 600, now - 8 * day + 610, 14.25],
+        [2, 2, 300, now - 5 * day],
+        [0, "rd", 86400, now - 4 * day],
+        [99, 5, 120, now - 3 * day],
+        [254, 7, 420, now - 2 * day, 9.5],
+        [0, "s1", 1, now - day],
+        [0, "fl", 42, now - 12 * 60 * 60],
+        [0, "wl", 85, now - 6 * 60 * 60],
+        [4, 14, 600, now - 30 * 60],
+        [4, 15, 300, now - 20 * 60, 11.75],
+    ]
+    return sorted(rows, key=lambda row: row[3])
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +249,7 @@ class MockController:
         self.sunset_min = sunset_min
         self.require_pw = require_pw
         self.programs = programs if programs is not None else default_programs(self.n)
+        self.history = default_history()
 
         self._lock = threading.RLock()
         # queue: ordered list of dicts {sid, total, rem, pid}. Index 0 is the
@@ -355,6 +377,40 @@ class MockController:
                 "mnp": 40, "mnst": 4, "pnsize": 32,
                 "pd": [p.pd_tuple() for p in self.programs],
             }
+
+    # -- GET /jl -------------------------------------------------------------
+    def jl(self, q):
+        if not self._check_pw(q):
+            return {"result": R_UNAUTHORIZED}
+
+        now = local_epoch()
+        try:
+            if "start" in q or "end" in q:
+                if "start" not in q or "end" not in q:
+                    return {"result": R_DATA_MISSING}
+                start = int(q["start"][0])
+                end = int(q["end"][0])
+                if end < start or end - start > 365 * 86400:
+                    return {"result": R_OUT_OF_RANGE}
+            else:
+                hist = int(q.get("hist", ["0"])[0])
+                if hist < 0 or hist > 365:
+                    return {"result": R_OUT_OF_RANGE}
+                end = now
+                start = (now // 86400 - hist) * 86400
+        except (ValueError, IndexError):
+            return {"result": R_DATA_MISSING}
+
+        event_type = q.get("type", [None])[0]
+        if event_type is not None and event_type not in {"s1", "s2", "rd", "fl", "wl"}:
+            return {"result": R_OUT_OF_RANGE}
+
+        with self._lock:
+            return [
+                list(row) for row in self.history
+                if start <= row[3] <= end
+                and (event_type is None or (row[0] == 0 and row[1] == event_type))
+            ]
 
     # -- GET /cm -------------------------------------------------------------
     def cm(self, q) -> dict:
@@ -525,6 +581,7 @@ class MockController:
             "/jc": lambda: self.jc(),
             "/js": lambda: self.js(),
             "/jp": lambda: self.jp(),
+            "/jl": lambda: self.jl(q),
             "/cm": lambda: self.cm(q),
             "/cv": lambda: self.cv(q),
             "/mp": lambda: self.mp(q),

@@ -129,6 +129,64 @@ class JpTests(MockServerCase):
         self.assertFalse(self.get("/jp")["pd"][2][0] & FLAG_ENABLED)
 
 
+class JlTests(MockServerCase):
+    def test_jl_realistic_oldest_first_mix(self):
+        rows = self.get("/jl", hist=30)
+        self.assertIsInstance(rows, list)
+        self.assertEqual(rows, sorted(rows, key=lambda row: row[3]))
+        self.assertTrue(all(len(row) in (4, 5) for row in rows))
+        self.assertTrue(any(len(row) == 4 for row in rows))
+        self.assertTrue(any(len(row) == 5 for row in rows))
+        self.assertTrue(any(row[0] == 99 for row in rows))
+        self.assertTrue(any(row[0] == 254 for row in rows))
+        self.assertTrue(any(row[:2] == [0, "rd"] for row in rows))
+        self.assertTrue(any(row[:2] == [0, "s1"] for row in rows))
+
+    def test_jl_hist_uses_controller_local_calendar_days(self):
+        today = (mock_os.local_epoch() // 86400) * 86400
+        self.ctrl.history = [
+            [1, 0, 10, today - 1],
+            [1, 1, 20, today + 1],
+        ]
+        self.assertEqual(self.get("/jl", hist=0), [[1, 1, 20, today + 1]])
+        self.assertEqual(self.get("/jl", hist=1), self.ctrl.history)
+
+    def test_jl_start_end_are_inclusive(self):
+        self.ctrl.history = [
+            [1, 0, 10, 100],
+            [1, 1, 20, 200],
+            [1, 2, 30, 300],
+        ]
+        self.assertEqual(
+            self.get("/jl", start=100, end=200),
+            self.ctrl.history[:2],
+        )
+
+    def test_jl_rejects_incomplete_or_oversized_ranges(self):
+        self.assertEqual(
+            self.get("/jl", start=100)["result"], mock_os.R_DATA_MISSING
+        )
+        self.assertEqual(
+            self.get("/jl", start=0, end=366 * 86400)["result"],
+            mock_os.R_OUT_OF_RANGE,
+        )
+        self.assertEqual(
+            self.get("/jl", hist=366)["result"], mock_os.R_OUT_OF_RANGE
+        )
+
+    def test_jl_type_filters_special_events(self):
+        rows = self.get("/jl", hist=30, type="rd")
+        self.assertTrue(rows)
+        self.assertTrue(all(row[:2] == [0, "rd"] for row in rows))
+
+    def test_jl_honors_required_password(self):
+        self.ctrl.require_pw = "secret"
+        self.assertEqual(
+            self.get("/jl", hist=30)["result"], mock_os.R_UNAUTHORIZED
+        )
+        self.assertIsInstance(self.get("/jl", pw="secret", hist=30), list)
+
+
 class CmStationTests(MockServerCase):
     def _running_sid(self, jc):
         for sid, e in enumerate(jc["ps"]):

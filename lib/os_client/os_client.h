@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -87,6 +88,53 @@ struct JpData {
 };
 
 // ---------------------------------------------------------------------------
+// One row from GET /jl. Standard runs use a numeric, 0-based sid. Special
+// events use pid=0 and carry their string code in event_code instead.
+// ---------------------------------------------------------------------------
+struct LogEntry {
+  int pid = 0;
+  int sid = -1;
+  std::string event_code;
+  uint32_t duration_s = 0;
+  uint32_t end_epoch = 0;
+  bool has_flow = false;
+  float flow = 0.0f;
+};
+
+using LogEntryFilter = std::function<bool(const LogEntry&)>;
+
+// Incremental parser for the bare /jl array. It buffers only one small tuple
+// and can retain a bounded newest-first window after applying a caller filter.
+class JlParser {
+ public:
+  JlParser(std::vector<LogEntry>& out, std::size_t max_entries = 0,
+           LogEntryFilter filter = {});
+
+  bool feed(const char* data, std::size_t length);
+  bool finish() const;
+
+ private:
+  static constexpr std::size_t kMaxRowBytes = 256;
+
+  std::vector<LogEntry>& out_;
+  std::size_t max_entries_;
+  LogEntryFilter filter_;
+  std::string item_;
+  int depth_ = 0;
+  bool started_ = false;
+  bool finished_ = false;
+  bool invalid_ = false;
+  bool reading_item_ = false;
+  bool value_required_ = false;
+  bool in_string_ = false;
+  bool escaped_ = false;
+  bool item_too_long_ = false;
+
+  void append_item_char(char c);
+  void finish_item();
+};
+
+// ---------------------------------------------------------------------------
 // URL builders — return the full request string given host+pw (pre-assembled).
 // host = "http://<ip-or-hostname>" (no trailing slash), pw = MD5 hex of password.
 // ---------------------------------------------------------------------------
@@ -94,6 +142,8 @@ std::string build_jn_url(const std::string& host, const std::string& pw);
 std::string build_jc_url(const std::string& host, const std::string& pw);
 std::string build_jo_url(const std::string& host, const std::string& pw);
 std::string build_jp_url(const std::string& host, const std::string& pw);
+std::string build_jl_url(const std::string& host, const std::string& pw,
+                         int history_days = 30);
 std::string build_mp_url(const std::string& host, const std::string& pw,
                          int pid);
 std::string build_cp_url(const std::string& host, const std::string& pw,
@@ -116,6 +166,8 @@ bool parse_jn(const std::string& body, JnData& out);
 bool parse_jc(const std::string& body, JcData& out);
 bool parse_jo(const std::string& body, JoData& out);
 bool parse_jp(const std::string& body, JpData& out);
+bool parse_jl(const std::string& body, std::vector<LogEntry>& out,
+              std::size_t max_entries = 0);
 
 // Extracts the `result` field. Returns OsResult::NetworkError on parse failure.
 OsResult parse_result(const std::string& body);
@@ -126,6 +178,9 @@ std::vector<ProgramPsEntry> to_program_ps(const JcData& jc);
 // Transport type: given a URL returns the response body, or "" on failure.
 // ---------------------------------------------------------------------------
 using Transport = std::function<std::string(const std::string& url)>;
+using LogTransport = std::function<OsResult(
+    const std::string& url, std::size_t max_entries,
+    std::vector<LogEntry>& out)>;
 
 // ---------------------------------------------------------------------------
 // OsClient — thin wrapper that calls the transport and tracks connected state.
@@ -137,7 +192,9 @@ class OsClient {
   //           (hashed once at provisioning via arduino-esp32 MD5Builder — the
   //           pure client never sees or hashes plaintext).
   // xport   = injected transport function
-  OsClient(const std::string& host, const std::string& pw_md5, Transport xport);
+  // log_xport = optional streaming /jl transport for memory-limited firmware
+  OsClient(const std::string& host, const std::string& pw_md5, Transport xport,
+           LogTransport log_xport = {});
 
   // True after the last request succeeded.
   bool connected() const { return connected_; }
@@ -155,6 +212,10 @@ class OsClient {
 
   // Fetch program definitions (/jp). Returns false on error.
   bool fetch_jp(JpData& out);
+
+  // Fetch controller logs (/jl) for the requested number of history days.
+  bool fetch_jl(std::vector<LogEntry>& out, int history_days = 30,
+                std::size_t max_entries = 0);
 
   // Run a station (en=1 /cm).
   bool run_station(int sid, int t_sec);
@@ -190,6 +251,7 @@ class OsClient {
   std::string host_;
   std::string pw_hex_;   // MD5 hex of the device password (supplied, from NVS)
   Transport transport_;
+  LogTransport log_transport_;
   bool connected_ = false;
   OsResult last_result_ = OsResult::NetworkError;
 };

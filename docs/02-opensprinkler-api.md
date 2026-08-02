@@ -80,6 +80,69 @@ with `pid != 0`, `rem > 0`, and `start <= devt`. Use `rem` for the countdown and
 > (per-station on/off + count) but lacks `rem`. Prefer `/jc` for the poll since
 > you need the countdown; `/js` is fine as a fallback.
 
+### `GET /jl` - run and event history
+
+The History overlay requests the most recent 30-day window:
+
+`GET /jl?pw=<md5>&hist=30`
+
+The successful response is a **bare JSON array**, ordered oldest to newest. It
+does not contain a `result` field:
+
+```json
+[
+  [3, 17, 616, 1413511817],
+  [0, "rd", 86400, 1413511845],
+  [254, 1, 5, 1413512107],
+  [1, 3, 2700, 1413552661, 12.75]
+]
+```
+
+Each row is one of:
+
+- `[pid, sid, dur, end]`
+- `[pid, sid, dur, end, flow]` when flow data is available for that run
+
+Fields and conventions:
+
+- `pid` is the 1-based program index for a scheduled program run.
+- `pid=99` is a manual station run started through `/cm`.
+- `pid=254` is a run-once program.
+- `pid=0` is a special event. For these rows, `sid` is a string code rather
+  than a station index.
+- For run rows, `sid` is the 0-based station index.
+- `dur` is the run or event duration in seconds.
+- `end` is the controller-local end epoch in seconds. The start time is
+  `end - dur`.
+- `flow` is an optional numeric flow metric.
+
+Special event codes:
+
+| `sid` | Meaning |
+|---|---|
+| `s1` | Sensor 1 event |
+| `s2` | Sensor 2 event |
+| `rd` | Rain delay event |
+| `fl` | Flow reading |
+| `wl` | Watering-level change |
+
+The v1 panel History view displays `s1`, `s2`, and `rd`. It intentionally hides
+`fl` and `wl`.
+
+Time-window forms:
+
+- `hist=n` requests calendar history back from today. `hist=0` is today only;
+  `hist=1` is today plus yesterday. The maximum is `365`.
+- `start=<epoch>&end=<epoch>` requests an inclusive explicit range. Both
+  values are controller-local epoch seconds, and the maximum span is 365 days.
+- Use either `hist` or the `start` and `end` pair, not both.
+
+Authentication uses the same lowercase MD5 `pw` as every other endpoint. On
+success, parse the bare array. On failure, the controller returns
+`{"result":<code>}`; `result==1` is the only success code for endpoints that
+return a result object, while `2` means unauthorized and all other codes are
+failures.
+
 ### `GET /cm` — run / stop a single station (the core command)
 Params: `sid` (**0-based**), `en` (`1` on / `0` off), `t` (seconds, required when `en=1`, range 1–64800), optional `qo` (queue option).
 
@@ -129,6 +192,12 @@ station(s)). Then start polling.
 - if nothing is on and the panel thought a station was running → it finished on the controller; go Idle (or, if Auto-advance is on and the panel initiated the run, advance — but prefer to let the panel's own timer drive auto-advance and use the poll only to reconcile).
 - a failed/timed-out poll → signal-loss state; a subsequent success → clear it and re-sync.
 
+**History open:** issue `GET /jl?pw=...&hist=30` on the network task. Keep a
+successful response cached, retain at most the newest 120 visible rows, and
+refresh on each later History open without blocking the UI task. Keep the prior
+cache visible while refreshing; before the first successful response, show the
+empty state.
+
 **User actions** map to the calls above. After a command returns `result==1`,
 optimistically update the UI; the next poll confirms.
 
@@ -151,6 +220,7 @@ optimistically update the UI; the next poll confirms.
 |---|---|
 | Load stations | `GET /jn?pw=…` |
 | Poll status | `GET /jc?pw=…` |
+| Load 30-day history | `GET /jl?pw=…&hist=30` |
 | Run station n | `GET /cm?pw=…&sid=n-1&en=1&t=RT` |
 | Turn off station n | `GET /cm?pw=…&sid=n-1&en=0` |
 | Advance/Jump | off current → on target (`t=RT`) |

@@ -21,7 +21,7 @@ This folder is the complete package for a coding agent to build the firmware.
 | `07-ci-cd-and-releases.md` | **CI/CD reference:** the four GitHub Actions workflows (build/test, tagged releases, workflow-security scanning, cloud-agent setup), the tag-driven release process + asset set, and the workflow conventions (SHA-pinned actions, least-privilege permissions, toolchain version pinning). |
 | `08-docs-site.md` | Maintaining the **public user manual & hosted web flasher** under `site/` (Just the Docs on GitHub Pages): structure, URLs/`relative_url`, adding pages, the flasher manifest, the build/deploy workflow, and how to (re)shoot the manual screenshots. Not published on the site. |
 | `09-ui-simulator.md` | The **host LVGL simulator** (`env:sim`): the fast local UX iteration loop that renders the real `lib/ui` screen code to 480x320 PNGs (same `lv_conf.h`/fonts as firmware, no hardware). Prereqs, the edit->build->render loop, driving states via `sim/fixtures.cpp`, the fidelity diff, and when to use it vs the mockup / `mock_os.py` / the bench. |
-| `mock_os.py` | Runnable emulator of the controller's API — serves `/jn`, `/jo`, `/jc`, `/js`, `/jp` and accepts `/cm`, `/cv`, `/mp`, `/cp`, `/pq`. Models the full sequential run queue, programs (M9), and pause. `test_mock_os.py` is its contract/connection test suite (`python3 docs/test_mock_os.py`). |
+| `mock_os.py` | Runnable emulator of the controller's API. Serves `/jn`, `/jo`, `/jc`, `/js`, `/jp`, `/jl` and accepts `/cm`, `/cv`, `/mp`, `/cp`, `/pq`. Models the full sequential run queue, programs (M9), pause, and realistic history. `test_mock_os.py` is its contract/connection test suite (`python3 docs/test_mock_os.py`). |
 
 ## Decisions already locked (do not re-litigate)
 

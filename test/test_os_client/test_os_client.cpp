@@ -41,6 +41,14 @@ void test_build_jp_url() {
       url.c_str());
 }
 
+void test_build_jl_url() {
+  const std::string url = build_jl_url("http://192.168.1.100",
+                                       "a6d82bced638de3def1e9bbb4983225c");
+  TEST_ASSERT_EQUAL_STRING(
+      "http://192.168.1.100/jl?pw=a6d82bced638de3def1e9bbb4983225c&hist=30",
+      url.c_str());
+}
+
 void test_build_cm_url_run() {
   const std::string url = build_cm_url("http://192.168.1.100",
                                        "a6d82bced638de3def1e9bbb4983225c",
@@ -305,6 +313,100 @@ void test_parse_jp_malformed() {
 }
 
 // ---------------------------------------------------------------------------
+// parse_jl
+// ---------------------------------------------------------------------------
+
+void test_parse_jl_four_tuple() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(parse_jl(R"([[3,17,616,1413511817]])", entries));
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(entries.size()));
+  TEST_ASSERT_EQUAL_INT(3, entries[0].pid);
+  TEST_ASSERT_EQUAL_INT(17, entries[0].sid);
+  TEST_ASSERT_EQUAL_UINT32(616, entries[0].duration_s);
+  TEST_ASSERT_EQUAL_UINT32(1413511817, entries[0].end_epoch);
+  TEST_ASSERT_FALSE(entries[0].has_flow);
+}
+
+void test_parse_jl_five_tuple_with_flow() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(parse_jl(R"([[1,3,2700,1413552661,12.75]])", entries));
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(entries.size()));
+  TEST_ASSERT_TRUE(entries[0].has_flow);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 12.75f, entries[0].flow);
+}
+
+void test_parse_jl_special_event_codes() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(parse_jl(
+      R"([[0,"s1",1,100],[0,"s2",0,200],[0,"rd",86400,300],[0,"fl",12,400],[0,"wl",85,500]])",
+      entries));
+  TEST_ASSERT_EQUAL_INT(5, static_cast<int>(entries.size()));
+  const char* expected[] = {"s1", "s2", "rd", "fl", "wl"};
+  for (int i = 0; i < 5; ++i) {
+    TEST_ASSERT_EQUAL_INT(0, entries[i].pid);
+    TEST_ASSERT_EQUAL_INT(-1, entries[i].sid);
+    TEST_ASSERT_EQUAL_STRING(expected[i], entries[i].event_code.c_str());
+  }
+}
+
+void test_parse_jl_manual_and_run_once() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(
+      parse_jl(R"([[99,2,45,1000],[254,4,300,2000]])", entries));
+  TEST_ASSERT_EQUAL_INT(2, static_cast<int>(entries.size()));
+  TEST_ASSERT_EQUAL_INT(99, entries[0].pid);
+  TEST_ASSERT_EQUAL_INT(254, entries[1].pid);
+}
+
+void test_parse_jl_empty_array() {
+  std::vector<LogEntry> entries = {LogEntry{}};
+  TEST_ASSERT_TRUE(parse_jl("[]", entries));
+  TEST_ASSERT_TRUE(entries.empty());
+}
+
+void test_parse_jl_skips_malformed_rows() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(parse_jl(
+      R"([null,[1,2,3],[1,"bad",3,4],[0,2,3,4],[-1,2,3,4],[1,2,-3,4],[1,2,3,4,5,6],[1,2,3,4]])",
+      entries));
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(entries.size()));
+  TEST_ASSERT_EQUAL_INT(1, entries[0].pid);
+  TEST_ASSERT_EQUAL_INT(2, entries[0].sid);
+}
+
+void test_parse_jl_rejects_malformed_top_level() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_FALSE(parse_jl("not json", entries));
+  TEST_ASSERT_FALSE(parse_jl(R"({"result":1})", entries));
+}
+
+void test_parse_jl_can_retain_only_newest_rows() {
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(
+      parse_jl(R"([[1,0,10,100],[1,1,20,200],[1,2,30,300]])",
+               entries, 2));
+  TEST_ASSERT_EQUAL_INT(2, static_cast<int>(entries.size()));
+  TEST_ASSERT_EQUAL_INT(1, entries[0].sid);
+  TEST_ASSERT_EQUAL_INT(2, entries[1].sid);
+}
+
+void test_jl_parser_filters_before_chunked_retention_cap() {
+  const std::string body =
+      R"([[1,0,10,100],[0,"fl",4,150],[99,1,20,200],[254,2,30,300]])";
+  std::vector<LogEntry> entries;
+  JlParser parser(entries, 2, [](const LogEntry& entry) {
+    return entry.pid != 0;
+  });
+  TEST_ASSERT_TRUE(parser.feed(body.data(), 11));
+  TEST_ASSERT_TRUE(parser.feed(body.data() + 11, 17));
+  TEST_ASSERT_TRUE(parser.feed(body.data() + 28, body.size() - 28));
+  TEST_ASSERT_TRUE(parser.finish());
+  TEST_ASSERT_EQUAL_INT(2, static_cast<int>(entries.size()));
+  TEST_ASSERT_EQUAL_INT(99, entries[0].pid);
+  TEST_ASSERT_EQUAL_INT(254, entries[1].pid);
+}
+
+// ---------------------------------------------------------------------------
 // parse_result
 // ---------------------------------------------------------------------------
 
@@ -410,6 +512,23 @@ void test_client_fetch_jp() {
       ("http://192.168.1.100/jp?pw=" + kMd5).c_str(),
       rt.calls[0].c_str());
   TEST_ASSERT_EQUAL_INT(2, static_cast<int>(d.programs.size()));
+}
+
+void test_client_fetch_jl() {
+  RecordingTransport rt;
+  rt.response = R"([[99,2,45,1000]])";
+  OsClient c(kHost, kMd5, [&rt](const std::string& url) { return rt(url); });
+
+  std::vector<LogEntry> entries;
+  TEST_ASSERT_TRUE(c.fetch_jl(entries));
+  TEST_ASSERT_TRUE(c.connected());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(OsResult::Ok),
+                        static_cast<int>(c.last_result()));
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rt.calls.size()));
+  TEST_ASSERT_EQUAL_STRING(
+      ("http://192.168.1.100/jl?pw=" + kMd5 + "&hist=30").c_str(),
+      rt.calls[0].c_str());
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(entries.size()));
 }
 
 void test_client_run_station() {
@@ -606,6 +725,7 @@ int main(int, char**) {
   RUN_TEST(test_build_jn_url);
   RUN_TEST(test_build_jc_url);
   RUN_TEST(test_build_jp_url);
+  RUN_TEST(test_build_jl_url);
   RUN_TEST(test_build_cm_url_run);
   RUN_TEST(test_build_cm_url_stop);
   RUN_TEST(test_build_cv_url);
@@ -630,6 +750,16 @@ int main(int, char**) {
   RUN_TEST(test_parse_jp_fields);
   RUN_TEST(test_parse_jp_malformed);
 
+  RUN_TEST(test_parse_jl_four_tuple);
+  RUN_TEST(test_parse_jl_five_tuple_with_flow);
+  RUN_TEST(test_parse_jl_special_event_codes);
+  RUN_TEST(test_parse_jl_manual_and_run_once);
+  RUN_TEST(test_parse_jl_empty_array);
+  RUN_TEST(test_parse_jl_skips_malformed_rows);
+  RUN_TEST(test_parse_jl_rejects_malformed_top_level);
+  RUN_TEST(test_parse_jl_can_retain_only_newest_rows);
+  RUN_TEST(test_jl_parser_filters_before_chunked_retention_cap);
+
   RUN_TEST(test_parse_result_ok);
   RUN_TEST(test_parse_result_unauthorized);
   RUN_TEST(test_parse_result_not_permitted);
@@ -639,6 +769,7 @@ int main(int, char**) {
   RUN_TEST(test_client_fetch_jc);
   RUN_TEST(test_client_fetch_jo);
   RUN_TEST(test_client_fetch_jp);
+  RUN_TEST(test_client_fetch_jl);
   RUN_TEST(test_client_run_station);
   RUN_TEST(test_client_stop_station);
   RUN_TEST(test_client_stop_all);

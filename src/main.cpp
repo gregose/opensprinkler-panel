@@ -36,6 +36,7 @@
 #include <TFT_eSPI.h>
 
 #include "bench_probe.h"
+#include "history_model.h"
 #include "os_client.h"
 #include "panel_config.h"
 #include "panel_state.h"
@@ -166,6 +167,8 @@ alignas(64) static uint8_t draw_buf[SCREEN_W * DRAW_BUF_LINES * 2];
 static osp::StationModel g_model;
 static std::unique_ptr<osp::OsClient>   g_client;
 static std::unique_ptr<osp::PanelState> g_ps;
+static std::vector<osp::HistoryRecord> g_history_records;
+static std::vector<osp::ui::HistoryEntry> g_history_entries;
 static SemaphoreHandle_t g_state_mutex = nullptr;
 static volatile uint32_t g_model_version = 0;
 static volatile uint32_t g_ui_beat = 0;
@@ -188,6 +191,9 @@ static volatile uint32_t g_sleep_to_ms_snapshot = 0;
 static volatile int g_batt_override_percent = -1;
 static TaskHandle_t g_ui_task_handle = nullptr;
 static TaskHandle_t g_net_task_handle = nullptr;
+// Protected by g_state_mutex. The UI task sets this on each History open and
+// the network task clears it when claiming the refresh.
+static bool g_history_fetch_requested = false;
 
 // NVS config cache.
 static String g_os_host;
@@ -1446,7 +1452,13 @@ static void ev_prog_run(lv_event_t* e) {
 static void ev_open_history(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
-    if (lock && g_ps) g_ps->open_history();
+    if (lock && g_ps) {
+        const bool was_open = g_ps->view().showing_history;
+        g_ps->open_history();
+        if (!was_open && g_ps->view().showing_history) {
+            g_history_fetch_requested = true;
+        }
+    }
 }
 static void ev_close_history(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -1457,13 +1469,21 @@ static void ev_hist_page_prev(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
     if (!(lock && g_ps)) return;
-    g_ps->set_hist_list_page(g_ps->view().hist_list_page - 1, 1);  // clamped
+    const int total_pages = g_history_entries.empty()
+        ? 0
+        : (static_cast<int>(g_history_entries.size()) +
+           MAX_HIST_ROWS - 1) / MAX_HIST_ROWS;
+    g_ps->set_hist_list_page(g_ps->view().hist_list_page - 1, total_pages);
 }
 static void ev_hist_page_next(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
     if (!(lock && g_ps)) return;
-    g_ps->set_hist_list_page(g_ps->view().hist_list_page + 1, 1);  // clamped
+    const int total_pages = g_history_entries.empty()
+        ? 0
+        : (static_cast<int>(g_history_entries.size()) +
+           MAX_HIST_ROWS - 1) / MAX_HIST_ROWS;
+    g_ps->set_hist_list_page(g_ps->view().hist_list_page + 1, total_pages);
 }
 
 static void ev_touch_any(lv_event_t* e) {
@@ -1547,9 +1567,11 @@ static void ui_update() {
     host.battery_tier    = osp::battery_tier_from_percent(battery_percent);
     host.host_name       = g_os_host.c_str();
 
-    // #127: History overlay data. PR1 has no /jl fetch yet, so pass an empty
-    // span; the overlay renders its empty state. PR2 wires the live log here.
     osp::ui::HistoryView history;
+    history.entries = g_history_entries.empty() ? nullptr
+                                                : g_history_entries.data();
+    history.count = static_cast<int>(g_history_entries.size());
+    history.page = v.hist_list_page;
 
     osp::ui::update_panel_screen(g_screen, v, g_model, g_ps->program_list(),
                                  history, host);
@@ -1572,6 +1594,87 @@ static osp::Transport make_http_transport() {
         const String body = http.getString();
         http.end();
         return body.c_str();
+    };
+}
+
+static bool retain_visible_history_log(const osp::LogEntry& entry) {
+    if (entry.pid == 0) {
+        return entry.event_code == "s1" || entry.event_code == "s2" ||
+               entry.event_code == "rd";
+    }
+    return entry.pid == 99 || entry.pid == 254 ||
+           (entry.pid >= 1 && entry.pid <= 250);
+}
+
+static osp::LogTransport make_jl_transport() {
+    return [](const std::string& url, std::size_t max_entries,
+              std::vector<osp::LogEntry>& out) -> osp::OsResult {
+        HTTPClient http;
+        http.setConnectTimeout(1500);
+        http.setTimeout(1500);
+        if (!http.begin(url.c_str())) return osp::OsResult::NetworkError;
+        const int code = http.GET();
+        if (code != HTTP_CODE_OK) {
+            http.end();
+            return osp::OsResult::NetworkError;
+        }
+
+        osp::JlParser parser(out, max_entries, retain_visible_history_log);
+        WiFiClient* stream = http.getStreamPtr();
+        if (!stream) {
+            http.end();
+            return osp::OsResult::NetworkError;
+        }
+        int remaining = http.getSize();
+        uint32_t last_progress_ms = millis();
+        std::string error_body;
+        error_body.reserve(64);
+        bool parser_valid = true;
+        uint8_t buffer[128];
+
+        while (remaining > 0 || remaining == -1) {
+            const int available = stream->available();
+            if (available <= 0) {
+                if (parser.finish() ||
+                    !http.connected() ||
+                    (millis() - last_progress_ms) >= 1500) {
+                    break;
+                }
+                delay(1);
+                continue;
+            }
+
+            std::size_t to_read =
+                std::min<std::size_t>(available, sizeof(buffer));
+            if (remaining > 0) {
+                to_read = std::min<std::size_t>(
+                    to_read, static_cast<std::size_t>(remaining));
+            }
+            const std::size_t read = stream->readBytes(buffer, to_read);
+            if (read == 0) continue;
+            last_progress_ms = millis();
+            if (remaining > 0) remaining -= static_cast<int>(read);
+
+            if (error_body.size() < 64) {
+                const std::size_t copy =
+                    std::min<std::size_t>(read, 64 - error_body.size());
+                error_body.append(reinterpret_cast<const char*>(buffer), copy);
+            }
+            if (parser_valid) {
+                parser_valid = parser.feed(
+                    reinterpret_cast<const char*>(buffer), read);
+            }
+            if (parser.finish()) break;
+        }
+
+        osp::OsResult result = osp::OsResult::NetworkError;
+        if (parser_valid && parser.finish()) {
+            result = osp::OsResult::Ok;
+        } else {
+            result = osp::parse_result(error_body);
+        }
+        http.end();
+        return result;
     };
 }
 
@@ -1714,6 +1817,84 @@ static bool poll_controller(uint32_t now_ms, int* failures) {
         }
     }
     *failures = 0;
+    return true;
+}
+
+static osp::ui::HistoryEntry::Kind ui_history_kind(osp::HistoryKind kind) {
+    using UiKind = osp::ui::HistoryEntry::Kind;
+    switch (kind) {
+        case osp::HistoryKind::ProgramRun: return UiKind::ProgramRun;
+        case osp::HistoryKind::ManualRun:  return UiKind::ManualRun;
+        case osp::HistoryKind::RunOnce:    return UiKind::RunOnce;
+        case osp::HistoryKind::RainDelay:  return UiKind::RainDelay;
+        case osp::HistoryKind::Sensor1:    return UiKind::Sensor1;
+        case osp::HistoryKind::Sensor2:    return UiKind::Sensor2;
+    }
+    return UiKind::ProgramRun;
+}
+
+static void rebuild_ui_history_unlocked() {
+    g_history_entries.clear();
+    g_history_entries.reserve(g_history_records.size());
+    for (const osp::HistoryRecord& record : g_history_records) {
+        osp::ui::HistoryEntry entry;
+        entry.name = record.name.c_str();
+        entry.dur_s = record.duration_s;
+        entry.when = record.when.c_str();
+        entry.kind = ui_history_kind(record.kind);
+        entry.tag = record.tag.empty() ? nullptr : record.tag.c_str();
+        g_history_entries.push_back(entry);
+    }
+}
+
+static bool refresh_history(uint32_t now_ms, int* failures) {
+    if (!g_client) return false;
+
+    std::vector<osp::LogEntry> logs;
+    if (!g_client->fetch_jl(
+            logs, 30,
+            static_cast<std::size_t>(osp::ui::HISTORY_MAX_RECORDS))) {
+        apply_link_error(now_ms, failures);
+        return false;
+    }
+
+    std::vector<std::string> station_names;
+    osp::JpData programs;
+    uint32_t controller_now = 0;
+    {
+        StateLock lock;
+        if (!(lock && g_ps)) return false;
+        station_names.reserve(g_model.stations().size());
+        for (const osp::Station& station : g_model.stations()) {
+            station_names.push_back(station.name);
+        }
+        programs = g_ps->program_list();
+        controller_now = static_cast<uint32_t>(
+            std::max(0L, g_ps->view().ctrl_devt));
+    }
+    if (controller_now == 0) return false;
+
+    std::vector<osp::HistoryRecord> records = osp::build_history_records(
+        logs, station_names, programs, controller_now,
+        static_cast<std::size_t>(osp::ui::HISTORY_MAX_RECORDS));
+
+    {
+        StateLock lock;
+        if (!(lock && g_ps)) return false;
+        g_history_records = std::move(records);
+        rebuild_ui_history_unlocked();
+        const int total_pages = g_history_entries.empty()
+            ? 0
+            : (static_cast<int>(g_history_entries.size()) +
+               MAX_HIST_ROWS - 1) / MAX_HIST_ROWS;
+        g_ps->set_hist_list_page(g_ps->view().hist_list_page, total_pages);
+        g_ps->on_link_connected(now_ms);
+        cache_phase_snapshot_unlocked();
+    }
+    *failures = 0;
+    Serial.printf("History: %d visible records from %d log rows\n",
+                  static_cast<int>(g_history_entries.size()),
+                  static_cast<int>(logs.size()));
     return true;
 }
 
@@ -1868,6 +2049,31 @@ static void network_task(void* /*arg*/) {
             }
         }
 
+        bool refresh_history_now = false;
+        {
+            StateLock lock;
+            if (lock && g_history_fetch_requested) {
+                g_history_fetch_requested = false;
+                refresh_history_now = true;
+            }
+        }
+        if (refresh_history_now) {
+            bool has_controller_time = false;
+            {
+                StateLock lock;
+                has_controller_time =
+                    lock && g_ps && g_ps->view().ctrl_devt > 0;
+            }
+            if (!has_controller_time &&
+                poll_controller(now, &link_failures)) {
+                last_jc_poll_ms = now;
+                has_controller_time = true;
+            }
+            if (has_controller_time) {
+                refresh_history(now, &link_failures);
+            }
+        }
+
         bool poll_now = false;
         bool desired_delivered = false;
         bool pending_sync = false;
@@ -1986,7 +2192,8 @@ void setup() {
     // ---- Init OsClient --------------------------------------------------
     const String host_url = "http://" + g_os_host;
     g_client.reset(new osp::OsClient(
-        host_url.c_str(), g_pw_md5.c_str(), make_http_transport()));
+        host_url.c_str(), g_pw_md5.c_str(), make_http_transport(),
+        make_jl_transport()));
 
     // ---- Init state machine + background tasks -------------------------
     {
