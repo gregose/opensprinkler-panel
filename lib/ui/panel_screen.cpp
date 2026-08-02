@@ -630,11 +630,14 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
 
     // ---- History list panel (#127) - full-width overlay ----------------
     // Mirrors the programs overlay (same header/Back, same pager) but with
-    // COMPACT single-line rows so ~7 fit per page instead of 4. Each row is:
-    //   [icon]  name .....(flex)..... duration  short-timestamp
-    // No day grouping, no touch scrolling; paging is the pager only.
-    static constexpr int HIST_HDR_H  = 44;
-    static constexpr int HIST_ROW_H  = 29;
+    // COMPACT single-line rows so ~9 fit per page instead of 4. Each row is:
+    //   [icon]  name  [program tag] .....(flex)..... duration  short-timestamp
+    // No day grouping, no touch scrolling; paging is the pager only. Rows are
+    // denser than v1 (23px vs 29, montserrat_14) to fit two more per page; the
+    // pager arrows are slimmed to match (HIST_ARROW_H) so nothing collides.
+    static constexpr int HIST_HDR_H   = 44;
+    static constexpr int HIST_ROW_H   = 23;
+    static constexpr int HIST_ARROW_H = 30;  // slim pager arrow (vs NAV_BTN_H 36)
     static constexpr int HIST_ROWS_BOTTOM = HIST_HDR_H + MAX_HIST_ROWS * HIST_ROW_H;
     static constexpr int HIST_PAGER_CY = HIST_ROWS_BOTTOM +
                                          (PROG_LIST_H - HIST_ROWS_BOTTOM) / 2;
@@ -707,7 +710,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // Leading kind icon (colour/glyph set per-frame in update).
         ps.hist_row_icon[r] = lv_label_create(ps.hist_rows[r]);
         lv_label_set_text(ps.hist_row_icon[r], "");
-        lv_obj_set_style_text_font(ps.hist_row_icon[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(ps.hist_row_icon[r], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(CLR_TEAL), 0);
         lv_obj_align(ps.hist_row_icon[r], LV_ALIGN_LEFT_MID, HIST_ICON_X, 0);
 
@@ -716,19 +719,24 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_label_set_text(ps.hist_row_name[r], "");
         lv_obj_set_width(ps.hist_row_name[r], HIST_NAME_W);
         // Constrain to one line so LONG_DOT ellipsizes instead of wrapping when
-        // the name is narrowed (e.g. manual rows that reserve room for the tag).
+        // the name is narrowed (e.g. rows that reserve room for the program tag).
         lv_obj_set_height(ps.hist_row_name[r],
-                          lv_font_get_line_height(&lv_font_montserrat_16));
+                          lv_font_get_line_height(&lv_font_montserrat_14));
         lv_label_set_long_mode(ps.hist_row_name[r], LV_LABEL_LONG_DOT);
-        lv_obj_set_style_text_font(ps.hist_row_name[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(ps.hist_row_name[r], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(CLR_TEXT), 0);
         lv_obj_align(ps.hist_row_name[r], LV_ALIGN_LEFT_MID, HIST_NAME_X, 0);
 
-        // Trailing "Manual" tag (shown only on manual-run rows). Muted, smaller
-        // font, at a fixed x just past the narrowed name column so it reads as a
-        // label on the row without colliding with the duration zone.
+        // Trailing context tag: the program name for a program run (or "Manual"
+        // for a manual run), muted and smaller, in a fixed column just past the
+        // narrowed name so it never collides with the duration zone. Fixed width
+        // + LONG_DOT so a long program name ellipsizes inside its own column.
         ps.hist_row_tag[r] = lv_label_create(ps.hist_rows[r]);
-        lv_label_set_text(ps.hist_row_tag[r], "Manual");
+        lv_label_set_text(ps.hist_row_tag[r], "");
+        lv_obj_set_width(ps.hist_row_tag[r], HIST_TAG_W);
+        lv_obj_set_height(ps.hist_row_tag[r],
+                          lv_font_get_line_height(&lv_font_montserrat_12));
+        lv_label_set_long_mode(ps.hist_row_tag[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(ps.hist_row_tag[r], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(ps.hist_row_tag[r], hex_color(CLR_MUTED), 0);
         lv_obj_align(ps.hist_row_tag[r], LV_ALIGN_LEFT_MID, HIST_TAG_X, 0);
@@ -768,11 +776,11 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         }
 
         static constexpr int ARROW_INSET = 14;
-        const int arrow_y = HIST_PAGER_CY - NAV_BTN_H / 2;
+        const int arrow_y = HIST_PAGER_CY - HIST_ARROW_H / 2;
 
         ps.hist_page_prev = make_btn(ps.pnl_history, LV_SYMBOL_LEFT,
                                      CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
-        lv_obj_set_size(ps.hist_page_prev, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_size(ps.hist_page_prev, PROG_ARROW_W, HIST_ARROW_H);
         lv_obj_set_pos(ps.hist_page_prev, ARROW_INSET, arrow_y);
         if (cbs.on_hist_page_prev)
             lv_obj_add_event_cb(ps.hist_page_prev, cbs.on_hist_page_prev,
@@ -781,7 +789,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
 
         ps.hist_page_next = make_btn(ps.pnl_history, LV_SYMBOL_RIGHT,
                                      CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
-        lv_obj_set_size(ps.hist_page_next, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_size(ps.hist_page_next, PROG_ARROW_W, HIST_ARROW_H);
         lv_obj_set_pos(ps.hist_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
         if (cbs.on_hist_page_next)
             lv_obj_add_event_cb(ps.hist_page_next, cbs.on_hist_page_next,
@@ -1295,13 +1303,17 @@ void update_panel_screen(PanelScreen& ps,
                 lv_label_set_text(ps.hist_row_icon[r], icon);
                 lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(icon_col), 0);
 
-                // Manual-run tag: narrow the name column so the "Manual" tag
-                // (fixed x) never collides with the name; the name ellipsizes
-                // first when it is long.
-                const bool manual = (e.kind == HistoryEntry::ManualRun);
+                // Context tag: program name for a program run, "Manual" for a
+                // manual run (default when the fixture leaves tag null). When a
+                // tag is present the name column is narrowed so the two never
+                // overlap and the name ellipsizes first.
+                const char* tag = e.tag;
+                if (!tag && e.kind == HistoryEntry::ManualRun) tag = "Manual";
+                const bool has_tag = tag && tag[0];
                 lv_obj_set_width(ps.hist_row_name[r],
-                                 manual ? HIST_NAME_W_TAG : HIST_NAME_W);
-                obj_set_hidden(ps.hist_row_tag[r], !manual);
+                                 has_tag ? HIST_NAME_W_TAG : HIST_NAME_W);
+                if (has_tag) lv_label_set_text(ps.hist_row_tag[r], tag);
+                obj_set_hidden(ps.hist_row_tag[r], !has_tag);
                 lv_label_set_text(ps.hist_row_name[r], e.name ? e.name : "");
                 lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(name_col), 0);
 

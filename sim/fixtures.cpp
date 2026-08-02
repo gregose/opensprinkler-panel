@@ -155,38 +155,46 @@ Fixture make_fixture(const std::string& state) {
         f.view.showing_programs_list = true;
         f.view.prog_list_page = 1;
     } else if (state == "history-list" || state == "history-list-paged") {
-        // Realistic mixed log across named yard zones: program runs, one manual
-        // run, one run-once. 11 rows -> 2 pages (7 + 4) so the pager engages.
+        // Realistic mixed log across named yard zones. Each station run is tagged
+        // with the program that drove it (Option C: no collapsing - one row per
+        // station run, the program name in the trailing tag). 15 rows -> 2 pages
+        // (9 + 6) so the pager engages.
         f.view.showing_history = true;
         f.view.hist_list_page = (state == "history-list-paged") ? 1 : 0;
         using HE = ui::HistoryEntry;
         f.history_entries = {
-            {"Front Lawn",  600, "Today 6:32a", HE::ProgramRun},
-            {"Back Lawn",   600, "Today 6:22a", HE::ProgramRun},
-            {"Rose Bed",    300, "Today 6:12a", HE::ProgramRun},
-            {"Garden Drip", 900, "Today 6:00a", HE::ProgramRun},
+            {"Front Lawn",  600, "Today 6:32a", HE::ProgramRun, "Morning"},
+            {"Back Lawn",   600, "Today 6:22a", HE::ProgramRun, "Morning"},
+            {"Rose Bed",    300, "Today 6:12a", HE::ProgramRun, "Morning"},
+            {"Garden Drip", 900, "Today 6:00a", HE::ProgramRun, "Morning"},
             {"Backyard Vegetable Garden Beds", 120, "Today 5:45a", HE::ManualRun},
             {"Veggie Beds", 480, "Today 5:30a", HE::RunOnce},
-            {"Side Yard",   300, "Tue 8:15p",   HE::ProgramRun},
-            {"Front Lawn",  600, "Tue 6:32a",   HE::ProgramRun},
-            {"Back Lawn",   600, "Tue 6:22a",   HE::ProgramRun},
-            {"Parkway",     240, "Mon 7:10p",   HE::ManualRun},
-            {"Garden Drip", 900, "Jul 28",      HE::ProgramRun},
+            {"Parkway",     300, "Tue 8:15p",   HE::ProgramRun, "Evening"},
+            {"Front Lawn",  600, "Tue 6:32a",   HE::ProgramRun, "Morning"},
+            {"Back Lawn",   600, "Tue 6:22a",   HE::ProgramRun, "Morning"},
+            {"Side Yard",   240, "Mon 7:10p",   HE::ManualRun},
+            {"Rose Bed",    300, "Mon 6:12a",   HE::ProgramRun, "Morning"},
+            {"Garden Drip", 900, "Sun 6:00a",   HE::ProgramRun, "Weekly Deep"},
+            {"Front Lawn",  600, "Sun 5:45a",   HE::ProgramRun, "Weekly Deep"},
+            {"Parkway",     300, "Jul 28",      HE::ProgramRun, "Evening"},
+            {"Veggie Beds", 480, "Jul 27",      HE::RunOnce},
         };
     } else if (state == "history-mixed-events") {
-        // A page that mixes runs with a rain-delay + sensor events so their
-        // icons and dimming are visible alongside normal runs.
+        // A page that mixes tagged program runs with a rain-delay + sensor
+        // events so their icons and dimming are visible alongside normal runs.
         f.view.showing_history = true;
         f.view.hist_list_page = 0;
         using HE = ui::HistoryEntry;
         f.history_entries = {
-            {"Front Lawn",   600,   "Today 6:32a", HE::ProgramRun},
+            {"Front Lawn",   600,   "Today 6:32a", HE::ProgramRun, "Morning"},
             {"Rain delay",   86400, "Today 5:00a", HE::RainDelay},
-            {"Back Lawn",    600,   "Mon 6:22a",   HE::ProgramRun},
+            {"Back Lawn",    600,   "Mon 6:22a",   HE::ProgramRun, "Morning"},
             {"Rain sensor",  0,     "Mon 4:15a",   HE::Sensor1},
-            {"Garden Drip",  900,   "Sun 6:00a",   HE::ProgramRun},
-            {"Rose Bed",     300,   "Sun 5:48a",   HE::ProgramRun},
+            {"Garden Drip",  900,   "Sun 6:00a",   HE::ProgramRun, "Weekly Deep"},
+            {"Rose Bed",     300,   "Sun 5:48a",   HE::ProgramRun, "Weekly Deep"},
+            {"Patio Pots",   120,   "Sun 5:30a",   HE::ManualRun},
             {"Soil sensor",  0,     "Sat 9:30p",   HE::Sensor2},
+            {"Side Yard",    300,   "Sat 6:00a",   HE::ProgramRun, "Evening"},
         };
     } else if (state == "history-empty") {
         // No log yet: centred empty-state message, Back + top bar still shown.

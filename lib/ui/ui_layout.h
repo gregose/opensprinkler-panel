@@ -45,8 +45,8 @@ static constexpr int MAX_PROG_ROWS  = 4;  // program rows per page
 static constexpr int MAX_PROG_PAGES = 6;  // pager dot capacity
 static constexpr int MAX_QROWS      = 9;  // visible program-queue rows
 
-// #127 History overlay: compact single-line rows, ~7 per page (vs 4 programs).
-static constexpr int MAX_HIST_ROWS  = 7;  // history rows per page
+// #127 History overlay: compact single-line rows, ~9 per page (vs 4 programs).
+static constexpr int MAX_HIST_ROWS  = 9;  // history rows per page
 static constexpr int MAX_HIST_PAGES = 6;  // history pager dot capacity
 
 // #127 History row content geometry (shared by the build + per-frame update so

@@ -29,6 +29,10 @@ struct HistoryEntry {
     uint32_t    dur_s = 0;    // precomputed run duration, seconds
     const char* when  = "";   // precomputed short timestamp, e.g. "Today 6:32a"
     Kind        kind  = ProgramRun;
+    // Optional context label shown after the name (muted). For a program run
+    // this is the program name (e.g. "Morning"); manual runs default to
+    // "Manual" when null. Events (rain delay, sensors) leave it null.
+    const char* tag   = nullptr;
 };
 
 // The full History view model: a borrowed span of entries plus the current
