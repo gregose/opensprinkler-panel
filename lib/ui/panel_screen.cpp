@@ -288,19 +288,21 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
 
         // Programs + History entry buttons, stacked in the space below the
         // Auto-advance row. Both share the same width/style/height so the right
-        // column reads as one family; a leading glyph names the screen each
-        // opens (list -> programs, file -> history). Text uses CLR_TEXT like the
-        // other secondary buttons rather than a teal accent.
+        // column reads as one family; plain text labels (no leading glyph) name
+        // the screen each opens. Text uses CLR_TEXT like the other secondary
+        // buttons rather than a teal accent.
         //
         // The right panel is already flush to the STATIONS grid (its bottom edge
-        // == grid top) so it cannot grow downward; instead the buttons fill the
-        // full nav band from just below auto-advance down to the panel's inner
-        // bottom edge, overlapping the 10px bottom pad (same bg) to reclaim it.
-        // This grows each button 29->35px (+6) vs the initial #127 layout while
-        // leaving the stepper + auto-advance at their current legible spacing.
-        static constexpr int NAV_BTN2_H  = 35;  // shared nav-button height
-        static constexpr int NAV_BTN2_G  = 7;   // gap between the two buttons
-        const int nav_top    = AA_Y + AA_H;             // below auto-adv (=94)
+        // == grid top) so it cannot grow downward; the buttons fill the nav band
+        // below auto-advance (with an 8px breathing gap so they don't touch the
+        // toggle) down to the panel's inner bottom edge, overlapping the 10px
+        // bottom pad (same bg) to reclaim it. This grows each button 29->31px
+        // (+2) vs the initial #127 layout while leaving the stepper +
+        // auto-advance at their current legible spacing.
+        static constexpr int NAV_BTN2_H  = 31;  // shared nav-button height
+        static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
+        static constexpr int NAV_TOP_GAP = 8;   // gap below auto-advance toggle
+        const int nav_top    = AA_Y + AA_H + NAV_TOP_GAP;  // below auto-adv (=102)
         const int nav_bottom = CONTENT_H - PANEL_PAD;   // overlap bottom pad (=171)
         const int nav_space  = nav_bottom - nav_top;    // usable band (=77)
         const int nav_block  = 2 * NAV_BTN2_H + NAV_BTN2_G;  // both + gap
@@ -308,14 +310,14 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         if (prog_btn_y < nav_top) prog_btn_y = nav_top;
         const int hist_btn_y = prog_btn_y + NAV_BTN2_H + NAV_BTN2_G;
 
-        ps.btn_programs = make_btn(pnl, LV_SYMBOL_LIST " Programs",
+        ps.btn_programs = make_btn(pnl, "Programs",
                                    CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
         lv_obj_set_size(ps.btn_programs, PANEL_CONTENT_W, NAV_BTN2_H);
         lv_obj_align(ps.btn_programs, LV_ALIGN_TOP_LEFT, 0, prog_btn_y);
         if (cbs.on_open_programs)
             lv_obj_add_event_cb(ps.btn_programs, cbs.on_open_programs, LV_EVENT_CLICKED, nullptr);
 
-        ps.btn_history = make_btn(pnl, LV_SYMBOL_FILE " History",
+        ps.btn_history = make_btn(pnl, "History",
                                   CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
         lv_obj_set_size(ps.btn_history, PANEL_CONTENT_W, NAV_BTN2_H);
         lv_obj_align(ps.btn_history, LV_ALIGN_TOP_LEFT, 0, hist_btn_y);
@@ -663,6 +665,16 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_set_style_text_color(lbl_title, hex_color(CLR_TEXT), 0);
         lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 10, 0);
 
+        // Retention annotation: the controller's run log only spans a fixed
+        // recent window, so name it next to the title (muted, smaller) to set
+        // expectations. Static "Last 30 days" for now; PR2 sources the real
+        // window from the /jl range once live data is wired in.
+        lv_obj_t* lbl_span = lv_label_create(hdr);
+        lv_label_set_text(lbl_span, "Last 30 days");
+        lv_obj_set_style_text_font(lbl_span, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_span, hex_color(CLR_MUTED), 0);
+        lv_obj_align_to(lbl_span, lbl_title, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -2);
+
         lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
                                       CLR_LINE, CLR_TEXT,
                                       &lv_font_montserrat_20, 8);
@@ -716,7 +728,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // font, at a fixed x just past the narrowed name column so it reads as a
         // label on the row without colliding with the duration zone.
         ps.hist_row_tag[r] = lv_label_create(ps.hist_rows[r]);
-        lv_label_set_text(ps.hist_row_tag[r], LV_SYMBOL_BULLET " Manual");
+        lv_label_set_text(ps.hist_row_tag[r], "Manual");
         lv_obj_set_style_text_font(ps.hist_row_tag[r], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(ps.hist_row_tag[r], hex_color(CLR_MUTED), 0);
         lv_obj_align(ps.hist_row_tag[r], LV_ALIGN_LEFT_MID, HIST_TAG_X, 0);
