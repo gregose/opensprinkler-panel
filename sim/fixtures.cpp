@@ -165,7 +165,7 @@ Fixture make_fixture(const std::string& state) {
             {"Back Lawn",   600, "Today 6:22a", HE::ProgramRun},
             {"Rose Bed",    300, "Today 6:12a", HE::ProgramRun},
             {"Garden Drip", 900, "Today 6:00a", HE::ProgramRun},
-            {"Patio Pots",  120, "Today 5:45a", HE::ManualRun},
+            {"Backyard Vegetable Garden Beds", 120, "Today 5:45a", HE::ManualRun},
             {"Veggie Beds", 480, "Today 5:30a", HE::RunOnce},
             {"Side Yard",   300, "Tue 8:15p",   HE::ProgramRun},
             {"Front Lawn",  600, "Tue 6:32a",   HE::ProgramRun},

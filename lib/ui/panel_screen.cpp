@@ -289,14 +289,21 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // Programs + History entry buttons, stacked in the space below the
         // Auto-advance row. Both share the same width/style/height so the right
         // column reads as one family; a leading glyph names the screen each
-        // opens (list -> programs, loop -> history). Text uses CLR_TEXT like the
+        // opens (list -> programs, file -> history). Text uses CLR_TEXT like the
         // other secondary buttons rather than a teal accent.
-        static constexpr int NAV_BTN2_H  = 29;  // shared nav-button height
-        static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
-        static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
-        const int nav_top   = AA_Y + AA_H;                     // below auto-adv
-        const int nav_space = PANEL_USABLE_H - nav_top;        // remaining band
-        const int nav_block = 2 * NAV_BTN2_H + NAV_BTN2_G;     // both + gap
+        //
+        // The right panel is already flush to the STATIONS grid (its bottom edge
+        // == grid top) so it cannot grow downward; instead the buttons fill the
+        // full nav band from just below auto-advance down to the panel's inner
+        // bottom edge, overlapping the 10px bottom pad (same bg) to reclaim it.
+        // This grows each button 29->35px (+6) vs the initial #127 layout while
+        // leaving the stepper + auto-advance at their current legible spacing.
+        static constexpr int NAV_BTN2_H  = 35;  // shared nav-button height
+        static constexpr int NAV_BTN2_G  = 7;   // gap between the two buttons
+        const int nav_top    = AA_Y + AA_H;             // below auto-adv (=94)
+        const int nav_bottom = CONTENT_H - PANEL_PAD;   // overlap bottom pad (=171)
+        const int nav_space  = nav_bottom - nav_top;    // usable band (=77)
+        const int nav_block  = 2 * NAV_BTN2_H + NAV_BTN2_G;  // both + gap
         int prog_btn_y = nav_top + (nav_space - nav_block) / 2;
         if (prog_btn_y < nav_top) prog_btn_y = nav_top;
         const int hist_btn_y = prog_btn_y + NAV_BTN2_H + NAV_BTN2_G;
@@ -308,7 +315,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         if (cbs.on_open_programs)
             lv_obj_add_event_cb(ps.btn_programs, cbs.on_open_programs, LV_EVENT_CLICKED, nullptr);
 
-        ps.btn_history = make_btn(pnl, LV_SYMBOL_LOOP " History",
+        ps.btn_history = make_btn(pnl, LV_SYMBOL_FILE " History",
                                   CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
         lv_obj_set_size(ps.btn_history, PANEL_CONTENT_W, NAV_BTN2_H);
         lv_obj_align(ps.btn_history, LV_ALIGN_TOP_LEFT, 0, hist_btn_y);
@@ -630,17 +637,6 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
     static constexpr int HIST_PAGER_CY = HIST_ROWS_BOTTOM +
                                          (PROG_LIST_H - HIST_ROWS_BOTTOM) / 2;
     static constexpr int HIST_DOT_Y  = HIST_PAGER_CY - PROG_DOT_H / 2;
-    // Row content geometry. Duration + timestamp are right-aligned in a fixed
-    // right zone; icon + name are left-aligned; the name flexes and ellipsizes.
-    static constexpr int HIST_ICON_X = 10;
-    static constexpr int HIST_NAME_X = 36;
-    static constexpr int HIST_RP     = 10;  // right inset from row edge
-    static constexpr int HIST_WHEN_W = 96;  // timestamp column width
-    static constexpr int HIST_DUR_W  = 52;  // duration column width
-    static constexpr int HIST_COL_G  = 6;   // gap between duration + timestamp
-    static constexpr int HIST_NAME_W =
-        SCREEN_W - HIST_NAME_X -
-        (HIST_RP + HIST_WHEN_W + HIST_COL_G + HIST_DUR_W + 8);
 
     ps.pnl_history = lv_obj_create(scr);
     lv_obj_set_size(ps.pnl_history, SCREEN_W, PROG_LIST_H);
@@ -707,10 +703,24 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         ps.hist_row_name[r] = lv_label_create(ps.hist_rows[r]);
         lv_label_set_text(ps.hist_row_name[r], "");
         lv_obj_set_width(ps.hist_row_name[r], HIST_NAME_W);
+        // Constrain to one line so LONG_DOT ellipsizes instead of wrapping when
+        // the name is narrowed (e.g. manual rows that reserve room for the tag).
+        lv_obj_set_height(ps.hist_row_name[r],
+                          lv_font_get_line_height(&lv_font_montserrat_16));
         lv_label_set_long_mode(ps.hist_row_name[r], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_font(ps.hist_row_name[r], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(CLR_TEXT), 0);
         lv_obj_align(ps.hist_row_name[r], LV_ALIGN_LEFT_MID, HIST_NAME_X, 0);
+
+        // Trailing "Manual" tag (shown only on manual-run rows). Muted, smaller
+        // font, at a fixed x just past the narrowed name column so it reads as a
+        // label on the row without colliding with the duration zone.
+        ps.hist_row_tag[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_tag[r], LV_SYMBOL_BULLET " Manual");
+        lv_obj_set_style_text_font(ps.hist_row_tag[r], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(ps.hist_row_tag[r], hex_color(CLR_MUTED), 0);
+        lv_obj_align(ps.hist_row_tag[r], LV_ALIGN_LEFT_MID, HIST_TAG_X, 0);
+        lv_obj_add_flag(ps.hist_row_tag[r], LV_OBJ_FLAG_HIDDEN);
 
         // Duration (right-aligned column).
         ps.hist_row_dur[r] = lv_label_create(ps.hist_rows[r]);
@@ -1256,9 +1266,9 @@ void update_panel_screen(PanelScreen& ps,
                     case HistoryEntry::ProgramRun:
                         icon = LV_SYMBOL_TINT; icon_col = CLR_TEAL; break;
                     case HistoryEntry::ManualRun:
-                        // Droplet in a distinct (lighter) tint so a manual run
-                        // reads differently from a scheduled program run.
-                        icon = LV_SYMBOL_TINT; icon_col = CLR_LEDE; break;
+                        // Manual runs keep the teal droplet (same as a program
+                        // run) but get a trailing "Manual" tag, set below.
+                        icon = LV_SYMBOL_TINT; icon_col = CLR_TEAL; break;
                     case HistoryEntry::RunOnce:
                         icon = LV_SYMBOL_LOOP; icon_col = CLR_TEAL; break;
                     case HistoryEntry::RainDelay:
@@ -1272,6 +1282,14 @@ void update_panel_screen(PanelScreen& ps,
 
                 lv_label_set_text(ps.hist_row_icon[r], icon);
                 lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(icon_col), 0);
+
+                // Manual-run tag: narrow the name column so the "Manual" tag
+                // (fixed x) never collides with the name; the name ellipsizes
+                // first when it is long.
+                const bool manual = (e.kind == HistoryEntry::ManualRun);
+                lv_obj_set_width(ps.hist_row_name[r],
+                                 manual ? HIST_NAME_W_TAG : HIST_NAME_W);
+                obj_set_hidden(ps.hist_row_tag[r], !manual);
                 lv_label_set_text(ps.hist_row_name[r], e.name ? e.name : "");
                 lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(name_col), 0);
 

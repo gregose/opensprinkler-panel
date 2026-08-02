@@ -48,3 +48,21 @@ static constexpr int MAX_QROWS      = 9;  // visible program-queue rows
 // #127 History overlay: compact single-line rows, ~7 per page (vs 4 programs).
 static constexpr int MAX_HIST_ROWS  = 7;  // history rows per page
 static constexpr int MAX_HIST_PAGES = 6;  // history pager dot capacity
+
+// #127 History row content geometry (shared by the build + per-frame update so
+// the update can narrow the name column on manual-run rows to fit the tag).
+static constexpr int HIST_ICON_X = 10;  // leading kind glyph x
+static constexpr int HIST_NAME_X = 36;  // name column x
+static constexpr int HIST_RP     = 10;  // right inset from row edge
+static constexpr int HIST_WHEN_W = 96;  // timestamp column width
+static constexpr int HIST_DUR_W  = 52;  // duration column width
+static constexpr int HIST_COL_G  = 6;   // gap between duration + timestamp
+static constexpr int HIST_TAG_W  = 66;  // "Manual" tag column width
+static constexpr int HIST_TAG_G  = 6;   // gap between name and tag
+static constexpr int HIST_NAME_W =
+    SCREEN_W - HIST_NAME_X -
+    (HIST_RP + HIST_WHEN_W + HIST_COL_G + HIST_DUR_W + 8);
+// Narrowed name width on manual rows (leaves room for the trailing tag), and
+// the fixed x where that tag sits (just past the narrowed name).
+static constexpr int HIST_NAME_W_TAG = HIST_NAME_W - HIST_TAG_W - HIST_TAG_G;
+static constexpr int HIST_TAG_X = HIST_NAME_X + HIST_NAME_W_TAG + HIST_TAG_G;
