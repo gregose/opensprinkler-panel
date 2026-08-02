@@ -57,7 +57,7 @@ static constexpr int HIST_RP     = 10;  // right inset from row edge
 static constexpr int HIST_WHEN_W = 96;  // timestamp column width
 static constexpr int HIST_DUR_W  = 52;  // duration column width
 static constexpr int HIST_COL_G  = 6;   // gap between duration + timestamp
-static constexpr int HIST_TAG_W  = 66;  // "Manual" tag column width
+static constexpr int HIST_TAG_W  = 96;  // program/context tag column width
 static constexpr int HIST_TAG_G  = 6;   // gap between name and tag
 static constexpr int HIST_NAME_W =
     SCREEN_W - HIST_NAME_X -
