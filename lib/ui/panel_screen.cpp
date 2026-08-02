@@ -218,8 +218,13 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_set_style_pad_all(pnl, 10, 0);
         lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
 
-        static constexpr int STEP_Y = 18;
-        static constexpr int STEP_H = 44;
+        // Tightened vertical rhythm (#127): the right column now stacks TWO
+        // nav buttons (Programs + History) below auto-advance, so the stepper
+        // and auto-advance sit a few px higher and are slightly shorter than
+        // the original single-button layout to free room. (STEP_Y 18->14,
+        // STEP_H 44->40, AA gap 8->6, AA_H 38->34.)
+        static constexpr int STEP_Y = 14;
+        static constexpr int STEP_H = 40;
         static constexpr int PANEL_PAD = 10;
         static constexpr int PANEL_CONTENT_W = RIGHT_W - (2 * PANEL_PAD);
 
@@ -255,8 +260,8 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // Auto-advance row sits directly under the stepper (no divider) so the
         // two run-time controls read as a group. ~8 px gap keeps touch targets
         // from colliding.
-        static constexpr int AA_Y = STEP_Y + STEP_H + 8;  // just below stepper
-        static constexpr int AA_H = 38;
+        static constexpr int AA_Y = STEP_Y + STEP_H + 6;  // just below stepper
+        static constexpr int AA_H = 34;
         lv_obj_t* row_auto_adv = lv_obj_create(pnl);
         lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, AA_H);
         lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, AA_Y);
@@ -281,26 +286,43 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_clear_flag(ps.sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
 
-        // "Programs" entry button - vertically centred in the space between the
-        // Auto-advance row and the panel's bottom edge (biased a few px lower so
-        // it reads as centred in the column rather than hugging Auto-advance).
-        // Height matches the run-time stepper (STEP_H) so the right column reads
-        // as one family of controls. A leading list glyph reads as "a list of
-        // programs" (the screen it opens); text uses CLR_TEXT like the other
-        // secondary buttons (-, +, Pause) rather than a teal accent.
-        static constexpr int PROG_BTN_H = STEP_H;
-        static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
-        const int aa_bottom = AA_Y + AA_H;
-        int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
-        if (prog_btn_y > PANEL_USABLE_H - PROG_BTN_H) {
-            prog_btn_y = PANEL_USABLE_H - PROG_BTN_H;
-        }
-        ps.btn_programs = make_btn(pnl, LV_SYMBOL_LIST " Programs",
+        // Programs + History entry buttons, stacked in the space below the
+        // Auto-advance row. Both share the same width/style/height so the right
+        // column reads as one family; plain text labels (no leading glyph) name
+        // the screen each opens. Text uses CLR_TEXT like the other secondary
+        // buttons rather than a teal accent.
+        //
+        // The right panel is already flush to the STATIONS grid (its bottom edge
+        // == grid top) so it cannot grow downward; the buttons fill the nav band
+        // below auto-advance (with an 8px breathing gap so they don't touch the
+        // toggle) down to the panel's inner bottom edge, overlapping the 10px
+        // bottom pad (same bg) to reclaim it. This grows each button 29->31px
+        // (+2) vs the initial #127 layout while leaving the stepper +
+        // auto-advance at their current legible spacing.
+        static constexpr int NAV_BTN2_H  = 31;  // shared nav-button height
+        static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
+        static constexpr int NAV_TOP_GAP = 8;   // gap below auto-advance toggle
+        const int nav_top    = AA_Y + AA_H + NAV_TOP_GAP;  // below auto-adv (=102)
+        const int nav_bottom = CONTENT_H - PANEL_PAD;   // overlap bottom pad (=171)
+        const int nav_space  = nav_bottom - nav_top;    // usable band (=77)
+        const int nav_block  = 2 * NAV_BTN2_H + NAV_BTN2_G;  // both + gap
+        int prog_btn_y = nav_top + (nav_space - nav_block) / 2;
+        if (prog_btn_y < nav_top) prog_btn_y = nav_top;
+        const int hist_btn_y = prog_btn_y + NAV_BTN2_H + NAV_BTN2_G;
+
+        ps.btn_programs = make_btn(pnl, "Programs",
                                    CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
-        lv_obj_set_size(ps.btn_programs, PANEL_CONTENT_W, PROG_BTN_H);
+        lv_obj_set_size(ps.btn_programs, PANEL_CONTENT_W, NAV_BTN2_H);
         lv_obj_align(ps.btn_programs, LV_ALIGN_TOP_LEFT, 0, prog_btn_y);
         if (cbs.on_open_programs)
             lv_obj_add_event_cb(ps.btn_programs, cbs.on_open_programs, LV_EVENT_CLICKED, nullptr);
+
+        ps.btn_history = make_btn(pnl, "History",
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
+        lv_obj_set_size(ps.btn_history, PANEL_CONTENT_W, NAV_BTN2_H);
+        lv_obj_align(ps.btn_history, LV_ALIGN_TOP_LEFT, 0, hist_btn_y);
+        if (cbs.on_open_history)
+            lv_obj_add_event_cb(ps.btn_history, cbs.on_open_history, LV_EVENT_CLICKED, nullptr);
     }
 
     // ---- Right-side program QUEUE list (M9) ----------------------------
@@ -606,6 +628,171 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_add_flag(ps.prog_page_next, LV_OBJ_FLAG_HIDDEN);
     }
 
+    // ---- History list panel (#127) - full-width overlay ----------------
+    // Mirrors the programs overlay (same header/Back) but with COMPACT
+    // single-line rows so ~10 fit per page instead of 4. Each row is:
+    //   [icon]  name  [program tag] .....(flex)..... duration  short-timestamp
+    // No day grouping, no touch scrolling. The pager is a numeric "Page N / M"
+    // label between prev/next arrows (not dots) so it scales to the many pages a
+    // busy 30-day log produces.
+    static constexpr int HIST_HDR_H   = 44;
+    static constexpr int HIST_ROW_H   = 21;
+    static constexpr int HIST_ARROW_H = 30;  // slim pager arrow (vs NAV_BTN_H 36)
+    static constexpr int HIST_ROWS_BOTTOM = HIST_HDR_H + MAX_HIST_ROWS * HIST_ROW_H;
+    static constexpr int HIST_PAGER_CY = HIST_ROWS_BOTTOM +
+                                         (PROG_LIST_H - HIST_ROWS_BOTTOM) / 2;
+
+    ps.pnl_history = lv_obj_create(scr);
+    lv_obj_set_size(ps.pnl_history, SCREEN_W, PROG_LIST_H);
+    lv_obj_set_pos(ps.pnl_history, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(ps.pnl_history, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(ps.pnl_history, 0, 0);
+    lv_obj_set_style_pad_all(ps.pnl_history, 0, 0);
+    lv_obj_clear_flag(ps.pnl_history, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ps.pnl_history, LV_OBJ_FLAG_HIDDEN);
+
+    // Header row: "HISTORY" + Back (same treatment as the programs list).
+    {
+        lv_obj_t* hdr = lv_obj_create(ps.pnl_history);
+        lv_obj_set_size(hdr, SCREEN_W, HIST_HDR_H);
+        lv_obj_set_pos(hdr, 0, 0);
+        lv_obj_set_style_bg_color(hdr, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* lbl_title = lv_label_create(hdr);
+        lv_label_set_text(lbl_title, "HISTORY");
+        lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl_title, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 10, 0);
+
+        // Retention annotation: the controller's run log only spans a fixed
+        // recent window, so name it next to the title (muted, smaller) to set
+        // expectations. Static "Last 30 days" for now; PR2 sources the real
+        // window from the /jl range once live data is wired in.
+        lv_obj_t* lbl_span = lv_label_create(hdr);
+        lv_label_set_text(lbl_span, "Last 30 days");
+        lv_obj_set_style_text_font(lbl_span, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_span, hex_color(CLR_MUTED), 0);
+        lv_obj_align_to(lbl_span, lbl_title, LV_ALIGN_OUT_RIGHT_BOTTOM, 8, -2);
+
+        lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
+                                      CLR_LINE, CLR_TEXT,
+                                      &lv_font_montserrat_20, 8);
+        lv_obj_set_size(btn_back, 128, NAV_BTN_H);
+        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
+        if (cbs.on_close_history)
+            lv_obj_add_event_cb(btn_back, cbs.on_close_history, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Empty-state message (centred), shown when there is no history yet.
+    ps.lbl_hist_empty = lv_label_create(ps.pnl_history);
+    lv_label_set_text(ps.lbl_hist_empty, "No history yet");
+    lv_obj_set_style_text_font(ps.lbl_hist_empty, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(ps.lbl_hist_empty, hex_color(CLR_MUTED), 0);
+    lv_obj_align(ps.lbl_hist_empty, LV_ALIGN_CENTER, 0, HIST_HDR_H / 2);
+    lv_obj_add_flag(ps.lbl_hist_empty, LV_OBJ_FLAG_HIDDEN);
+
+    // Compact rows.
+    for (int r = 0; r < MAX_HIST_ROWS; ++r) {
+        const int ry = HIST_HDR_H + r * HIST_ROW_H;
+
+        ps.hist_rows[r] = lv_obj_create(ps.pnl_history);
+        lv_obj_set_size(ps.hist_rows[r], SCREEN_W, HIST_ROW_H);
+        lv_obj_set_pos(ps.hist_rows[r], 0, ry);
+        // Zebra stripe by row slot (stable regardless of content) so a dense log
+        // is easier to scan across the name/duration/timestamp columns.
+        lv_obj_set_style_bg_color(ps.hist_rows[r],
+                                  hex_color((r & 1) ? CLR_ROW_ALT : CLR_BG), 0);
+        lv_obj_set_style_border_width(ps.hist_rows[r], 0, 0);
+        lv_obj_set_style_pad_all(ps.hist_rows[r], 0, 0);
+        lv_obj_clear_flag(ps.hist_rows[r], LV_OBJ_FLAG_SCROLLABLE);
+
+        // Station/program name (single line, ellipsized).
+        ps.hist_row_name[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_name[r], "");
+        lv_obj_set_width(ps.hist_row_name[r], HIST_NAME_W);
+        // Constrain to one line so LONG_DOT ellipsizes instead of wrapping when
+        // the name is narrowed (e.g. rows that reserve room for the program tag).
+        lv_obj_set_height(ps.hist_row_name[r],
+                          lv_font_get_line_height(&lv_font_montserrat_14));
+        lv_label_set_long_mode(ps.hist_row_name[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(ps.hist_row_name[r], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(CLR_TEXT), 0);
+        lv_obj_align(ps.hist_row_name[r], LV_ALIGN_LEFT_MID, HIST_NAME_X, 0);
+
+        // Trailing context tag: the program name for a program run (or "Manual"
+        // for a manual run), muted and smaller, in a fixed column just past the
+        // narrowed name so it never collides with the duration zone. Fixed width
+        // + LONG_DOT so a long program name ellipsizes inside its own column.
+        ps.hist_row_tag[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_tag[r], "");
+        lv_obj_set_width(ps.hist_row_tag[r], HIST_TAG_W);
+        lv_obj_set_height(ps.hist_row_tag[r],
+                          lv_font_get_line_height(&lv_font_montserrat_12));
+        lv_label_set_long_mode(ps.hist_row_tag[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(ps.hist_row_tag[r], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(ps.hist_row_tag[r], hex_color(CLR_MUTED), 0);
+        lv_obj_align(ps.hist_row_tag[r], LV_ALIGN_LEFT_MID, HIST_TAG_X, 0);
+        lv_obj_add_flag(ps.hist_row_tag[r], LV_OBJ_FLAG_HIDDEN);
+
+        // Duration (right-aligned column).
+        ps.hist_row_dur[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_dur[r], "");
+        lv_obj_set_width(ps.hist_row_dur[r], HIST_DUR_W);
+        lv_obj_set_style_text_align(ps.hist_row_dur[r], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_font(ps.hist_row_dur[r], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_row_dur[r], hex_color(CLR_LEDE), 0);
+        lv_obj_align(ps.hist_row_dur[r], LV_ALIGN_RIGHT_MID,
+                     -(HIST_RP + HIST_WHEN_W + HIST_COL_G), 0);
+
+        // Short timestamp (right-aligned column at the row edge).
+        ps.hist_row_when[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_when[r], "");
+        lv_obj_set_width(ps.hist_row_when[r], HIST_WHEN_W);
+        lv_obj_set_style_text_align(ps.hist_row_when[r], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_font(ps.hist_row_when[r], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_row_when[r], hex_color(CLR_MUTED), 0);
+        lv_obj_align(ps.hist_row_when[r], LV_ALIGN_RIGHT_MID, -HIST_RP, 0);
+    }
+
+    // Pager: prev/next arrows with a numeric "Page N / M" label between them
+    // (no dots - the label scales to any page count). Same arrow geometry as the
+    // programs list, just slimmer.
+    {
+        static constexpr int ARROW_INSET = 14;
+        const int arrow_y = HIST_PAGER_CY - HIST_ARROW_H / 2;
+
+        ps.hist_page_label = lv_label_create(ps.pnl_history);
+        lv_label_set_text(ps.hist_page_label, "");
+        lv_obj_set_style_text_font(ps.hist_page_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_page_label, hex_color(CLR_MUTED), 0);
+        lv_obj_set_style_text_align(ps.hist_page_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(ps.hist_page_label, 0, HIST_PAGER_CY -
+                       lv_font_get_line_height(&lv_font_montserrat_14) / 2);
+        lv_obj_set_width(ps.hist_page_label, SCREEN_W);
+        lv_obj_add_flag(ps.hist_page_label, LV_OBJ_FLAG_HIDDEN);
+
+        ps.hist_page_prev = make_btn(ps.pnl_history, LV_SYMBOL_LEFT,
+                                     CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(ps.hist_page_prev, PROG_ARROW_W, HIST_ARROW_H);
+        lv_obj_set_pos(ps.hist_page_prev, ARROW_INSET, arrow_y);
+        if (cbs.on_hist_page_prev)
+            lv_obj_add_event_cb(ps.hist_page_prev, cbs.on_hist_page_prev,
+                                LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(ps.hist_page_prev, LV_OBJ_FLAG_HIDDEN);
+
+        ps.hist_page_next = make_btn(ps.pnl_history, LV_SYMBOL_RIGHT,
+                                     CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(ps.hist_page_next, PROG_ARROW_W, HIST_ARROW_H);
+        lv_obj_set_pos(ps.hist_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
+        if (cbs.on_hist_page_next)
+            lv_obj_add_event_cb(ps.hist_page_next, cbs.on_hist_page_next,
+                                LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(ps.hist_page_next, LV_OBJ_FLAG_HIDDEN);
+    }
+
     return ps;
 }
 
@@ -660,6 +847,7 @@ void update_panel_screen(PanelScreen& ps,
                          const PanelView& v,
                          StationModel& model,
                          const JpData& programs,
+                         const HistoryView& history,
                          const HostStatus& host) {
     char buf[80];
 
@@ -668,6 +856,7 @@ void update_panel_screen(PanelScreen& ps,
     const bool prog_running = (v.phase == Phase::ProgramRunning);
     const bool any_running  = running || prog_running;
     const bool show_programs = v.showing_programs_list;
+    const bool show_history  = v.showing_history;
 
     const TopBarState top_state = resolve_top_bar_state(v);
     const std::string status_text = top_bar_status_text(v);
@@ -732,14 +921,16 @@ void update_panel_screen(PanelScreen& ps,
     // Phase visibility. The shared status panel + action row show for BOTH the
     // manual and program run; the right column (settings+grid vs queue list) is
     // the only per-mode difference.
-    obj_set_hidden(ps.pnl_idle,       any_running || show_programs);
+    obj_set_hidden(ps.pnl_idle,       any_running || show_programs || show_history);
     obj_set_hidden(ps.pnl_status,     !any_running);
     obj_set_hidden(ps.pnl_prog_qlist, !prog_running);
     obj_set_hidden(ps.pnl_programs,   !show_programs);
-    obj_set_hidden(ps.pnl_right,      show_programs || prog_running);
-    // The Programs entry button lives in the right panel; hide it while a
-    // manual station is running (open_programs_list only works from idle).
+    obj_set_hidden(ps.pnl_history,    !show_history);
+    obj_set_hidden(ps.pnl_right,      show_programs || show_history || prog_running);
+    // The Programs/History entry buttons live in the right panel; hide them
+    // while a manual station is running (the overlays only open from idle).
     obj_set_hidden(ps.btn_programs,   any_running);
+    obj_set_hidden(ps.btn_history,    any_running);
     obj_set_hidden(ps.btn_next,       !any_running);
     obj_set_hidden(ps.btn_pause,      !any_running);
     obj_set_hidden(ps.btn_stop,       !any_running);
@@ -1055,6 +1246,106 @@ void update_panel_screen(PanelScreen& ps,
                 // set the color on the child label, so target that.
                 lv_obj_t* pl = lv_obj_get_child(ps.prog_page_prev, 0);
                 lv_obj_t* nl = lv_obj_get_child(ps.prog_page_next, 0);
+                if (pl) lv_obj_set_style_text_color(pl,
+                    hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
+                if (nl) lv_obj_set_style_text_color(nl,
+                    hex_color(page >= total_pages - 1 ? CLR_MUTED : CLR_TEXT), 0);
+            }
+        }
+    }
+
+    // #127: History list content
+    if (show_history) {
+        const int count = history.count;
+        const int total_pages =
+            count > 0 ? (count + MAX_HIST_ROWS - 1) / MAX_HIST_ROWS : 0;
+        int page = history.page;
+        if (page < 0) page = 0;
+        if (total_pages > 0 && page > total_pages - 1) page = total_pages - 1;
+        const int start = page * MAX_HIST_ROWS;
+
+        obj_set_hidden(ps.lbl_hist_empty, count > 0);
+
+        for (int r = 0; r < MAX_HIST_ROWS; ++r) {
+            const int idx = start + r;
+            if (count > 0 && idx < count) {
+                const HistoryEntry& e = history.entries[idx];
+
+                // Kind -> colours (no icon; kind reads from the tag + tint).
+                // Runs read bright (teal/lede); events (rain delay, sensors) are
+                // dimmed so the log scans as "runs with the occasional event".
+                uint32_t name_col = CLR_TEXT;
+                uint32_t dur_col  = CLR_LEDE;
+                switch (e.kind) {
+                    case HistoryEntry::ProgramRun:
+                    case HistoryEntry::ManualRun:
+                    case HistoryEntry::RunOnce:
+                        break;
+                    case HistoryEntry::RainDelay:
+                        name_col = CLR_AMBER; dur_col = CLR_MUTED; break;
+                    case HistoryEntry::Sensor1:
+                    case HistoryEntry::Sensor2:
+                        name_col = CLR_MUTED; dur_col = CLR_MUTED; break;
+                }
+
+                // Context tag: program name for a program run, "Manual" for a
+                // manual run (default when the fixture leaves tag null). When a
+                // tag is present the name column is narrowed so the two never
+                // overlap and the name ellipsizes first.
+                const char* tag = e.tag;
+                if (!tag && e.kind == HistoryEntry::ManualRun) tag = "Manual";
+                const bool has_tag = tag && tag[0];
+                lv_obj_set_width(ps.hist_row_name[r],
+                                 has_tag ? HIST_NAME_W_TAG : HIST_NAME_W);
+                if (has_tag) lv_label_set_text(ps.hist_row_tag[r], tag);
+                obj_set_hidden(ps.hist_row_tag[r], !has_tag);
+                lv_label_set_text(ps.hist_row_name[r], e.name ? e.name : "");
+                lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(name_col), 0);
+
+                // Duration: compact ("45s" / "8m" / "1h05m"); blank for events
+                // (rain delay, sensor trips) which have no run duration.
+                const bool is_run = e.kind == HistoryEntry::ProgramRun ||
+                                    e.kind == HistoryEntry::ManualRun ||
+                                    e.kind == HistoryEntry::RunOnce;
+                if (!is_run || e.dur_s == 0) {
+                    lv_label_set_text(ps.hist_row_dur[r], "");
+                } else if (e.dur_s < 60) {
+                    snprintf(buf, sizeof(buf), "%us", e.dur_s);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                } else if (e.dur_s < 3600) {
+                    snprintf(buf, sizeof(buf), "%um", (e.dur_s + 30) / 60);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                } else {
+                    const unsigned h = e.dur_s / 3600;
+                    const unsigned m = (e.dur_s % 3600) / 60;
+                    snprintf(buf, sizeof(buf), "%uh%02um", h, m);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                }
+                lv_obj_set_style_text_color(ps.hist_row_dur[r], hex_color(dur_col), 0);
+
+                lv_label_set_text(ps.hist_row_when[r], e.when ? e.when : "");
+
+                obj_set_hidden(ps.hist_rows[r], false);
+            } else {
+                obj_set_hidden(ps.hist_rows[r], true);
+            }
+        }
+
+        // Pager: numeric "Page N / M" label + arrows, only when >1 page.
+        const bool need_pager = total_pages > 1;
+        if (ps.hist_page_label) {
+            obj_set_hidden(ps.hist_page_label, !need_pager);
+            if (need_pager) {
+                snprintf(buf, sizeof(buf), "Page %d / %d", page + 1, total_pages);
+                lv_label_set_text(ps.hist_page_label, buf);
+            }
+        }
+        if (ps.hist_page_prev && ps.hist_page_next) {
+            obj_set_hidden(ps.hist_page_prev, !need_pager);
+            obj_set_hidden(ps.hist_page_next, !need_pager);
+            if (need_pager) {
+                lv_obj_t* pl = lv_obj_get_child(ps.hist_page_prev, 0);
+                lv_obj_t* nl = lv_obj_get_child(ps.hist_page_next, 0);
                 if (pl) lv_obj_set_style_text_color(pl,
                     hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
                 if (nl) lv_obj_set_style_text_color(nl,

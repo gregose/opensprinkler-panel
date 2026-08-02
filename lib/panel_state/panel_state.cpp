@@ -129,6 +129,9 @@ void PanelState::enter_running(int sid, int countdown_s) {
   view_.countdown_s = std::max(0, countdown_s);
   view_.sleeping = false;
   last_countdown_tick_ms_ = now_ms_;
+  // Close the programs list / history overlays when a run starts.
+  view_.showing_programs_list = false;
+  view_.showing_history = false;
 }
 
 void PanelState::enter_program_running(const ProgramRunState& prog_state) {
@@ -182,6 +185,7 @@ void PanelState::enter_program_running(const ProgramRunState& prog_state) {
   }
   // Close the programs list screen when a run starts.
   view_.showing_programs_list = false;
+  view_.showing_history = false;
 }
 
 void PanelState::enter_idle() {
@@ -287,6 +291,7 @@ void PanelState::set_program_list(const JpData& jp) {
 void PanelState::open_programs_list() {
   on_touch(now_ms_);
   if (view_.phase == Phase::Idle) {
+    view_.showing_history = false;
     view_.showing_programs_list = true;
     view_.prog_list_page = 0;
   }
@@ -304,6 +309,28 @@ void PanelState::set_prog_list_page(int page) {
   if (page < 0) page = 0;
   if (page > max_page) page = max_page;
   view_.prog_list_page = page;
+}
+
+void PanelState::open_history() {
+  on_touch(now_ms_);
+  if (view_.phase == Phase::Idle) {
+    view_.showing_programs_list = false;
+    view_.showing_history = true;
+    view_.hist_list_page = 0;
+  }
+}
+
+void PanelState::close_history() {
+  on_touch(now_ms_);
+  view_.showing_history = false;
+}
+
+void PanelState::set_hist_list_page(int page, int total_pages) {
+  on_touch(now_ms_);
+  const int max_page = (total_pages > 0) ? (total_pages - 1) : 0;
+  if (page < 0) page = 0;
+  if (page > max_page) page = max_page;
+  view_.hist_list_page = page;
 }
 
 void PanelState::run_program_intent(int pid) {

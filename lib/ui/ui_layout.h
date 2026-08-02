@@ -44,3 +44,27 @@ static constexpr int PROG_ARROW_W = 46;  // pager arrow button width
 static constexpr int MAX_PROG_ROWS  = 4;  // program rows per page
 static constexpr int MAX_PROG_PAGES = 6;  // pager dot capacity
 static constexpr int MAX_QROWS      = 9;  // visible program-queue rows
+
+// #127 History overlay: compact single-line rows, ~10 per page (vs 4 programs).
+// The pager is a numeric "Page N / M" indicator (not dots) so it scales to the
+// dozens of pages a busy 30-day log produces.
+static constexpr int MAX_HIST_ROWS  = 10;  // history rows per page
+
+// #127 History row content geometry (shared by the build + per-frame update so
+// the update can narrow the name column on manual-run rows to fit the tag).
+// No leading kind icon (dropped for horizontal room); the name starts at the
+// left inset and the kind is conveyed by the trailing tag + colour instead.
+static constexpr int HIST_NAME_X = 12;  // name column x (left inset)
+static constexpr int HIST_RP     = 10;  // right inset from row edge
+static constexpr int HIST_WHEN_W = 96;  // timestamp column width
+static constexpr int HIST_DUR_W  = 52;  // duration column width
+static constexpr int HIST_COL_G  = 6;   // gap between duration + timestamp
+static constexpr int HIST_TAG_W  = 96;  // program/context tag column width
+static constexpr int HIST_TAG_G  = 6;   // gap between name and tag
+static constexpr int HIST_NAME_W =
+    SCREEN_W - HIST_NAME_X -
+    (HIST_RP + HIST_WHEN_W + HIST_COL_G + HIST_DUR_W + 8);
+// Narrowed name width on manual rows (leaves room for the trailing tag), and
+// the fixed x where that tag sits (just past the narrowed name).
+static constexpr int HIST_NAME_W_TAG = HIST_NAME_W - HIST_TAG_W - HIST_TAG_G;
+static constexpr int HIST_TAG_X = HIST_NAME_X + HIST_NAME_W_TAG + HIST_TAG_G;

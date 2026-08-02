@@ -1441,6 +1441,31 @@ static void ev_prog_run(lv_event_t* e) {
     if (pid >= 1) g_ps->run_program_intent(pid - 1);
 }
 
+// #127: History screen navigation. PR1 has no /jl data yet, so the list renders
+// empty on hardware; the pager setter is fed a single-page total for now.
+static void ev_open_history(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->open_history();
+}
+static void ev_close_history(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->close_history();
+}
+static void ev_hist_page_prev(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    g_ps->set_hist_list_page(g_ps->view().hist_list_page - 1, 1);  // clamped
+}
+static void ev_hist_page_next(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (!(lock && g_ps)) return;
+    g_ps->set_hist_list_page(g_ps->view().hist_list_page + 1, 1);  // clamped
+}
+
 static void ev_touch_any(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
         StateLock lock;
@@ -1490,6 +1515,10 @@ static osp::ui::Callbacks make_ui_callbacks() {
     cbs.on_prog_page_next = ev_prog_page_next;
     cbs.on_prog_toggle    = ev_prog_toggle_enabled;
     cbs.on_prog_run       = ev_prog_run;
+    cbs.on_open_history   = ev_open_history;
+    cbs.on_close_history  = ev_close_history;
+    cbs.on_hist_page_prev = ev_hist_page_prev;
+    cbs.on_hist_page_next = ev_hist_page_next;
     return cbs;
 }
 
@@ -1518,7 +1547,12 @@ static void ui_update() {
     host.battery_tier    = osp::battery_tier_from_percent(battery_percent);
     host.host_name       = g_os_host.c_str();
 
-    osp::ui::update_panel_screen(g_screen, v, g_model, g_ps->program_list(), host);
+    // #127: History overlay data. PR1 has no /jl fetch yet, so pass an empty
+    // span; the overlay renders its empty state. PR2 wires the live log here.
+    osp::ui::HistoryView history;
+
+    osp::ui::update_panel_screen(g_screen, v, g_model, g_ps->program_list(),
+                                 history, host);
 
     // Backlight is a hardware side-effect, kept out of the portable update.
     ledcWrite(LEDC_CHANNEL, v.sleeping ? BACKLIGHT_OFF : BACKLIGHT_ON);

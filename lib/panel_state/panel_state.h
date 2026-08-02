@@ -68,6 +68,11 @@ struct PanelView {
   // M9: program screen navigation and run state
   bool showing_programs_list = false;
   int prog_list_page = 0;
+
+  // #127: history (run/event log) screen navigation. UI-only; the entries are
+  // supplied to the renderer separately (sim fixtures in PR1, /jl cache later).
+  bool showing_history = false;
+  int hist_list_page = 0;
   ProgramRunState prog_run;     // current program run queue (ProgramRunning phase)
   bool paused = false;          // controller is paused (/jc pq flag)
   int pause_remaining_s = 0;   // seconds left in pause (/jc pt)
@@ -110,6 +115,12 @@ class PanelState {
   void open_programs_list();
   void close_programs_list();
   void set_prog_list_page(int page);
+
+  // #127: history screen navigation (UI-only, no network). Mirrors the programs
+  // list: openable only from idle, paged, closed back to idle.
+  void open_history();
+  void close_history();
+  void set_hist_list_page(int page, int total_pages);
 
   // M9: program actions (queue intents delivered by network task)
   void run_program_intent(int pid);

@@ -30,6 +30,7 @@ static constexpr uint32_t CLR_RED   = 0xff5b5b;
 static constexpr uint32_t CLR_LINE  = 0x1a2e2b;
 static constexpr uint32_t CLR_TEALDIM = 0x1c6a64;  // accent rule / dim chip border
 static constexpr uint32_t CLR_LEDE    = 0xc3d3cf;  // supporting body text
+static constexpr uint32_t CLR_ROW_ALT = 0x122320;  // zebra stripe for dense lists
 
 // Build an lv_color_t from a 0xRRGGBB constant.
 static inline lv_color_t hex_color(uint32_t hex) {

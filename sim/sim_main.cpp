@@ -111,7 +111,13 @@ void render_scene(const osp::sim::Fixture& fx) {
     // Local non-const copy: update_panel_screen takes StationModel& (read-only).
     osp::StationModel model = fx.model;
     osp::ui::build_station_grid(ps, model);
-    osp::ui::update_panel_screen(ps, fx.view, model, fx.programs, fx.host);
+    osp::ui::HistoryView history;
+    history.entries = fx.history_entries.empty() ? nullptr
+                                                 : fx.history_entries.data();
+    history.count   = static_cast<int>(fx.history_entries.size());
+    history.page    = fx.view.hist_list_page;
+    osp::ui::update_panel_screen(ps, fx.view, model, fx.programs, history,
+                                 fx.host);
 }
 
 // Compare the rendered full frame to the reference PNG and print stats.

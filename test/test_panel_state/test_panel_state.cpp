@@ -639,6 +639,50 @@ void test_programs_list_closed_when_program_run_starts() {
   TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
 }
 
+void test_open_history_only_from_idle() {
+  Fixture f;
+  f.ps.tick(0);
+
+  // From Idle: should work, and it takes over from the programs list.
+  f.ps.open_programs_list();
+  f.ps.open_history();
+  TEST_ASSERT_TRUE(f.ps.view().showing_history);
+  TEST_ASSERT_FALSE(f.ps.view().showing_programs_list);
+
+  f.ps.close_history();
+  TEST_ASSERT_FALSE(f.ps.view().showing_history);
+}
+
+void test_open_history_not_allowed_while_running() {
+  Fixture f;
+  start_panel_manual(f, 0, 45, 1000);
+  f.ps.open_history();
+  TEST_ASSERT_FALSE(f.ps.view().showing_history);
+}
+
+void test_history_page_clamps_to_valid_range() {
+  Fixture f;
+  f.ps.open_history();
+
+  f.ps.set_hist_list_page(1, 3);   // 3 total pages -> valid 0,1,2
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().hist_list_page);
+
+  f.ps.set_hist_list_page(5, 3);   // beyond max page
+  TEST_ASSERT_EQUAL_INT(2, f.ps.view().hist_list_page);
+
+  f.ps.set_hist_list_page(-1, 3);  // below 0
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().hist_list_page);
+}
+
+void test_history_closed_when_run_starts() {
+  Fixture f;
+  f.ps.open_history();
+  TEST_ASSERT_TRUE(f.ps.view().showing_history);
+
+  start_panel_manual(f, 0, 45, 1000);
+  TEST_ASSERT_FALSE(f.ps.view().showing_history);
+}
+
 // ---------------------------------------------------------------------------
 // M9 — run_initiated_by_panel / backlight behavior
 // ---------------------------------------------------------------------------
@@ -1391,6 +1435,12 @@ int main(int, char**) {
   RUN_TEST(test_open_programs_list_not_allowed_while_running);
   RUN_TEST(test_programs_list_page_clamps_to_valid_range);
   RUN_TEST(test_programs_list_closed_when_program_run_starts);
+
+  // #127 - history screen navigation
+  RUN_TEST(test_open_history_only_from_idle);
+  RUN_TEST(test_open_history_not_allowed_while_running);
+  RUN_TEST(test_history_page_clamps_to_valid_range);
+  RUN_TEST(test_history_closed_when_run_starts);
 
   // M9 — run_initiated_by_panel / backlight
   RUN_TEST(test_external_program_run_allows_sleep);
