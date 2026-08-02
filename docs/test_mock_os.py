@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 import mock_os
 from mock_os import (
     FLAG_ENABLED, MockController, build_server, default_programs,
-    DEFAULT_NAMES,
+    DEFAULT_NAMES, MOCK_CURRENT_MA,
 )
 
 # On-device UI capacities the default fixture is designed to exceed. Keep these
@@ -98,6 +98,7 @@ class JcTests(MockServerCase):
         jc = self.get("/jc")
         self.assertTrue(all(e == [0, 0, 0, 0] for e in jc["ps"]))
         self.assertEqual(jc["pq"], 0)
+        self.assertEqual(jc["curr"], 0)
 
     def test_rssi_is_negative(self):
         self.assertLess(self.get("/jc")["RSSI"], 0)
@@ -144,6 +145,7 @@ class CmStationTests(MockServerCase):
         self.assertEqual(jc["ps"][0][0], 99)      # manual pid
         self.assertGreater(jc["ps"][0][1], 0)     # rem > 0
         self.assertEqual(self._running_sid(jc), 0)
+        self.assertEqual(jc["curr"], MOCK_CURRENT_MA)
 
     def test_en1_on_running_station_is_noop(self):
         self.get("/cm", sid=0, en=1, t=120)

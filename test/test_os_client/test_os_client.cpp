@@ -150,6 +150,10 @@ static const char* kJcBody = R"({
   "RSSI": -68,
   "sunrise": 362,
   "sunset": 1201,
+  "en": 1,
+  "rd": 1,
+  "rdst": 1719727200,
+  "curr": 240,
   "pq": 1,
   "pt": 420,
   "sbits": [2, 0],
@@ -167,6 +171,11 @@ void test_parse_jc_fields() {
   TEST_ASSERT_EQUAL_INT(-68, d.rssi);
   TEST_ASSERT_EQUAL_INT(362, d.sunrise);
   TEST_ASSERT_EQUAL_INT(1201, d.sunset);
+  TEST_ASSERT_EQUAL_INT(1, d.en);
+  TEST_ASSERT_EQUAL_INT(1, d.rd);
+  TEST_ASSERT_EQUAL_INT(1719727200, d.rdst);
+  TEST_ASSERT_TRUE(d.has_curr);
+  TEST_ASSERT_EQUAL_INT(240, d.curr);
   TEST_ASSERT_EQUAL_INT(1, d.pq);
   TEST_ASSERT_EQUAL_INT(420, d.pt);
   TEST_ASSERT_EQUAL_INT(2, static_cast<int>(d.sbits.size()));
@@ -187,9 +196,21 @@ void test_parse_jc_missing_rssi() {
   TEST_ASSERT_EQUAL_INT(0, d.rssi);
   TEST_ASSERT_EQUAL_INT(0, d.sunrise);
   TEST_ASSERT_EQUAL_INT(0, d.sunset);
+  TEST_ASSERT_EQUAL_INT(1, d.en);
+  TEST_ASSERT_EQUAL_INT(0, d.rd);
+  TEST_ASSERT_EQUAL_INT(0, d.rdst);
+  TEST_ASSERT_FALSE(d.has_curr);
+  TEST_ASSERT_EQUAL_INT(0, d.curr);
   TEST_ASSERT_EQUAL_INT(0, d.pq);
   TEST_ASSERT_EQUAL_INT(0, d.pt);
   TEST_ASSERT_EQUAL_INT(0, d.ps[0].gid);
+}
+
+void test_parse_jc_present_zero_current() {
+  JcData d;
+  TEST_ASSERT_TRUE(parse_jc(R"({"devt":1000,"curr":0})", d));
+  TEST_ASSERT_TRUE(d.has_curr);
+  TEST_ASSERT_EQUAL_INT(0, d.curr);
 }
 
 void test_parse_jc_malformed() {
@@ -204,9 +225,11 @@ void test_parse_jc_malformed() {
 
 void test_parse_jo_fields() {
   JoData d;
-  TEST_ASSERT_TRUE(parse_jo(R"({"mas":6,"mas2":10})", d));
+  TEST_ASSERT_TRUE(
+      parse_jo(R"({"mas":6,"mas2":10,"dname":"Back Yard"})", d));
   TEST_ASSERT_EQUAL_INT(6, d.mas);
   TEST_ASSERT_EQUAL_INT(10, d.mas2);
+  TEST_ASSERT_EQUAL_STRING("Back Yard", d.dname.c_str());
 }
 
 void test_parse_jo_none_and_missing() {
@@ -215,11 +238,14 @@ void test_parse_jo_none_and_missing() {
   TEST_ASSERT_TRUE(parse_jo(R"({"mas":0})", d));
   TEST_ASSERT_EQUAL_INT(0, d.mas);
   TEST_ASSERT_EQUAL_INT(0, d.mas2);
+  TEST_ASSERT_TRUE(d.dname.empty());
 }
 
 void test_parse_jo_malformed() {
   JoData d;
   TEST_ASSERT_FALSE(parse_jo("not json", d));
+  TEST_ASSERT_FALSE(parse_jo("{}", d));
+  TEST_ASSERT_FALSE(parse_jo(R"({"result":2})", d));
 }
 
 // ---------------------------------------------------------------------------
@@ -594,6 +620,7 @@ int main(int, char**) {
 
   RUN_TEST(test_parse_jc_fields);
   RUN_TEST(test_parse_jc_missing_rssi);
+  RUN_TEST(test_parse_jc_present_zero_current);
   RUN_TEST(test_parse_jc_malformed);
 
   RUN_TEST(test_parse_jo_fields);

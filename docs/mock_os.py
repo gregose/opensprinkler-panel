@@ -18,7 +18,7 @@ lib/os_client):
 
     GET /jn   station names + attributes (config, cached at startup)
     GET /jo   controller options (master station indices)
-    GET /jc   controller status poll (devt, sbits, ps, RSSI, pause)
+    GET /jc   controller status poll (devt, sbits, ps, RSSI, current, pause)
     GET /jp   program definitions (pd[] tuples)     [M9]
     GET /js   light status (sn[], nstations)
     GET /cm   append/stop one manual station (sid,en,t[,ssta])
@@ -68,6 +68,7 @@ R_UNAUTHORIZED = 2
 R_MISMATCH = 3
 R_DATA_MISSING = 16
 R_OUT_OF_RANGE = 17
+MOCK_CURRENT_MA = 240
 R_NOT_PERMITTED = 32
 
 # ---------------------------------------------------------------------------
@@ -329,11 +330,12 @@ class MockController:
             sbits = self._board_bits(on_sids) + [0]
             pt = max(0, self._pause_deadline - now) if self._paused else 0
             rssi = -62 - (int(now) % 11)  # deterministic-ish controller RSSI
+            curr = MOCK_CURRENT_MA if self._queue and not self._paused else 0
             return {
                 "devt": now, "nbrd": self.nbrd, "en": 1, "sn1": 0, "sn2": 0,
                 "rd": 0, "rdst": 0, "sunrise": self.sunrise_min,
                 "sunset": self.sunset_min, "pq": 1 if self._paused else 0,
-                "pt": pt, "sbits": sbits, "ps": ps, "RSSI": rssi,
+                "pt": pt, "sbits": sbits, "ps": ps, "RSSI": rssi, "curr": curr,
             }
 
     # -- GET /js -------------------------------------------------------------

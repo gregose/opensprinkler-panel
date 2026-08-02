@@ -1,6 +1,7 @@
 #include "panel_state.h"
 
 #include <algorithm>
+#include <limits>
 #include <string>
 
 namespace osp {
@@ -30,6 +31,55 @@ bool live_stations_in_program(const JpData& jp,
 }
 }  // namespace
 
+std::string format_rain_delay(int seconds_remaining) {
+  if (seconds_remaining < 3600) return "<1h";
+
+  const int hours = seconds_remaining / 3600;
+  const int days = hours / 24;
+  const int remaining_hours = hours % 24;
+  if (days == 0) return std::to_string(hours) + "h";
+  if (remaining_hours == 0) return std::to_string(days) + "d";
+  return std::to_string(days) + "d " + std::to_string(remaining_hours) + "h";
+}
+
+TopBarState resolve_top_bar_state(const PanelView& view) {
+  if (view.show_syncing) return TopBarState::Syncing;
+  if (view.link == LinkState::AuthError) return TopBarState::AuthError;
+  if (view.link == LinkState::Reconnecting) return TopBarState::Reconnecting;
+  if (view.link == LinkState::Offline) return TopBarState::Offline;
+  if (!view.enabled) return TopBarState::Disabled;
+  if (view.rain_delay_seconds_remaining > 0) {
+    return TopBarState::RainDelay;
+  }
+  return TopBarState::Clean;
+}
+
+std::string top_bar_status_text(const PanelView& view) {
+  switch (resolve_top_bar_state(view)) {
+    case TopBarState::Syncing:
+      return "SYNCING...";
+    case TopBarState::AuthError:
+      return "AUTH ERROR";
+    case TopBarState::Reconnecting:
+      return "RECONNECTING...";
+    case TopBarState::Offline:
+      return "OFFLINE";
+    case TopBarState::Disabled:
+      return "DISABLED";
+    case TopBarState::RainDelay: {
+      std::string duration =
+          format_rain_delay(view.rain_delay_seconds_remaining);
+      for (char& ch : duration) {
+        if (ch == 'd' || ch == 'h') ch -= ('a' - 'A');
+      }
+      return "RAIN DELAY " + duration;
+    }
+    case TopBarState::Clean:
+      return "";
+  }
+  return "";
+}
+
 PanelState::PanelState(StationModel& model, int default_run_time_s)
     : model_(model) {
   view_.run_time_s = clamp_run_time(default_run_time_s);
@@ -46,6 +96,7 @@ void PanelState::clear_desired() {
   desired_ = DesiredIntent{};
   desired_delivered_ = false;
   desired_at_ms_ = 0;
+  update_sync_view();
 }
 
 void PanelState::queue_desired_run(int sid) {
@@ -56,6 +107,7 @@ void PanelState::queue_desired_run(int sid) {
   desired_at_ms_ = now_ms_;
   run_initiated_by_panel_ = true;
   view_.run_initiated_by_panel = true;
+  update_sync_view();
 }
 
 void PanelState::queue_desired_stop() {
@@ -64,6 +116,7 @@ void PanelState::queue_desired_stop() {
   desired_.seconds = 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
+  update_sync_view();
 }
 
 void PanelState::enter_running(int sid, int countdown_s) {
@@ -148,12 +201,14 @@ void PanelState::begin_await_close() {
   if (view_.phase == Phase::Running) {
     view_.countdown_s = 0;
   }
+  update_sync_view();
 }
 
 void PanelState::finish_idle_transition() {
   await_close_ = false;
   await_close_at_ms_ = 0;
   enter_idle();
+  update_sync_view();
 }
 
 bool PanelState::pending_sync() const {
@@ -164,6 +219,11 @@ bool PanelState::sync_stale() const {
   if (!pending_sync()) return false;
   const uint32_t started_at = await_close_ ? await_close_at_ms_ : desired_at_ms_;
   return (now_ms_ - started_at) > kSyncTimeoutMs;
+}
+
+void PanelState::update_sync_view() {
+  view_.show_syncing =
+      refreshing_ || (pending_sync() && !sync_stale());
 }
 
 bool PanelState::can_deliver_desired() const {
@@ -205,6 +265,17 @@ void PanelState::set_station_list_loaded(bool loaded) {
   view_.station_list_loaded = loaded;
 }
 
+void PanelState::set_refreshing(bool refreshing) {
+  refreshing_ = refreshing;
+  update_sync_view();
+}
+
+void PanelState::set_controller_identity(const JoData& jo,
+                                         const std::string& configured_host) {
+  view_.controller_identity =
+      jo.dname.empty() ? configured_host : jo.dname;
+}
+
 void PanelState::set_program_list(const JpData& jp) {
   jp_cache_ = jp;
 }
@@ -244,6 +315,7 @@ void PanelState::run_program_intent(int pid) {
   // Remember what we launched so the running screen can show the program name
   // even though a manual program run reports pid=254 (program_index=-1) in /jc.
   launched_program_index_ = pid;
+  update_sync_view();
 }
 
 void PanelState::toggle_program_enabled_intent(int pid, bool en) {
@@ -253,6 +325,7 @@ void PanelState::toggle_program_enabled_intent(int pid, bool en) {
   desired_.seconds = en ? 1 : 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
+  update_sync_view();
 }
 
 void PanelState::pause_toggle_intent() {
@@ -262,6 +335,7 @@ void PanelState::pause_toggle_intent() {
   desired_.seconds = 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
+  update_sync_view();
 }
 
 void PanelState::program_advance_intent() {
@@ -273,6 +347,7 @@ void PanelState::program_advance_intent() {
   desired_.seconds = 0;
   desired_delivered_ = false;
   desired_at_ms_ = now_ms_;
+  update_sync_view();
 }
 
 void PanelState::tick(uint32_t now_ms) {
@@ -285,6 +360,7 @@ void PanelState::tick(uint32_t now_ms) {
   }
 
   now_ms_ = now_ms;
+  update_sync_view();
 
   // Countdown dead-reckoning for both manual and program running phases. Every
   // per-second timer the UI shows (station countdown, overall program time
@@ -405,6 +481,16 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
   view_.sunrise_min = jc.sunrise;
   view_.sunset_min = jc.sunset;
   view_.ctrl_devt = static_cast<long>(jc.devt);
+  view_.enabled = (jc.en != 0);
+  const int64_t rain_remaining =
+      (jc.rd != 0) ? static_cast<int64_t>(jc.rdst) - jc.devt : 0;
+  view_.rain_delay_seconds_remaining =
+      rain_remaining <= 0
+          ? 0
+          : static_cast<int>(std::min<int64_t>(
+                rain_remaining, std::numeric_limits<int>::max()));
+  view_.current_ma = jc.curr;
+  view_.has_current = jc.has_curr;
   view_.paused = (jc.pq != 0);
   view_.pause_remaining_s = jc.pt;
 
@@ -528,6 +614,7 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
   }
 
   reconcile_desired_after_jc();
+  update_sync_view();
 }
 
 void PanelState::on_touch(uint32_t now_ms) {

@@ -114,20 +114,14 @@ are authoritative. Don't invent behavior for the manual.
   (the same convention as [`ci.yml`](../.github/workflows/ci.yml)).
 - GitHub Pages is enabled on the repo with the "GitHub Actions" source.
 
-### Building locally (optional)
+### Build verification
 
-The build needs **Ruby 3.x** (the pinned `just-the-docs 0.12.0` / Jekyll 4.3
-toolchain won't install on macOS system Ruby 2.6). If you have a modern Ruby:
+Use the PR's Pages **`build`** job as the authoritative Jekyll verification,
+just like the repository's other CI builds. Do not install or modify a local
+Ruby toolchain solely to validate site changes. Confirm the Actions job passes
+before landing the PR.
 
-```bash
-cd site
-bundle install
-bundle exec jekyll build -s . -d ../_site   # or: bundle exec jekyll serve
-```
-
-`_site/` and Jekyll caches are git-ignored — **never commit build output**. If
-you can't build locally, rely on the PR `build` job; just make sure `_config.yml`
-and every page's front matter is valid YAML first.
+`_site/` and Jekyll caches are git-ignored. **Never commit build output.**
 
 ### Gotcha: files without front matter are published verbatim
 
@@ -161,15 +155,19 @@ the panel at the **mock controller** ([`mock_os.py`](mock_os.py)), which serves
 
 | Filename | UI state to show | Fixture / how to get there |
 |---|---|---|
-| `home-connected.png` | Idle, connected: "Select a station" prompt, full station grid, top bar showing **Connected** with PANEL + CTRL signal meters. | Boot connected to a controller (or `mock_os.py`). Don't start any station. |
-| `manual-run.png` | A single station running: `STATION N` eyebrow, station name, large amber countdown, **Next ›** and **■ Stop** buttons, active pill highlighted. | Tap a station pill from idle. Capture while the countdown is a clean value (e.g. after setting Run time to 1:00). |
+| `home-connected.png` | Idle, connected: "Select a station" prompt, full station grid, top bar showing a teal droplet, controller name/IP, dim `0 mA`, P/C signal meters, and battery. | Boot connected to a controller (or `mock_os.py`). Don't start any station. |
+| `manual-run.png` | A single station running: `STATION N` eyebrow, station name, large amber countdown, **Next ›** and **■ Stop** buttons, active pill highlighted, and live current in the top bar. | Tap a station pill from idle. Capture while the countdown is a clean value (e.g. after setting Run time to 1:00). |
 | `programs-list.png` | Programs list: `PROGRAMS` header, several program rows each with name, next-run/zones/minutes meta line, Enable/Disable + **Run ›** buttons. | Tap **≡ Programs** from idle. Use `mock_os.py` so multiple programs (incl. a disabled one) are present. |
-| `program-running.png` | Program running: left column `STATION N OF M`, station name, big countdown; right column live queue with a ✓ completed row, the current ▶ row, and upcoming rows; **Next ›**, **Pause**, **■ Stop**. | From the programs list tap **Run ›** on a multi-station program (the mock's >9-station program shows the windowed queue nicely). Capture a few stations in. |
+| `program-running.png` | Program running: left column `STATION N OF M`, station name, big countdown; right column live queue with a ✓ completed row, the current ▶ row, and upcoming rows; **Next ›**, **Pause**, **■ Stop**; live current in the top bar. | From the programs list tap **Run ›** on a multi-station program (the mock's >9-station program shows the windowed queue nicely). Capture a few stations in. |
 | `setup-portal.png` | First-boot WiFiManager captive-portal landing menu (`OSPanel-Setup` with Configure / Info / Update / Exit). | Boot a freshly-flashed panel (empty NVS), join the `OSPanel-Setup` AP, and screenshot the portal landing page from the connecting device's browser. |
 | `setup-portal-config.png` | The captive-portal configuration form: SSID + Password, OpenSprinkler host, device password, OTA password, sleep timeout, remote-debug-log fields. | Tap **Configure** in the portal and screenshot the form. Browser screenshot, not `panel.py`. |
 
 Notes:
 
+- **When to re-shoot:** Any PR that changes on-panel UI, especially the top
+  status bar, home/idle, manual-run, programs list, or program-running screens,
+  must re-capture the affected images above in the same PR using this procedure.
+  Keep filenames stable.
 - Keep on-panel captures at the native **480×320**; don't upscale or add device
   frames. The two captive-portal shots are browser screenshots and will differ
   in size — that's fine.

@@ -78,6 +78,24 @@ Command parse_command(const char* line) {
     if (verb_is(verb, verb_end, "TAP"))  return two_arg(Cmd::Tap, args);
     if (verb_is(verb, verb_end, "DOWN")) return two_arg(Cmd::Down, args);
     if (verb_is(verb, verb_end, "MOVE")) return two_arg(Cmd::Move, args);
+    if (verb_is(verb, verb_end, "BATT")) {
+        args = skip_ws(args);
+        const char* arg_end = args;
+        while (*arg_end != '\0' && *arg_end != ' ' && *arg_end != '\t') {
+            ++arg_end;
+        }
+        if (verb_is(args, arg_end, "AUTO") &&
+            *skip_ws(arg_end) == '\0') {
+            return {Cmd::BatteryAuto, 0, 0};
+        }
+
+        int16_t percent = 0;
+        if (!parse_coord(&args, &percent) || percent > 100 ||
+            *skip_ws(args) != '\0') {
+            return {Cmd::Invalid, 0, 0};
+        }
+        return {Cmd::Battery, percent, 0};
+    }
 
     return {Cmd::Invalid, 0, 0};
 }

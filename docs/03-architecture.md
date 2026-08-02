@@ -226,8 +226,8 @@ calibration are confirmed empirically on the bench via the diagnostic firmware's
 ## Signal indicators
 
 Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
-- **PANEL** — the ESP32's own link: `WiFi.RSSI()`, read locally each second.
-- **CTRL** — the controller's link: the `RSSI` field already in the `/jc` poll (ESP8266/OS-v3). No extra request. Shows `— —` when the controller is unreachable while PANEL stays live — the key "which end is the problem" diagnostic.
+- **P** - the ESP32's own link: `WiFi.RSSI()`, read locally each second.
+- **C** - the controller's link: the `RSSI` field already in the `/jc` poll (ESP8266/OS-v3). No extra request. Its meter clears when the controller is unreachable while P stays live, which identifies which end has the problem.
 
 ## Definition of done
 
@@ -241,5 +241,5 @@ Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
 8. Wi-Fi loss → red top bar, commands halt, open station still auto-stops on the controller; reconnect self-heals from `/jc`.
 9. Sleeps after the configurable idle timeout (default 5 min; backlight off via GPIO27 PWM); stays lit while running.
 10. Runs against the real controller with 14 stations, and correctly shows a 24-station (extender) layout.
-11. Top bar shows PANEL + CTRL Wi-Fi bars (CTRL → `— —` on signal loss); no battery indicator.
+11. Top bar shows A2+ identity/status, optional controller current, P + C Wi-Fi bars, the ADC-backed battery glyph + percent, a fixed divider, and a state-colored 3 px accent rule.
 12. Resistive touch is calibrated once and the calibration persists in NVS across reboots.

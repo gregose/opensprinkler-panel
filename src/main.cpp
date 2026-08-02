@@ -200,6 +200,7 @@ static bool g_touch_was_pressed = false;
 static volatile bool     g_sleeping_snapshot   = false;
 static volatile uint32_t g_idle_ms_snapshot    = 0;
 static volatile uint32_t g_sleep_to_ms_snapshot = 0;
+static volatile int g_batt_override_percent = -1;
 static TaskHandle_t g_ui_task_handle = nullptr;
 static TaskHandle_t g_net_task_handle = nullptr;
 
@@ -417,6 +418,12 @@ static void handle_bench_command(const char* line) {
             break;
         case bench::Cmd::Up:
             inj_push(0, 0, false);
+            break;
+        case bench::Cmd::Battery:
+            g_batt_override_percent = c.x;
+            break;
+        case bench::Cmd::BatteryAuto:
+            g_batt_override_percent = -1;
             break;
         case bench::Cmd::Invalid:
             g_hw_serial->printf("[BENCH] ignoring bad command: %s\n", line);
@@ -1334,7 +1341,17 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 // UI widgets
 // ---------------------------------------------------------------------------
 // Top bar
-static lv_obj_t* lbl_host   = nullptr;
+static lv_obj_t* lbl_drop       = nullptr;
+static lv_obj_t* lbl_name       = nullptr;
+static lv_obj_t* lbl_status     = nullptr;
+static lv_obj_t* top_accent     = nullptr;
+
+struct CurrentSlot {
+    lv_obj_t* box  = nullptr;
+    lv_obj_t* val  = nullptr;
+    lv_obj_t* unit = nullptr;
+};
+static CurrentSlot current_slot;
 
 // Signal-meter widget: 4 ascending bar rectangles (Part 3).
 struct SigMeter {
@@ -1353,6 +1370,33 @@ struct BattGlyph {
     lv_obj_t* pct  = nullptr;  // "NN%" label
 };
 static BattGlyph batt_glyph;
+
+static void set_drop_text_opa(void* obj, int32_t value) {
+    lv_obj_set_style_text_opa(static_cast<lv_obj_t*>(obj),
+                              static_cast<lv_opa_t>(value), 0);
+}
+
+static void update_drop_pulse(bool syncing) {
+    static bool pulsing = false;
+    if (syncing == pulsing) return;
+
+    if (syncing) {
+        lv_anim_t anim;
+        lv_anim_init(&anim);
+        lv_anim_set_var(&anim, lbl_drop);
+        lv_anim_set_exec_cb(&anim, set_drop_text_opa);
+        lv_anim_set_values(&anim, LV_OPA_COVER, 90);
+        lv_anim_set_duration(&anim, 600);
+        lv_anim_set_playback_duration(&anim, 600);
+        lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+        lv_anim_start(&anim);
+    } else {
+        lv_anim_delete(lbl_drop, set_drop_text_opa);
+        lv_obj_set_style_text_opa(lbl_drop, LV_OPA_COVER, 0);
+    }
+    pulsing = syncing;
+}
 
 // Smoothed LiPo monitor fed from PIN_BAT_ADC (pure logic in lib/battery_monitor).
 static osp::BatteryMonitor g_batt;
@@ -1634,8 +1678,40 @@ static constexpr int PROG_ARROW_W = 46;  // pager arrow button width
 // Signal-meter helpers (Part 3)
 // ---------------------------------------------------------------------------
 
+static CurrentSlot build_current_slot(lv_obj_t* parent) {
+    CurrentSlot slot;
+    slot.box = lv_obj_create(parent);
+    lv_obj_remove_style_all(slot.box);
+    lv_obj_set_style_bg_opa(slot.box, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(slot.box, 46, TOP_H);
+    lv_obj_set_style_pad_column(slot.box, 2, 0);
+    lv_obj_clear_flag(slot.box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_layout(slot.box, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(slot.box, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(slot.box, LV_FLEX_ALIGN_END,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    slot.val = lv_label_create(slot.box);
+    lv_obj_set_width(slot.val, 26);
+    lv_label_set_long_mode(slot.val, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(slot.val, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_text_font(slot.val, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(slot.val, hex_color(CLR_MUTED), 0);
+    lv_label_set_text(slot.val, "0");
+
+    slot.unit = lv_label_create(slot.box);
+    lv_obj_set_width(slot.unit, 18);
+    lv_label_set_long_mode(slot.unit, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(slot.unit, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_style_text_font(slot.unit, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(slot.unit, hex_color(CLR_MUTED), 0);
+    lv_label_set_text(slot.unit, "mA");
+
+    return slot;
+}
+
 // Build a compact drawn RSSI meter into `parent` (a pre-created flex-row group).
-// Layout: "PANEL"/"CTRL" label followed by 4 ascending bar rectangles.
+// Layout: "P"/"C" label followed by 4 ascending bar rectangles.
 static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt) {
     SigMeter m;
 
@@ -1651,10 +1727,10 @@ static SigMeter build_sig_meter(lv_obj_t* parent, const char* txt) {
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // "PANEL" / "CTRL" text label.
+    // "P" / "C" text label.
     lv_obj_t* lbl = lv_label_create(row);
     lv_label_set_text(lbl, txt);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
     lv_obj_set_style_text_color(lbl, hex_color(CLR_MUTED), 0);
 
     // 22×10 sub-container for the 4 ascending bar rects (absolute layout).
@@ -1755,8 +1831,10 @@ static BattGlyph build_batt_glyph(lv_obj_t* parent) {
 
     // Percent label.
     g.pct = lv_label_create(row);
+    lv_obj_set_width(g.pct, 30);
+    lv_obj_set_style_text_align(g.pct, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(g.pct, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(g.pct, hex_color(CLR_TEXT), 0);
+    lv_obj_set_style_text_color(g.pct, hex_color(CLR_LEDE), 0);
     lv_label_set_text(g.pct, "--%");
 
     return g;
@@ -1774,6 +1852,8 @@ static void update_batt_glyph(const BattGlyph& g, int percent,
     lv_obj_set_style_border_color(g.body, hex_color(clr), 0);
     lv_obj_set_style_bg_color(g.nub, hex_color(clr), 0);
     lv_obj_set_style_bg_color(g.fill, hex_color(clr), 0);
+    lv_obj_set_style_text_color(
+        g.pct, hex_color(tier == osp::BatteryTier::Healthy ? CLR_LEDE : clr), 0);
 
     // Fill width tracks %, but keep a visible sliver whenever a cell is present.
     int w = (BATT_FILL_MAX_W * percent + 50) / 100;
@@ -1815,17 +1895,43 @@ static void build_ui() {
         lv_obj_set_style_pad_all(bar, 2, 0);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-        lbl_host = lv_label_create(bar);
-        lv_obj_set_style_text_font(lbl_host, &lv_font_montserrat_12, 0);
-        lv_obj_align(lbl_host, LV_ALIGN_LEFT_MID, 4, 0);
-        lv_label_set_text(lbl_host, LV_SYMBOL_TINT " Connected");
+        lv_obj_t* left_group = lv_obj_create(bar);
+        lv_obj_remove_style_all(left_group);
+        lv_obj_set_style_bg_opa(left_group, LV_OPA_TRANSP, 0);
+        lv_obj_set_size(left_group, 220, TOP_H);
+        lv_obj_set_style_pad_column(left_group, 6, 0);
+        lv_obj_clear_flag(left_group, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_layout(left_group, LV_LAYOUT_FLEX);
+        lv_obj_set_flex_flow(left_group, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(left_group, LV_FLEX_ALIGN_START,
+                              LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_align(left_group, LV_ALIGN_LEFT_MID, 4, 0);
 
-        // Drawn signal meters in a right-aligned flex-row group (PANEL left, CTRL right).
+        lbl_drop = lv_label_create(left_group);
+        lv_obj_set_style_text_font(lbl_drop, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_drop, hex_color(CLR_TEAL), 0);
+        lv_label_set_text(lbl_drop, LV_SYMBOL_TINT);
+
+        lbl_name = lv_label_create(left_group);
+        lv_obj_set_size(lbl_name, 1, 14);
+        lv_obj_set_flex_grow(lbl_name, 1);
+        lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_name, hex_color(CLR_TEXT), 0);
+        lv_label_set_text(lbl_name, "controller");
+
+        lbl_status = lv_label_create(left_group);
+        lv_obj_set_style_text_font(lbl_status, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_letter_space(lbl_status, 1, 0);
+        lv_obj_set_style_text_color(lbl_status, hex_color(CLR_TEAL), 0);
+        lv_label_set_text(lbl_status, "");
+
+        // Fixed right cluster: current, divider, panel/controller signal, battery.
         lv_obj_t* sig_group = lv_obj_create(bar);
         lv_obj_remove_style_all(sig_group);
         lv_obj_set_style_bg_opa(sig_group, LV_OPA_TRANSP, 0);
         lv_obj_set_size(sig_group, LV_SIZE_CONTENT, TOP_H);
-        lv_obj_set_style_pad_column(sig_group, 16, 0);
+        lv_obj_set_style_pad_column(sig_group, 12, 0);
         lv_obj_clear_flag(sig_group, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_layout(sig_group, LV_LAYOUT_FLEX);
         lv_obj_set_flex_flow(sig_group, LV_FLEX_FLOW_ROW);
@@ -1833,9 +1939,30 @@ static void build_ui() {
                               LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_align(sig_group, LV_ALIGN_RIGHT_MID, -4, 0);
 
-        sig_panel = build_sig_meter(sig_group, "PANEL");
-        sig_ctrl  = build_sig_meter(sig_group, "CTRL");
+        current_slot = build_current_slot(sig_group);
+        obj_set_hidden(current_slot.box, true);
+
+        lv_obj_t* divider = lv_obj_create(sig_group);
+        lv_obj_remove_style_all(divider);
+        lv_obj_set_size(divider, 2, 16);
+        lv_obj_set_style_bg_color(divider, hex_color(CLR_TEALDIM), 0);
+        lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(divider, 1, 0);
+        lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
+
+        sig_panel = build_sig_meter(sig_group, "P");
+        sig_ctrl  = build_sig_meter(sig_group, "C");
         batt_glyph = build_batt_glyph(sig_group);
+
+        top_accent = lv_obj_create(scr);
+        lv_obj_remove_style_all(top_accent);
+        lv_obj_set_size(top_accent, SCREEN_W, 3);
+        lv_obj_set_pos(top_accent, 0, TOP_H - 3);
+        lv_obj_set_style_bg_color(top_accent, hex_color(CLR_TEALDIM), 0);
+        lv_obj_set_style_bg_opa(top_accent, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(top_accent, 0, 0);
+        lv_obj_clear_flag(top_accent, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_move_foreground(top_accent);
     }
 
     // ---- Left panel: Idle ---------------------------------------------
@@ -2440,61 +2567,77 @@ static void ui_update() {
     const osp::PanelView& v = g_ps->view();
     char buf[80];
 
-    bool show_syncing = g_ps->pending_sync() && !g_ps->sync_stale();
+    const bool show_syncing = v.show_syncing;
     const bool running      = (v.phase == osp::Phase::Running);
     const bool prog_running = (v.phase == osp::Phase::ProgramRunning);
     const bool any_running  = running || prog_running;
     const bool show_programs = v.showing_programs_list;
 
-    const char* status_text = "Connected";
+    const osp::TopBarState top_state = osp::resolve_top_bar_state(v);
+    const std::string status_text = osp::top_bar_status_text(v);
+    uint32_t drop_color = CLR_TEAL;
+    uint32_t name_color = CLR_TEXT;
     uint32_t status_color = CLR_TEAL;
-    if (show_syncing) {
-        status_text = "Syncing...";
-        status_color = CLR_AMBER;
-    } else if (v.link == osp::LinkState::AuthError) {
-        status_text = "Auth error";
-        status_color = CLR_RED;
-    } else if (v.link == osp::LinkState::Offline) {
-        status_text = "Controller offline";
-        status_color = CLR_RED;
-    } else if (v.link == osp::LinkState::Reconnecting) {
-        status_text = "Reconnecting...";
-        status_color = CLR_AMBER;
-    } else if (prog_running) {
-        if (v.paused) {
-            status_text = "Program paused";
+    uint32_t rule_color = CLR_TEALDIM;
+    switch (top_state) {
+        case osp::TopBarState::Syncing:
+        case osp::TopBarState::Reconnecting:
+            drop_color = CLR_AMBER;
+            name_color = CLR_MUTED;
             status_color = CLR_AMBER;
-        } else {
-            status_text = "Program running";
-            status_color = CLR_TEAL;
-        }
-    } else if (running) {
-        status_text = "Running";
-        status_color = CLR_TEAL;
+            rule_color = CLR_AMBER;
+            break;
+        case osp::TopBarState::AuthError:
+        case osp::TopBarState::Offline:
+            drop_color = CLR_RED;
+            name_color = CLR_RED;
+            status_color = CLR_RED;
+            rule_color = CLR_RED;
+            break;
+        case osp::TopBarState::Disabled:
+            status_color = CLR_RED;
+            rule_color = CLR_RED;
+            break;
+        case osp::TopBarState::RainDelay:
+        case osp::TopBarState::Clean:
+            break;
     }
 
-    // Top-bar status glyph: a static water-droplet identity mark for the panel
-    // (Wi-Fi/RSSI lives in the right-hand meters, so a Wi-Fi glyph here would be
-    // redundant). It only recolours with link/run state — the explicit
-    // warning/refresh affordance is carried by the large idle banner + status
-    // text below, so the bar mark stays the constant droplet.
-    const char* link_sym = LV_SYMBOL_TINT;
+    lv_label_set_text(lbl_name, v.controller_identity.c_str());
+    lv_label_set_text(lbl_status, status_text.c_str());
+    lv_obj_set_style_text_color(lbl_drop, hex_color(drop_color), 0);
+    lv_obj_set_style_text_color(lbl_name, hex_color(name_color), 0);
+    lv_obj_set_style_text_color(lbl_status, hex_color(status_color), 0);
+    lv_obj_set_style_bg_color(top_accent, hex_color(rule_color), 0);
+    update_drop_pulse(top_state == osp::TopBarState::Syncing ||
+                      top_state == osp::TopBarState::Reconnecting);
 
-    snprintf(buf, sizeof(buf), "%s %s", link_sym, status_text);
-    lv_label_set_text(lbl_host, buf);
-    lv_obj_set_style_text_color(lbl_host, hex_color(status_color), 0);
+    obj_set_hidden(current_slot.box, !v.has_current);
+    if (v.has_current) {
+        snprintf(buf, sizeof(buf), "%d", v.current_ma);
+        lv_label_set_text(current_slot.val, buf);
+        lv_obj_set_style_text_color(
+            current_slot.val,
+            hex_color(v.current_ma > 0 ? CLR_TEXT : CLR_MUTED), 0);
+    }
 
     // Drawn RSSI bar meters (Part 3).
     update_sig_meter(sig_panel, osp::rssi_to_bars(WiFi.RSSI()),
                      WiFi.status() == WL_CONNECTED);
     update_sig_meter(sig_ctrl, osp::rssi_to_bars(v.ctrl_rssi),
-                     v.link == osp::LinkState::Connected);
+                     v.link == osp::LinkState::Connected &&
+                         top_state != osp::TopBarState::Syncing);
 
     // Battery gauge: sample the ADC on a slow cadence, render the smoothed
     // state-of-charge. Always shown — an absent cell floats the sense node high
     // (indistinguishable from full), so there is no reliable "no battery" state.
     poll_battery();
-    update_batt_glyph(batt_glyph, g_batt.percent(), g_batt.tier());
+    const int battery_percent =
+        g_batt_override_percent >= 0 ? g_batt_override_percent
+                                     : g_batt.percent();
+    update_batt_glyph(
+        batt_glyph, battery_percent,
+        osp::battery_tier_from_percent(battery_percent));
 
     // Phase visibility
     obj_set_hidden(pnl_idle,       any_running || show_programs);
@@ -2900,16 +3043,32 @@ static void apply_link_error(uint32_t now_ms, int* failures) {
 static bool refresh_station_list(uint32_t now_ms, int* failures) {
     if (!g_client) return false;
 
+    {
+        StateLock lock;
+        if (lock && g_ps) g_ps->set_refreshing(true);
+    }
+
     osp::JnData jn;
     if (!g_client->fetch_jn(jn)) {
         apply_link_error(now_ms, failures);
         StateLock lock;
-        if (lock && g_ps) g_ps->set_station_list_loaded(false);
+        if (lock && g_ps) {
+            g_ps->set_station_list_loaded(false);
+            g_ps->set_refreshing(false);
+        }
         return false;
     }
 
     osp::JoData jo;
-    g_client->fetch_jo(jo);
+    if (!g_client->fetch_jo(jo)) {
+        apply_link_error(now_ms, failures);
+        StateLock lock;
+        if (lock && g_ps) {
+            g_ps->set_station_list_loaded(false);
+            g_ps->set_refreshing(false);
+        }
+        return false;
+    }
 
     {
         StateLock lock;
@@ -2917,7 +3076,9 @@ static bool refresh_station_list(uint32_t now_ms, int* failures) {
         g_model.load(jn.snames, jn.stn_dis, jo.mas, jo.mas2);
         ++g_model_version;
         g_ps->set_station_list_loaded(true);
+        g_ps->set_controller_identity(jo, g_os_host.c_str());
         g_ps->on_link_connected(now_ms);
+        g_ps->set_refreshing(false);
         cache_phase_snapshot_unlocked();
     }
 
@@ -3120,6 +3281,7 @@ static void network_task(void* /*arg*/) {
             StateLock lock;
             if (lock && g_ps) {
                 g_ps->on_link_offline(now);
+                g_ps->set_refreshing(false);
                 cache_phase_snapshot_unlocked();
             }
             vTaskDelay(pdMS_TO_TICKS(200));
@@ -3282,6 +3444,7 @@ void setup() {
             g_ps.reset(new osp::PanelState(g_model, saved_rt));
             g_ps->set_auto_advance(saved_aa);
             g_ps->set_sleep_timeout_ms((uint32_t)saved_sleep_s * 1000UL);
+            g_ps->set_controller_identity(osp::JoData{}, g_os_host.c_str());
             cache_phase_snapshot_unlocked();
         }
     }

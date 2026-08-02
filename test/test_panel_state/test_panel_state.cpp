@@ -1065,6 +1065,127 @@ void test_set_program_list_updates_cache() {
   TEST_ASSERT_EQUAL_INT(4, f.ps.program_list().nprogs);
 }
 
+void test_a2plus_jc_fields_stored_in_view() {
+  Fixture f;
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.en = 1;
+  jc.rd = 1;
+  jc.rdst = 8300;
+  jc.curr = 240;
+  jc.has_curr = true;
+
+  f.ps.on_jc(jc, 1000);
+
+  const PanelView& v = f.ps.view();
+  TEST_ASSERT_TRUE(v.enabled);
+  TEST_ASSERT_EQUAL_INT(7300, v.rain_delay_seconds_remaining);
+  TEST_ASSERT_TRUE(v.has_current);
+  TEST_ASSERT_EQUAL_INT(240, v.current_ma);
+}
+
+void test_a2plus_expired_rain_delay_clamps_to_zero() {
+  Fixture f;
+  JcData jc = make_jc_idle();
+  jc.devt = 1000;
+  jc.rd = 1;
+  jc.rdst = 999;
+
+  f.ps.on_jc(jc, 1000);
+
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().rain_delay_seconds_remaining);
+}
+
+void test_a2plus_rain_delay_formatting() {
+  TEST_ASSERT_EQUAL_STRING("<1h", format_rain_delay(3599).c_str());
+  TEST_ASSERT_EQUAL_STRING("2h", format_rain_delay(7200).c_str());
+  TEST_ASSERT_EQUAL_STRING("1d", format_rain_delay(24 * 3600).c_str());
+  TEST_ASSERT_EQUAL_STRING("1d 4h",
+                           format_rain_delay(28 * 3600 + 3599).c_str());
+}
+
+void test_a2plus_identity_prefers_dname_and_falls_back_to_host() {
+  Fixture f;
+  JoData jo;
+  jo.dname = "Back Yard";
+  f.ps.set_controller_identity(jo, "192.168.1.95");
+  TEST_ASSERT_EQUAL_STRING("Back Yard",
+                           f.ps.view().controller_identity.c_str());
+
+  jo.dname.clear();
+  f.ps.set_controller_identity(jo, "192.168.1.95");
+  TEST_ASSERT_EQUAL_STRING("192.168.1.95",
+                           f.ps.view().controller_identity.c_str());
+}
+
+void test_a2plus_syncing_is_exposed_in_view() {
+  Fixture f;
+  f.ps.select_station(1);
+  TEST_ASSERT_TRUE(f.ps.view().show_syncing);
+
+  f.ps.tick(PanelState::kSyncTimeoutMs + 1);
+  TEST_ASSERT_FALSE(f.ps.view().show_syncing);
+
+  f.ps.on_jc(make_jc_running(1, 60), PanelState::kSyncTimeoutMs + 2);
+  TEST_ASSERT_FALSE(f.ps.view().show_syncing);
+}
+
+void test_a2plus_refreshing_is_exposed_in_view() {
+  Fixture f;
+  f.ps.set_refreshing(true);
+  TEST_ASSERT_TRUE(f.ps.view().show_syncing);
+
+  f.ps.set_refreshing(false);
+  TEST_ASSERT_FALSE(f.ps.view().show_syncing);
+}
+
+void test_a2plus_top_bar_status_precedence() {
+  PanelView v;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean,
+                        (int)resolve_top_bar_state(v));
+
+  v.rain_delay_seconds_remaining = 7200;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::RainDelay,
+                        (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("RAIN DELAY 2H",
+                           top_bar_status_text(v).c_str());
+
+  v.enabled = false;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Disabled,
+                        (int)resolve_top_bar_state(v));
+
+  v.link = LinkState::Reconnecting;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Reconnecting,
+                        (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("RECONNECTING...",
+                           top_bar_status_text(v).c_str());
+
+  v.link = LinkState::Offline;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Offline,
+                        (int)resolve_top_bar_state(v));
+
+  v.link = LinkState::AuthError;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::AuthError,
+                        (int)resolve_top_bar_state(v));
+
+  v.show_syncing = true;
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Syncing,
+                        (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("SYNCING...",
+                           top_bar_status_text(v).c_str());
+}
+
+void test_a2plus_zero_current_remains_present() {
+  Fixture f;
+  JcData jc = make_jc_idle();
+  jc.curr = 0;
+  jc.has_curr = true;
+  f.ps.on_jc(jc, 1000);
+
+  TEST_ASSERT_TRUE(f.ps.view().has_current);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().current_ma);
+}
+
 
 
 int main(int, char**) {
@@ -1146,6 +1267,14 @@ int main(int, char**) {
 
   // M9 — set_program_list
   RUN_TEST(test_set_program_list_updates_cache);
+  RUN_TEST(test_a2plus_jc_fields_stored_in_view);
+  RUN_TEST(test_a2plus_expired_rain_delay_clamps_to_zero);
+  RUN_TEST(test_a2plus_rain_delay_formatting);
+  RUN_TEST(test_a2plus_identity_prefers_dname_and_falls_back_to_host);
+  RUN_TEST(test_a2plus_syncing_is_exposed_in_view);
+  RUN_TEST(test_a2plus_refreshing_is_exposed_in_view);
+  RUN_TEST(test_a2plus_top_bar_status_precedence);
+  RUN_TEST(test_a2plus_zero_current_remains_present);
 
   return UNITY_END();
 }
