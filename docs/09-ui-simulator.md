@@ -33,11 +33,14 @@ Use it whenever you touch **anything that draws on the panel**:
 
 ## Prerequisites (one-time setup)
 
-The sim links **SDL2** (only for the optional `--window` preview; headless
-rendering does not need a display):
-
-- macOS: `brew install sdl2`
-- Ubuntu/Debian: `sudo apt-get install -y libsdl2-dev`
+1. **Install the pinned host toolchain** — run `./tools/setup.sh`. This creates
+   a repo-local `.venv` with the project-pinned PlatformIO (`6.1.19`), so the
+   sim uses the exact same PlatformIO as CI. Either `source .venv/bin/activate`
+   first (then `pio ...` works), or invoke it directly as `./.venv/bin/pio`.
+2. **Install SDL2** — needed only for the optional `--window` preview; headless
+   rendering does not need a display:
+   - macOS: `brew install sdl2`
+   - Ubuntu/Debian: `sudo apt-get install -y libsdl2-dev`
 
 LVGL and ArduinoJson are resolved by PlatformIO (pinned in `platformio.ini`
 `lib_deps`) and pre-warmed in `.github/workflows/copilot-setup-steps.yml`.

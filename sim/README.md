@@ -19,10 +19,13 @@ and the sleep overlay. The top bar renders as part of every state.
 
 ## Prerequisites
 
-The sim links SDL2 (via `sdl2-config`):
-
-- **macOS:** `brew install sdl2`
-- **Ubuntu/Debian:** `sudo apt-get install -y libsdl2-dev`
+1. **Pinned host toolchain** — run `./tools/setup.sh` to create a repo-local
+   `.venv` with the project-pinned PlatformIO (`6.1.19`), matching CI. Then
+   either `source .venv/bin/activate` (so `pio ...` below works) or invoke it as
+   `./.venv/bin/pio ...`.
+2. **SDL2** (via `sdl2-config`):
+   - **macOS:** `brew install sdl2`
+   - **Ubuntu/Debian:** `sudo apt-get install -y libsdl2-dev`
 
 LVGL and ArduinoJson are pulled by PlatformIO (pinned in `lib_deps`) and are
 pre-warmed in `.github/workflows/copilot-setup-steps.yml`. Nothing is vendored

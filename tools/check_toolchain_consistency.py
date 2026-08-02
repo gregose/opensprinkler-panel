@@ -64,6 +64,7 @@ def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
         ("platformio", setup, re.compile(rf"platformio=={ver}")),
         ("esptool", setup, re.compile(rf"esptool=={ver}")),
         # Local flash/serial venv — pinned to match CI (see the file header).
+        ("platformio", "tools/requirements.txt", re.compile(rf"^platformio=={ver}", re.M)),
         ("esptool", "tools/requirements.txt", re.compile(rf"^esptool=={ver}", re.M)),
         # The single source of truth for the ESP32 platform.
         ("esp32-platform", "platformio.ini", re.compile(rf"espressif32@{ver}")),
@@ -80,7 +81,7 @@ def _rules() -> list[tuple[str, str, re.Pattern[str]]]:
 # reducing coverage to a trivially-consistent single value.
 MIN_SOURCES = {
     "python": 4,
-    "platformio": 4,
+    "platformio": 5,
     "esptool": 5,
     "esp32-platform": 3,
 }

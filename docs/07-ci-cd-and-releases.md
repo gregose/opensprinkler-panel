@@ -1,11 +1,14 @@
 # CI/CD, Workflows & Releases
 
-How this repo builds, tests, secures, and ships firmware. Everything that
-compiles happens in **GitHub Actions** — there is no local PlatformIO toolchain
-(the local machine only downloads finished artifacts and flashes them; see
-[`tools/README.md`](../tools/README.md)). This document is the authoritative
-reference for the four workflows in `.github/workflows/` and the tag-driven
-release process.
+How this repo builds, tests, secures, and ships firmware. Compiling the ESP32
+firmware happens in **GitHub Actions** — the local machine does not
+cross-compile for the board; it downloads finished artifacts and flashes them
+(see [`tools/README.md`](../tools/README.md)). The repo venv does, however,
+provide the pinned PlatformIO for local **host** builds and tests — the LVGL
+simulator (`pio run -e sim`, see [`docs/09-ui-simulator.md`](09-ui-simulator.md))
+and the native unit tests (`pio test -e native`). This document is the
+authoritative reference for the four workflows in `.github/workflows/` and the
+tag-driven release process.
 
 ## Toolchain: one source of truth
 
@@ -17,7 +20,7 @@ workflow — keep these in lockstep:
 | Tool | Version | Where it's pinned |
 |------|---------|-------------------|
 | Python | `3.11` | `ci.yml`, `release.yml` (`PYTHON_VERSION`), `copilot-setup-steps.yml` |
-| PlatformIO | `6.1.19` | `ci.yml`, `release.yml` (`PLATFORMIO_VERSION`), `copilot-setup-steps.yml` |
+| PlatformIO | `6.1.19` | `ci.yml`, `release.yml` (`PLATFORMIO_VERSION`), `copilot-setup-steps.yml`, `tools/requirements.txt` |
 | esptool | `5.3.1` | `ci.yml`, `release.yml` (`ESPTOOL_VERSION`), `copilot-setup-steps.yml`, `tools/requirements.txt` |
 | ESP32 platform | `espressif32@7.0.1` | `platformio.ini` (the single source) |
 
