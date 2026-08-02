@@ -38,6 +38,8 @@ Keep the pinned tool versions identical across `platformio.ini`,
 - Keep Arduino/hardware glue thin, in `src/`.
 - Every logic change must keep `pio test -e native` green. Firmware must build
   with `pio run -e cyd-35r`.
+- On-panel UI changes must refresh the affected manual/README screenshots in
+  the same PR. Follow `docs/08-docs-site.md` section "Screenshots".
 
 ## OpenSprinkler API contract
 

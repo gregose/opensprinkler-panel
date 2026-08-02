@@ -1684,7 +1684,7 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
     lv_obj_remove_style_all(slot.box);
     lv_obj_set_style_bg_opa(slot.box, LV_OPA_TRANSP, 0);
     lv_obj_set_size(slot.box, 46, TOP_H);
-    lv_obj_set_style_pad_column(slot.box, 3, 0);
+    lv_obj_set_style_pad_column(slot.box, 2, 0);
     lv_obj_clear_flag(slot.box, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_layout(slot.box, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(slot.box, LV_FLEX_FLOW_ROW);
@@ -1692,7 +1692,7 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     slot.val = lv_label_create(slot.box);
-    lv_obj_set_width(slot.val, 27);
+    lv_obj_set_width(slot.val, 26);
     lv_label_set_long_mode(slot.val, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_text_font(slot.val, &lv_font_montserrat_12, 0);
@@ -1700,11 +1700,10 @@ static CurrentSlot build_current_slot(lv_obj_t* parent) {
     lv_label_set_text(slot.val, "0");
 
     slot.unit = lv_label_create(slot.box);
-    lv_obj_set_width(slot.unit, 16);
+    lv_obj_set_width(slot.unit, 18);
     lv_label_set_long_mode(slot.unit, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(slot.unit, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_font(slot.unit, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_text_letter_space(slot.unit, -1, 0);
     lv_obj_set_style_text_color(slot.unit, hex_color(CLR_MUTED), 0);
     lv_label_set_text(slot.unit, "mA");
 
