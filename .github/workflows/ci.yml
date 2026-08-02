@@ -151,7 +151,7 @@ jobs:
   # 480x320 PNG headlessly (SDL_VIDEODRIVER=dummy, no display), then uploads it.
   # This proves the LVGL-faithful preview pipeline works in CI.
   sim-render:
-    name: Render top bar (host LVGL sim)
+    name: Render screens (host LVGL sim)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -176,12 +176,14 @@ jobs:
         run: pip install "platformio==${{ env.PLATFORMIO_VERSION }}"
       - name: Build host sim
         run: pio run -e sim
-      - name: Render top bar to PNG (headless)
+      - name: Render every screen state to PNG (headless)
         env:
           SDL_VIDEODRIVER: dummy
-        run: ./.pio/build/sim/program
-      - name: Upload rendered top-bar PNG
+        run: |
+          mkdir -p sim/out
+          ./.pio/build/sim/program
+      - name: Upload rendered screen PNGs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: sim-top-bar-${{ steps.meta.outputs.sha }}
+          name: sim-screens-${{ steps.meta.outputs.sha }}
           path: sim/out/
