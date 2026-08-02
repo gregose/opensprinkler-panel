@@ -1,10 +1,15 @@
-# Local flash/serial bridge Python toolchain.
+# Local host Python toolchain.
 #
-# These are for the Mac that flashes and monitors the board over USB — NOT for
-# the firmware build (that happens in cloud CI). Versions are pinned to match
-# .github/workflows/ci.yml so local esptool behavior is identical to the tool
-# that produces the binaries.
+# These run on the developer's machine. Two roles:
+#   - esptool/pyserial flash and monitor the board over USB.
+#   - platformio provides the pinned PlatformIO for local HOST builds/tests:
+#     the LVGL sim (`pio run -e sim`) and the native unit tests
+#     (`pio test -e native`). Compiling the ESP32 firmware itself still happens
+#     in cloud CI; this venv does not cross-compile for the board.
+# Versions are pinned to match .github/workflows/ci.yml so local behavior is
+# identical to the tools that produce the binaries.
 #
 # Install into a repo-local .venv with: ./tools/setup.sh
+platformio==6.1.19
 esptool==5.3.1
 pyserial>=3.5

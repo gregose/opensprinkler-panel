@@ -41,6 +41,27 @@ Keep the pinned tool versions identical across `platformio.ini`,
 - On-panel UI changes must refresh the affected manual/README screenshots in
   the same PR. Follow `docs/08-docs-site.md` section "Screenshots".
 
+## UI development (host LVGL sim)
+
+All LVGL screen geometry lives in `lib/ui` (`osp::ui::*`, LVGL-only: no Arduino,
+no TFT_eSPI, no network); `src/main.cpp` is thin glue that wires drivers + the
+poll loop to those builders. The **host sim** (`env:sim`) links the SAME
+`lib/ui` code and renders every screen/state to 480x320 PNGs on your laptop, so
+it is the fast, faithful way to iterate on UX without a bench panel.
+
+- When you change anything that draws on the panel, use the sim to see it:
+  `pio run -e sim` then `./.pio/build/sim/program [--state <name>]` and open
+  `sim/out/<state>.png`. Refresh the committed `sim/out/` PNGs in the same PR.
+- Drive a specific state by editing/adding a fixture in `sim/fixtures.cpp`
+  (pure `PanelView` + `StationModel` + `JpData` + `HostStatus`), then add its
+  name to `all_states()`. This is the accurate way to mock a UX state.
+- Keep the split: new screens go in `lib/ui` (builders + a `Callbacks` struct of
+  generic `lv_event_cb_t`, updated from the pure view model); never add screen
+  geometry to `main.cpp`.
+- The sim canNOT model the pre-LVGL TFT boot/diagnostic screens or the
+  WiFiManager captive portal (not LVGL) - validate those on hardware.
+- Full loop, prereqs (SDL2), and fidelity-diff details: `docs/09-ui-simulator.md`.
+
 ## OpenSprinkler API contract
 
 Follow `docs/02-opensprinkler-api.md` exactly. Most important quirk: `en=1` on

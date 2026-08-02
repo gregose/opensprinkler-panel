@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# tools/setup.sh — one-time bootstrap of the local flash/serial toolchain.
+# tools/setup.sh — one-time bootstrap of the local host toolchain.
 #
 # Creates a repo-local .venv using Python >=3.10 (preferring 3.11 to match CI)
 # and installs the pinned tools from tools/requirements.txt. Idempotent — safe
 # to re-run to pick up requirement changes.
 #
+# This venv now provides the pinned PlatformIO too, so you can run the HOST
+# builds/tests locally: the LVGL sim (`pio run -e sim`, see
+# docs/09-ui-simulator.md) and the native unit tests (`pio test -e native`).
+# Compiling the ESP32 firmware still happens in cloud CI.
+#
 # After this, tools/flash.sh, monitor.sh and seed-nvs.sh auto-activate .venv
-# (see tools/_venv.sh); you do not need to activate it yourself.
+# (see tools/_venv.sh); you do not need to activate it yourself. For pio,
+# either `source .venv/bin/activate` or invoke `./.venv/bin/pio`.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,7 +56,9 @@ source "$venv_dir/bin/activate"
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -r "$req"
 
-echo "Flash toolchain ready:"
+echo "Host toolchain ready:"
+python -m platformio --version 2>/dev/null | sed 's/^/  /' || true
 python -m esptool version 2>/dev/null | grep -i "^esptool" || python -m esptool version 2>/dev/null | head -1 || true
 python -c "import serial; print('  pyserial', serial.__version__)"
 echo "Done. tools/flash.sh, monitor.sh and seed-nvs.sh will use this .venv automatically."
+echo "For host builds/tests: 'source .venv/bin/activate' then 'pio run -e sim' / 'pio test -e native' (or './.venv/bin/pio ...')."
