@@ -135,7 +135,6 @@ struct PanelScreen {
     lv_obj_t* pnl_history                           = nullptr;
     lv_obj_t* lbl_hist_empty                        = nullptr;
     lv_obj_t* hist_rows[MAX_HIST_ROWS]              = {};
-    lv_obj_t* hist_row_icon[MAX_HIST_ROWS]          = {};
     lv_obj_t* hist_row_name[MAX_HIST_ROWS]          = {};
     lv_obj_t* hist_row_tag[MAX_HIST_ROWS]           = {};
     lv_obj_t* hist_row_dur[MAX_HIST_ROWS]           = {};

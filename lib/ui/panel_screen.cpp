@@ -701,17 +701,13 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         ps.hist_rows[r] = lv_obj_create(ps.pnl_history);
         lv_obj_set_size(ps.hist_rows[r], SCREEN_W, HIST_ROW_H);
         lv_obj_set_pos(ps.hist_rows[r], 0, ry);
-        lv_obj_set_style_bg_color(ps.hist_rows[r], hex_color(CLR_BG), 0);
+        // Zebra stripe by row slot (stable regardless of content) so a dense log
+        // is easier to scan across the name/duration/timestamp columns.
+        lv_obj_set_style_bg_color(ps.hist_rows[r],
+                                  hex_color((r & 1) ? CLR_ROW_ALT : CLR_BG), 0);
         lv_obj_set_style_border_width(ps.hist_rows[r], 0, 0);
         lv_obj_set_style_pad_all(ps.hist_rows[r], 0, 0);
         lv_obj_clear_flag(ps.hist_rows[r], LV_OBJ_FLAG_SCROLLABLE);
-
-        // Leading kind icon (colour/glyph set per-frame in update).
-        ps.hist_row_icon[r] = lv_label_create(ps.hist_rows[r]);
-        lv_label_set_text(ps.hist_row_icon[r], "");
-        lv_obj_set_style_text_font(ps.hist_row_icon[r], &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(CLR_TEAL), 0);
-        lv_obj_align(ps.hist_row_icon[r], LV_ALIGN_LEFT_MID, HIST_ICON_X, 0);
 
         // Station/program name (single line, ellipsized).
         ps.hist_row_name[r] = lv_label_create(ps.hist_rows[r]);
@@ -1275,33 +1271,22 @@ void update_panel_screen(PanelScreen& ps,
             if (count > 0 && idx < count) {
                 const HistoryEntry& e = history.entries[idx];
 
-                // Kind -> glyph + colours. Runs read bright (teal/lede); events
-                // (rain delay, sensors) are dimmed so the log scans as "runs
-                // with the occasional event".
-                const char* icon = LV_SYMBOL_TINT;
-                uint32_t icon_col = CLR_TEAL;
+                // Kind -> colours (no icon; kind reads from the tag + tint).
+                // Runs read bright (teal/lede); events (rain delay, sensors) are
+                // dimmed so the log scans as "runs with the occasional event".
                 uint32_t name_col = CLR_TEXT;
                 uint32_t dur_col  = CLR_LEDE;
                 switch (e.kind) {
                     case HistoryEntry::ProgramRun:
-                        icon = LV_SYMBOL_TINT; icon_col = CLR_TEAL; break;
                     case HistoryEntry::ManualRun:
-                        // Manual runs keep the teal droplet (same as a program
-                        // run) but get a trailing "Manual" tag, set below.
-                        icon = LV_SYMBOL_TINT; icon_col = CLR_TEAL; break;
                     case HistoryEntry::RunOnce:
-                        icon = LV_SYMBOL_LOOP; icon_col = CLR_TEAL; break;
+                        break;
                     case HistoryEntry::RainDelay:
-                        icon = LV_SYMBOL_WARNING; icon_col = CLR_AMBER;
                         name_col = CLR_AMBER; dur_col = CLR_MUTED; break;
                     case HistoryEntry::Sensor1:
                     case HistoryEntry::Sensor2:
-                        icon = LV_SYMBOL_BELL; icon_col = CLR_AMBER;
                         name_col = CLR_MUTED; dur_col = CLR_MUTED; break;
                 }
-
-                lv_label_set_text(ps.hist_row_icon[r], icon);
-                lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(icon_col), 0);
 
                 // Context tag: program name for a program run, "Manual" for a
                 // manual run (default when the fixture leaves tag null). When a

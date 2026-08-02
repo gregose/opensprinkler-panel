@@ -52,8 +52,9 @@ static constexpr int MAX_HIST_ROWS  = 10;  // history rows per page
 
 // #127 History row content geometry (shared by the build + per-frame update so
 // the update can narrow the name column on manual-run rows to fit the tag).
-static constexpr int HIST_ICON_X = 10;  // leading kind glyph x
-static constexpr int HIST_NAME_X = 36;  // name column x
+// No leading kind icon (dropped for horizontal room); the name starts at the
+// left inset and the kind is conveyed by the trailing tag + colour instead.
+static constexpr int HIST_NAME_X = 12;  // name column x (left inset)
 static constexpr int HIST_RP     = 10;  // right inset from row edge
 static constexpr int HIST_WHEN_W = 96;  // timestamp column width
 static constexpr int HIST_DUR_W  = 52;  // duration column width
