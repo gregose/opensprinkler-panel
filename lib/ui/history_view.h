@@ -44,5 +44,11 @@ struct HistoryView {
     int                 page    = 0;
 };
 
+// In-memory cap on retained /jl records. The classic ESP32 has no PSRAM, so PR2
+// keeps only the most recent HISTORY_MAX_RECORDS log entries (newest-first) and
+// drops the rest. At MAX_HIST_ROWS per page this is the worst-case page count
+// the numeric pager must handle (120 / 10 = 12 pages). Tunable.
+static constexpr int HISTORY_MAX_RECORDS = 120;
+
 }  // namespace ui
 }  // namespace osp

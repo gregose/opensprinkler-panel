@@ -201,6 +201,38 @@ Fixture make_fixture(const std::string& state) {
         f.view.showing_history = true;
         f.view.hist_list_page = 0;
         f.history_entries = {};
+    } else if (state == "history-many") {
+        // Stress case at the in-memory cap: a busy 30-day log (HISTORY_MAX_
+        // RECORDS entries) so the numeric "Page N / M" pager is exercised deep in
+        // the list. Rendered on a middle page to show non-edge arrow states.
+        f.view.showing_history = true;
+        using HE = ui::HistoryEntry;
+        static const char* kNames[] = {
+            "Front Lawn", "Back Lawn", "Rose Bed", "Garden Drip", "Side Yard",
+            "Parkway", "Veggie Beds", "Patio Pots"};
+        static const char* kProgs[] = {"Morning", "Evening", "Weekly Deep"};
+        static const char* kWhen[]  = {
+            "Today 6:32a", "Today 6:00a", "Mon 7:10p", "Mon 6:12a", "Sun 6:00a",
+            "Sat 8:15p", "Jul 28", "Jul 27", "Jul 26", "Jul 25"};
+        static const uint32_t kDur[] = {600, 300, 900, 120, 480, 240};
+        f.history_entries.clear();
+        for (int i = 0; i < ui::HISTORY_MAX_RECORDS; ++i) {
+            HE e;
+            e.name  = kNames[i % 8];
+            e.dur_s = kDur[i % 6];
+            e.when  = kWhen[(i / 4) % 10];
+            if (i % 7 == 5) {            // occasional manual run
+                e.kind = HE::ManualRun;
+            } else if (i % 11 == 9) {   // occasional run-once
+                e.kind = HE::RunOnce;
+            } else {
+                e.kind = HE::ProgramRun;
+                e.tag  = kProgs[i % 3];
+            }
+            f.history_entries.push_back(e);
+        }
+        // 120 entries / 10 rows = 12 pages; show page 8 of 12 (index 7).
+        f.view.hist_list_page = 7;
     } else if (state == "sleep") {
         f.view.sleeping = true;
     }
@@ -213,7 +245,7 @@ const std::vector<std::string>& all_states() {
         "idle-offline", "idle-auth", "run-manual", "run-manual-paused",
         "run-program", "run-program-paused", "programs-list",
         "programs-list-paged", "history-list", "history-list-paged",
-        "history-mixed-events", "history-empty", "sleep"};
+        "history-mixed-events", "history-empty", "history-many", "sleep"};
     return kAll;
 }
 

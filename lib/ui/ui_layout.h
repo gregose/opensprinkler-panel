@@ -45,9 +45,10 @@ static constexpr int MAX_PROG_ROWS  = 4;  // program rows per page
 static constexpr int MAX_PROG_PAGES = 6;  // pager dot capacity
 static constexpr int MAX_QROWS      = 9;  // visible program-queue rows
 
-// #127 History overlay: compact single-line rows, ~9 per page (vs 4 programs).
-static constexpr int MAX_HIST_ROWS  = 9;  // history rows per page
-static constexpr int MAX_HIST_PAGES = 6;  // history pager dot capacity
+// #127 History overlay: compact single-line rows, ~10 per page (vs 4 programs).
+// The pager is a numeric "Page N / M" indicator (not dots) so it scales to the
+// dozens of pages a busy 30-day log produces.
+static constexpr int MAX_HIST_ROWS  = 10;  // history rows per page
 
 // #127 History row content geometry (shared by the build + per-frame update so
 // the update can narrow the name column on manual-run rows to fit the tag).

@@ -629,19 +629,18 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
     }
 
     // ---- History list panel (#127) - full-width overlay ----------------
-    // Mirrors the programs overlay (same header/Back, same pager) but with
-    // COMPACT single-line rows so ~9 fit per page instead of 4. Each row is:
+    // Mirrors the programs overlay (same header/Back) but with COMPACT
+    // single-line rows so ~10 fit per page instead of 4. Each row is:
     //   [icon]  name  [program tag] .....(flex)..... duration  short-timestamp
-    // No day grouping, no touch scrolling; paging is the pager only. Rows are
-    // denser than v1 (23px vs 29, montserrat_14) to fit two more per page; the
-    // pager arrows are slimmed to match (HIST_ARROW_H) so nothing collides.
+    // No day grouping, no touch scrolling. The pager is a numeric "Page N / M"
+    // label between prev/next arrows (not dots) so it scales to the many pages a
+    // busy 30-day log produces.
     static constexpr int HIST_HDR_H   = 44;
-    static constexpr int HIST_ROW_H   = 23;
+    static constexpr int HIST_ROW_H   = 21;
     static constexpr int HIST_ARROW_H = 30;  // slim pager arrow (vs NAV_BTN_H 36)
     static constexpr int HIST_ROWS_BOTTOM = HIST_HDR_H + MAX_HIST_ROWS * HIST_ROW_H;
     static constexpr int HIST_PAGER_CY = HIST_ROWS_BOTTOM +
                                          (PROG_LIST_H - HIST_ROWS_BOTTOM) / 2;
-    static constexpr int HIST_DOT_Y  = HIST_PAGER_CY - PROG_DOT_H / 2;
 
     ps.pnl_history = lv_obj_create(scr);
     lv_obj_set_size(ps.pnl_history, SCREEN_W, PROG_LIST_H);
@@ -762,21 +761,22 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_align(ps.hist_row_when[r], LV_ALIGN_RIGHT_MID, -HIST_RP, 0);
     }
 
-    // Pager: dots + arrows, identical geometry to the programs list.
+    // Pager: prev/next arrows with a numeric "Page N / M" label between them
+    // (no dots - the label scales to any page count). Same arrow geometry as the
+    // programs list, just slimmer.
     {
-        for (int d = 0; d < MAX_HIST_PAGES; ++d) {
-            ps.hist_page_dots[d] = lv_obj_create(ps.pnl_history);
-            lv_obj_remove_style_all(ps.hist_page_dots[d]);
-            lv_obj_set_size(ps.hist_page_dots[d], PROG_DOT_W, PROG_DOT_H);
-            lv_obj_set_pos(ps.hist_page_dots[d], 0, HIST_DOT_Y);
-            lv_obj_set_style_radius(ps.hist_page_dots[d], LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_bg_opa(ps.hist_page_dots[d], LV_OPA_COVER, 0);
-            lv_obj_set_style_bg_color(ps.hist_page_dots[d], hex_color(CLR_LINE), 0);
-            lv_obj_add_flag(ps.hist_page_dots[d], LV_OBJ_FLAG_HIDDEN);
-        }
-
         static constexpr int ARROW_INSET = 14;
         const int arrow_y = HIST_PAGER_CY - HIST_ARROW_H / 2;
+
+        ps.hist_page_label = lv_label_create(ps.pnl_history);
+        lv_label_set_text(ps.hist_page_label, "");
+        lv_obj_set_style_text_font(ps.hist_page_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_page_label, hex_color(CLR_MUTED), 0);
+        lv_obj_set_style_text_align(ps.hist_page_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(ps.hist_page_label, 0, HIST_PAGER_CY -
+                       lv_font_get_line_height(&lv_font_montserrat_14) / 2);
+        lv_obj_set_width(ps.hist_page_label, SCREEN_W);
+        lv_obj_add_flag(ps.hist_page_label, LV_OBJ_FLAG_HIDDEN);
 
         ps.hist_page_prev = make_btn(ps.pnl_history, LV_SYMBOL_LEFT,
                                      CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
@@ -1346,20 +1346,13 @@ void update_panel_screen(PanelScreen& ps,
             }
         }
 
-        // Pager: dots + arrows, only when >1 page (same behaviour as programs).
+        // Pager: numeric "Page N / M" label + arrows, only when >1 page.
         const bool need_pager = total_pages > 1;
-        const int dots_w = need_pager
-            ? total_pages * PROG_DOT_W + (total_pages - 1) * PROG_DOT_GAP
-            : 0;
-        const int dots_x0 = (SCREEN_W - dots_w) / 2;
-        for (int d = 0; d < MAX_HIST_PAGES; ++d) {
-            if (!ps.hist_page_dots[d]) continue;
-            obj_set_hidden(ps.hist_page_dots[d], !need_pager || d >= total_pages);
-            if (need_pager && d < total_pages) {
-                lv_obj_set_x(ps.hist_page_dots[d],
-                             dots_x0 + d * (PROG_DOT_W + PROG_DOT_GAP));
-                lv_obj_set_style_bg_color(ps.hist_page_dots[d],
-                    hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
+        if (ps.hist_page_label) {
+            obj_set_hidden(ps.hist_page_label, !need_pager);
+            if (need_pager) {
+                snprintf(buf, sizeof(buf), "Page %d / %d", page + 1, total_pages);
+                lv_label_set_text(ps.hist_page_label, buf);
             }
         }
         if (ps.hist_page_prev && ps.hist_page_next) {

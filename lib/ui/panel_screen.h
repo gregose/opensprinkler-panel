@@ -140,7 +140,7 @@ struct PanelScreen {
     lv_obj_t* hist_row_tag[MAX_HIST_ROWS]           = {};
     lv_obj_t* hist_row_dur[MAX_HIST_ROWS]           = {};
     lv_obj_t* hist_row_when[MAX_HIST_ROWS]          = {};
-    lv_obj_t* hist_page_dots[MAX_HIST_PAGES]        = {};
+    lv_obj_t* hist_page_label                       = nullptr;
     lv_obj_t* hist_page_prev                        = nullptr;
     lv_obj_t* hist_page_next                        = nullptr;
 
