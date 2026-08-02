@@ -51,6 +51,12 @@ TopBarState resolve_top_bar_state(const PanelView& view) {
   if (view.rain_delay_seconds_remaining > 0) {
     return TopBarState::RainDelay;
   }
+  // Paused is a normal running state (a manual or program run held by /pq), so
+  // it ranks below the connectivity/disabled/rain-delay words but above Clean.
+  if (view.paused &&
+      (view.phase == Phase::Running || view.phase == Phase::ProgramRunning)) {
+    return TopBarState::Paused;
+  }
   return TopBarState::Clean;
 }
 
@@ -74,6 +80,10 @@ std::string top_bar_status_text(const PanelView& view) {
       }
       return "RAIN DELAY " + duration;
     }
+    case TopBarState::Paused:
+      // Manual runs show a bare "Paused"; a program run keeps the existing
+      // "Program paused" wording. Both render amber.
+      return view.phase == Phase::ProgramRunning ? "Program paused" : "Paused";
     case TopBarState::Clean:
       return "";
   }
@@ -544,7 +554,15 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
   if (prog_state.run_class == RunClass::ManualRun) {
     for (int sid = 0; sid < static_cast<int>(jc.ps.size()); ++sid) {
       if (model_.runnable_index(sid) == -1) continue;
-      if (board_bit_set(jc.sbits, sid) && jc.ps[sid].rem > 0) {
+      if (jc.ps[sid].rem <= 0) continue;
+      // Normally the running station's board bit is set. While paused the
+      // controller turns the valve OFF (sbits clears) and pushes the queue's
+      // start into the future, but the manual entry (pid=99) stays in ps[] with
+      // a frozen rem. Detect it from ps[] so a paused manual run holds
+      // Phase::Running instead of collapsing to idle.
+      const bool on = board_bit_set(jc.sbits, sid);
+      const bool paused_manual = (jc.pq != 0) && jc.ps[sid].pid == 99;
+      if (on || paused_manual) {
         jc_running_sid = sid;
         jc_running_rem = jc.ps[sid].rem;
         break;

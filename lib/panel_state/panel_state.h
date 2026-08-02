@@ -30,6 +30,7 @@ enum class TopBarState {
   Offline,
   Disabled,
   RainDelay,
+  Paused,
 };
 
 enum class IntentKind {

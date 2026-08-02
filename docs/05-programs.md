@@ -114,6 +114,17 @@ the panel's next `/jc` poll shows a program running, the UI switches to the
 **program-run screen** (`Phase::ProgramRunning`). It shares the top bar with
 every other screen, and is laid out as two columns:
 
+**Shared status/nav layout with the manual run screen.** The left-column status
+stack (eyebrow, station name, big countdown, and the paused block) and the
+**Next / Pause / Stop** action row are built from the **same shared template** as
+the manual single-station run screen, at the same coordinates, fonts, and colors.
+The program action row sits at the shared `ACTION_Y = 156` (the same Y as the
+manual row); there is no separate lowered program action row. The only per-mode
+difference is the mode-specific content: the program run shows the live queue list
+in the right column, whereas the manual run shows the station grid at the bottom
+(and the settings panel on the right). Because both modes reuse one construction
+and one update path, the geometry cannot drift between them.
+
 ### Left column — current station (mirrors the manual run screen)
 
 - **Eyebrow:** `STATION N OF M` (mono caps, teal) — N counts **up** through a
@@ -124,7 +135,8 @@ every other screen, and is laid out as two columns:
 - **Countdown**, large (`ui_font_countdown_48`) — the current station's
   remaining time. This is the single live per-second ticker on the screen.
 - **Action row** (bottom): **`Next ›`** (advance), **`Pause`** / **`Resume`**,
-  **`■ Stop`** (red). These **replace** the manual screen's Advance/Stop pair.
+  **`■ Stop`** (red). This is the **same three-button row** the manual run screen
+  now uses (the manual screen gained `Pause`), built from the shared template.
 
 Run-time stepper and Auto-advance are **hidden** during a program run: a program
 carries its own per-station durations and is inherently a sequence, so those
@@ -161,12 +173,20 @@ queue (`ps[]`):
 
 ### Paused state
 
-- Top-bar status becomes **`Program paused`** (amber).
+The paused presentation is **shared with the manual run screen** (same Option B
+two-line block, same code path):
+
+- Top-bar status becomes **`Program paused`** (amber) for a program run, or
+  **`Paused`** for a manual run.
 - The big countdown **freezes** (dead-reckoned by `tick()` but held while paused).
-- A **`Resumes in M:SS`** line appears (from the controller's pause countdown
-  `pt`), showing time until auto-resume.
+- A two-line amber block appears beside the frozen countdown: **`PAUSED`** on line
+  1 and **`Resumes in MM:SS`** (zero-padded, from the controller's pause countdown
+  `pt`) on line 2, right-aligned to the panel's inner right edge.
 - The `Pause` button label becomes `Resume`.
 - In the queue list, the current station's `▶` marker flips to a `⏸` pause glyph.
+- A manual run can be paused via the same `/pq` mechanism (see `01`); entering and
+  leaving the paused state is reconciled from the polled `pq`/`pt`, so an external
+  pause/resume from the app is reflected on the panel.
 
 ---
 

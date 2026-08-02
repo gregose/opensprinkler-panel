@@ -1401,17 +1401,26 @@ static void update_drop_pulse(bool syncing) {
 // Smoothed LiPo monitor fed from PIN_BAT_ADC (pure logic in lib/battery_monitor).
 static osp::BatteryMonitor g_batt;
 
-// Left panel states
+// Left panel states.
+// The running screen (manual station run and program run) shares ONE status
+// panel + action row template: pnl_status holds the eyebrow, station name, big
+// countdown, and the two-line amber paused block, and the action row holds
+// Next / Pause / Stop. Both modes render identical geometry; only the eyebrow /
+// name TEXT and the Next handler differ (see ev_next). Idle keeps its own panel.
 static lv_obj_t* pnl_idle       = nullptr;
 static lv_obj_t* lbl_idle_head  = nullptr;
 static lv_obj_t* lbl_idle_sub   = nullptr;
-static lv_obj_t* pnl_running    = nullptr;
+static lv_obj_t* pnl_status     = nullptr;  // shared running-status panel
 static lv_obj_t* lbl_eyebrow    = nullptr;
 static lv_obj_t* lbl_stn_name   = nullptr;
 static lv_obj_t* lbl_countdown  = nullptr;
+static lv_obj_t* lbl_paused     = nullptr;  // "PAUSED" (Option B block, line 1)
+static lv_obj_t* lbl_resume     = nullptr;  // "Resumes in MM:SS" (block line 2)
 
-// Bottom action row (running only)
-static lv_obj_t* btn_advance    = nullptr;
+// Shared action row (running only): Next / Pause / Stop.
+static lv_obj_t* btn_next       = nullptr;
+static lv_obj_t* btn_pause      = nullptr;
+static lv_obj_t* lbl_pause_txt  = nullptr;  // Pause/Resume label inside btn_pause
 static lv_obj_t* btn_stop       = nullptr;
 
 // Right panel
@@ -1444,21 +1453,6 @@ static lv_obj_t* prog_row_btn_run[MAX_PROG_ROWS]   = {};
 static lv_obj_t* prog_page_dots[MAX_PROG_PAGES]    = {};
 static lv_obj_t* prog_page_prev                    = nullptr;  // ‹ pager arrow
 static lv_obj_t* prog_page_next                    = nullptr;  // › pager arrow
-
-// M9: Program-run queue view panel
-static lv_obj_t* pnl_prog_queue  = nullptr;
-static lv_obj_t* lbl_prog_eyebrow = nullptr;
-static lv_obj_t* lbl_prog_name   = nullptr;
-static lv_obj_t* lbl_prog_cd     = nullptr;
-
-// M9: Program queue action buttons (at ACTION_Y, same row as btn_advance/btn_stop)
-static lv_obj_t* btn_prog_adv    = nullptr;
-static lv_obj_t* btn_prog_pause  = nullptr;
-static lv_obj_t* lbl_prog_pause_txt = nullptr;
-static lv_obj_t* btn_prog_stop   = nullptr;
-
-// M9: "Resumes in M:SS" line shown on the queue view while paused.
-static lv_obj_t* lbl_prog_resume = nullptr;
 
 // M9: Right-side program queue LIST (station rows) shown during a program run.
 static lv_obj_t* pnl_prog_qlist   = nullptr;
@@ -1521,12 +1515,24 @@ static lv_obj_t* make_btn(lv_obj_t* parent, const char* text,
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
-static void ev_advance(lv_event_t* e) {
+// Shared running-screen action handlers. Next dispatches by mode (program skip
+// vs manual advance); Pause and Stop are already mode-agnostic in PanelState.
+static void ev_next(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
-    if (lock && g_ps) g_ps->advance();
+    if (!(lock && g_ps)) return;
+    if (g_ps->view().phase == osp::Phase::ProgramRunning) {
+        g_ps->program_advance_intent();
+    } else {
+        g_ps->advance();
+    }
 }
-static void ev_stop(lv_event_t* e) {
+static void ev_pause(lv_event_t* e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    StateLock lock;
+    if (lock && g_ps) g_ps->pause_toggle_intent();
+}
+static void ev_stop_run(lv_event_t* e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     StateLock lock;
     if (lock && g_ps) g_ps->stop();
@@ -1610,23 +1616,6 @@ static void ev_prog_run(lv_event_t* e) {
     if (pid >= 1) g_ps->run_program_intent(pid - 1);
 }
 
-// M9: Program queue actions
-static void ev_prog_pause(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    StateLock lock;
-    if (lock && g_ps) g_ps->pause_toggle_intent();
-}
-static void ev_prog_advance(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    StateLock lock;
-    if (lock && g_ps) g_ps->program_advance_intent();
-}
-static void ev_prog_stop(lv_event_t* e) {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    StateLock lock;
-    if (lock && g_ps) g_ps->stop();
-}
-
 static void ev_touch_any(lv_event_t* e) {
     if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
         StateLock lock;
@@ -1653,15 +1642,12 @@ static constexpr int ACTION_Y  = CONTENT_Y + PANEL_H;
 static constexpr int GRID_Y    = ACTION_Y + ACTION_H;
 
 // Full-height layout, used when the station grid is hidden (programs list and
-// program-run screens). These surfaces have their own widgets, so they simply
-// build at the taller geometry — no runtime resize needed.
+// the program-run queue list). These surfaces have their own widgets, so they
+// simply build at the taller geometry — no runtime resize needed.
 static constexpr int FULL_BOTTOM   = SCREEN_H - 4;                  // 316
-// Lift the program-run action row off the very bottom edge so Next/Pause/Stop
-// are easier to reach. Still sits lower than the manual-run row (ACTION_Y=156)
-// — a modest raise, not a full match.
-static constexpr int PROG_ACTION_LIFT = 40;
-static constexpr int PROG_ACTION_Y = FULL_BOTTOM - ACTION_H - PROG_ACTION_LIFT; // 224
-static constexpr int FULL_PANEL_H  = PROG_ACTION_Y - CONTENT_Y - 6; // left panel above the action row
+// The program-run screen shares the manual status panel + action row, so its
+// left column stops at the SAME action row (ACTION_Y=156, PANEL_H). Only the
+// right queue list keeps the full height down to the bottom edge.
 static constexpr int FULL_RIGHT_H  = FULL_BOTTOM - CONTENT_Y;       // right queue list to the bottom
 static constexpr int PROG_LIST_H   = FULL_BOTTOM - CONTENT_Y;       // programs-list overlay
 
@@ -1991,23 +1977,27 @@ static void build_ui() {
     // NOTE: the "Programs" entry button lives in the right settings panel,
     // below Auto-advance (built further down), to match the mockup.
 
-    // ---- Left panel: Running ------------------------------------------
-    pnl_running = lv_obj_create(scr);
-    lv_obj_set_size(pnl_running, LEFT_W, PANEL_H);
-    lv_obj_set_pos(pnl_running, 0, CONTENT_Y);
-    lv_obj_set_style_bg_color(pnl_running, hex_color(CLR_BG), 0);
-    lv_obj_set_style_border_width(pnl_running, 0, 0);
-    lv_obj_set_style_pad_all(pnl_running, 14, 0);
-    lv_obj_clear_flag(pnl_running, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(pnl_running, LV_OBJ_FLAG_HIDDEN);  // hidden until running
+    // ---- Shared running status panel (manual + program) ----------------
+    // ONE status stack used by both the manual station run and the program run.
+    // Eyebrow / name / countdown fonts+positions are identical in both modes;
+    // only their TEXT differs (set in ui_update). The Option B paused block sits
+    // to the right of the frozen countdown. Stops at the shared action row.
+    pnl_status = lv_obj_create(scr);
+    lv_obj_set_size(pnl_status, LEFT_W, PANEL_H);
+    lv_obj_set_pos(pnl_status, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(pnl_status, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(pnl_status, 0, 0);
+    lv_obj_set_style_pad_all(pnl_status, 14, 0);
+    lv_obj_clear_flag(pnl_status, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pnl_status, LV_OBJ_FLAG_HIDDEN);  // hidden until running
 
-    lbl_eyebrow = lv_label_create(pnl_running);
+    lbl_eyebrow = lv_label_create(pnl_status);
     lv_label_set_text(lbl_eyebrow, "STATION 1");
     lv_obj_set_style_text_font(lbl_eyebrow, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_eyebrow, hex_color(CLR_TEAL), 0);
     lv_obj_align(lbl_eyebrow, LV_ALIGN_TOP_LEFT, 0, 2);
 
-    lbl_stn_name = lv_label_create(pnl_running);
+    lbl_stn_name = lv_label_create(pnl_status);
     lv_label_set_text(lbl_stn_name, "");
     lv_obj_set_width(lbl_stn_name, LEFT_W - 28);
     // Constrain to a single line so LONG_DOT ellipsizes instead of wrapping —
@@ -2019,110 +2009,70 @@ static void build_ui() {
     lv_obj_set_style_text_color(lbl_stn_name, hex_color(CLR_TEXT), 0);
     lv_obj_align(lbl_stn_name, LV_ALIGN_TOP_LEFT, 0, 22);
 
-    lbl_countdown = lv_label_create(pnl_running);
+    lbl_countdown = lv_label_create(pnl_status);
     lv_label_set_text(lbl_countdown, "0:00");
     lv_obj_set_style_text_font(lbl_countdown, &ui_font_countdown_48, 0);
     lv_obj_set_style_text_color(lbl_countdown, hex_color(CLR_AMBER), 0);
     // Sit lower in the panel (near the action buttons) so it's clearly
     // separated from the station name above. Font line height is 32 px and the
     // panel content area is ~101 px, so y=66 leaves a comfortable gap under the
-    // name without clipping the bottom (66 + 32 = 98 <= 101).
+    // name without clipping the bottom (66 + 32 = 98 <= 101). Frozen while paused.
     lv_obj_align(lbl_countdown, LV_ALIGN_TOP_LEFT, 0, 66);
 
-    // ---- Left panel: Program queue view (M9) ---------------------------
-    // The station grid is hidden during a program run, so this panel uses the
-    // full height down to the action row.
-    pnl_prog_queue = lv_obj_create(scr);
-    lv_obj_set_size(pnl_prog_queue, LEFT_W, FULL_PANEL_H);
-    lv_obj_set_pos(pnl_prog_queue, 0, CONTENT_Y);
-    lv_obj_set_style_bg_color(pnl_prog_queue, hex_color(CLR_BG), 0);
-    lv_obj_set_style_border_width(pnl_prog_queue, 0, 0);
-    lv_obj_set_style_pad_all(pnl_prog_queue, 14, 0);
-    lv_obj_clear_flag(pnl_prog_queue, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(pnl_prog_queue, LV_OBJ_FLAG_HIDDEN);
+    // Option B paused block: a two-line amber stack right-aligned to the panel
+    // inner right edge, beside the frozen countdown. Right-aligning lets the gap
+    // to the ~118px "10:00" countdown flex within the 262px inner width; line 2
+    // is montserrat_12 so the widest string "Resumes in 10:00" clears the
+    // countdown comfortably. Zero-padded MM:SS keeps the width stable across the
+    // 9:59 -> 10:00 boundary. Both lines hidden unless paused (set in ui_update).
+    lbl_paused = lv_label_create(pnl_status);
+    lv_label_set_text(lbl_paused, "PAUSED");
+    lv_obj_set_style_text_font(lbl_paused, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_paused, hex_color(CLR_AMBER), 0);
+    lv_obj_set_style_text_align(lbl_paused, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_add_flag(lbl_paused, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(lbl_paused, LV_ALIGN_TOP_RIGHT, 0, 64);
 
-    lbl_prog_eyebrow = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_eyebrow, "STATION");
-    lv_obj_set_style_text_font(lbl_prog_eyebrow, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_prog_eyebrow, hex_color(CLR_TEAL), 0);
-    lv_obj_align(lbl_prog_eyebrow, LV_ALIGN_TOP_LEFT, 0, 6);
+    lbl_resume = lv_label_create(pnl_status);
+    lv_label_set_text(lbl_resume, "");
+    lv_obj_set_style_text_font(lbl_resume, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_resume, hex_color(CLR_AMBER), 0);
+    lv_obj_set_style_text_align(lbl_resume, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_add_flag(lbl_resume, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(lbl_resume, LV_ALIGN_TOP_RIGHT, 0, 84);
 
-    // Current station name (repurposed: the running zone, not the program name).
-    // The program name is shown only above the queue (right panel) per the
-    // mockup — the status column mirrors the manual-run layout.
-    lbl_prog_name = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_name, "");
-    lv_obj_set_width(lbl_prog_name, LEFT_W - 28);
-    // One-line height so a long current-station name ellipsizes instead of
-    // wrapping down into the big program countdown (lbl_prog_cd at y=70).
-    // montserrat_24 line height ~29px; name band y28–58 clears the timer.
-    lv_obj_set_height(lbl_prog_name, 30);
-    lv_label_set_long_mode(lbl_prog_name, LV_LABEL_LONG_DOT);
-    lv_obj_set_style_text_font(lbl_prog_name, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_prog_name, hex_color(CLR_TEXT), 0);
-    lv_obj_align(lbl_prog_name, LV_ALIGN_TOP_LEFT, 0, 28);
-
-    lbl_prog_cd = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_cd, "0:00");
-    lv_obj_set_style_text_font(lbl_prog_cd, &ui_font_countdown_48, 0);
-    lv_obj_set_style_text_color(lbl_prog_cd, hex_color(CLR_AMBER), 0);
-    lv_obj_align(lbl_prog_cd, LV_ALIGN_TOP_LEFT, 0, 70);
-
-    // "Resumes in M:SS" — a second line below the countdown while paused.
-    lbl_prog_resume = lv_label_create(pnl_prog_queue);
-    lv_label_set_text(lbl_prog_resume, "");
-    lv_obj_set_style_text_font(lbl_prog_resume, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl_prog_resume, hex_color(CLR_AMBER), 0);
-    lv_obj_add_flag(lbl_prog_resume, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_align(lbl_prog_resume, LV_ALIGN_TOP_LEFT, 0, 132);
-
-    // ---- Action row (Advance / Stop) -----------------------------------
-    static constexpr int ACTION_SIDE_PAD = 10;
-    static constexpr int ACTION_GAP = 10;
-    const int action_btn_w = (LEFT_W - (2 * ACTION_SIDE_PAD) - ACTION_GAP) / 2;
-
-    btn_advance = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
-                           CLR_TEAL, CLR_BG, &lv_font_montserrat_20, 11);
-    lv_obj_set_size(btn_advance, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_advance, ACTION_SIDE_PAD, ACTION_Y);
-    lv_obj_add_flag(btn_advance, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(btn_advance, ev_advance, LV_EVENT_CLICKED, nullptr);
-
-    btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
-                        CLR_RED, CLR_BG, &lv_font_montserrat_20, 11);
-    lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
-    lv_obj_set_pos(btn_stop, ACTION_SIDE_PAD + action_btn_w + ACTION_GAP, ACTION_Y);
-    lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(btn_stop, ev_stop, LV_EVENT_CLICKED, nullptr);
-
-    // ---- Program queue action row (M9): Advance / Pause / Stop ---------
-    // Anchored at the full-height action row (the grid is hidden during runs).
+    // ---- Shared action row: Next / Pause / Stop ------------------------
+    // ONE 3-up row at the shared ACTION_Y=156 used by both modes. Next
+    // dispatches by mode (ev_next); Pause and Stop are mode-agnostic.
     {
-        static constexpr int PROG_SIDE_PAD = 8;
-        static constexpr int PROG_BTN_GAP  = 8;
-        const int prog_btn_w = (LEFT_W - (2 * PROG_SIDE_PAD) - (2 * PROG_BTN_GAP)) / 3;
+        static constexpr int ACTION_SIDE_PAD = 8;
+        static constexpr int ACTION_BTN_GAP  = 8;
+        const int action_btn_w =
+            (LEFT_W - (2 * ACTION_SIDE_PAD) - (2 * ACTION_BTN_GAP)) / 3;
 
-        btn_prog_adv = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
-                                CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
-        lv_obj_set_size(btn_prog_adv, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_adv, PROG_SIDE_PAD, PROG_ACTION_Y);
-        lv_obj_add_flag(btn_prog_adv, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_event_cb(btn_prog_adv, ev_prog_advance, LV_EVENT_CLICKED, nullptr);
+        btn_next = make_btn(scr, "Next " LV_SYMBOL_RIGHT,
+                            CLR_TEAL, CLR_BG, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_next, action_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_next, ACTION_SIDE_PAD, ACTION_Y);
+        lv_obj_add_flag(btn_next, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_next, ev_next, LV_EVENT_CLICKED, nullptr);
 
-        btn_prog_pause = make_btn(scr, "Pause",
-                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 10);
-        lv_obj_set_size(btn_prog_pause, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_pause, PROG_SIDE_PAD + prog_btn_w + PROG_BTN_GAP, PROG_ACTION_Y);
-        lv_obj_add_flag(btn_prog_pause, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_event_cb(btn_prog_pause, ev_prog_pause, LV_EVENT_CLICKED, nullptr);
-        lbl_prog_pause_txt = static_cast<lv_obj_t*>(lv_obj_get_child(btn_prog_pause, 0));
+        btn_pause = make_btn(scr, "Pause",
+                             CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_pause, action_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_pause, ACTION_SIDE_PAD + action_btn_w + ACTION_BTN_GAP,
+                       ACTION_Y);
+        lv_obj_add_flag(btn_pause, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_pause, ev_pause, LV_EVENT_CLICKED, nullptr);
+        lbl_pause_txt = static_cast<lv_obj_t*>(lv_obj_get_child(btn_pause, 0));
 
-        btn_prog_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
-                                 CLR_RED, CLR_BG, &lv_font_montserrat_16, 10);
-        lv_obj_set_size(btn_prog_stop, prog_btn_w, ACTION_H);
-        lv_obj_set_pos(btn_prog_stop, PROG_SIDE_PAD + 2*(prog_btn_w + PROG_BTN_GAP), PROG_ACTION_Y);
-        lv_obj_add_flag(btn_prog_stop, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_event_cb(btn_prog_stop, ev_prog_stop, LV_EVENT_CLICKED, nullptr);
+        btn_stop = make_btn(scr, LV_SYMBOL_STOP " Stop",
+                            CLR_RED, CLR_BG, &lv_font_montserrat_16, 10);
+        lv_obj_set_size(btn_stop, action_btn_w, ACTION_H);
+        lv_obj_set_pos(btn_stop, ACTION_SIDE_PAD + 2 * (action_btn_w + ACTION_BTN_GAP),
+                       ACTION_Y);
+        lv_obj_add_flag(btn_stop, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_event_cb(btn_stop, ev_stop_run, LV_EVENT_CLICKED, nullptr);
     }
 
     // ---- Right panel ---------------------------------------------------
@@ -2598,6 +2548,9 @@ static void ui_update() {
             status_color = CLR_RED;
             rule_color = CLR_RED;
             break;
+        case osp::TopBarState::Paused:
+            status_color = CLR_AMBER;
+            break;
         case osp::TopBarState::RainDelay:
         case osp::TopBarState::Clean:
             break;
@@ -2639,21 +2592,20 @@ static void ui_update() {
         batt_glyph, battery_percent,
         osp::battery_tier_from_percent(battery_percent));
 
-    // Phase visibility
+    // Phase visibility. The shared status panel + action row show for BOTH the
+    // manual and program run; the right column (settings+grid vs queue list) is
+    // the only per-mode difference.
     obj_set_hidden(pnl_idle,       any_running || show_programs);
-    obj_set_hidden(pnl_running,    !running);
-    obj_set_hidden(pnl_prog_queue, !prog_running);
+    obj_set_hidden(pnl_status,     !any_running);
     obj_set_hidden(pnl_prog_qlist, !prog_running);
     obj_set_hidden(pnl_programs,   !show_programs);
     obj_set_hidden(pnl_right,      show_programs || prog_running);
     // The Programs entry button lives in the right panel; hide it while a
     // manual station is running (open_programs_list only works from idle).
     obj_set_hidden(btn_programs,   any_running);
-    obj_set_hidden(btn_advance,    !running);
-    obj_set_hidden(btn_stop,       !running);
-    obj_set_hidden(btn_prog_adv,   !prog_running);
-    obj_set_hidden(btn_prog_pause, !prog_running);
-    obj_set_hidden(btn_prog_stop,  !prog_running);
+    obj_set_hidden(btn_next,       !any_running);
+    obj_set_hidden(btn_pause,      !any_running);
+    obj_set_hidden(btn_stop,       !any_running);
     // Station grid is only useful for idle (start a station) and manual runs
     // (jump to a station). Hide it on the programs list and during program runs.
     obj_set_hidden(grid_cont,      show_programs || prog_running);
@@ -2696,73 +2648,73 @@ static void ui_update() {
         }
     }
 
-    if (running) {
-        // Eyebrow: "Station N"
-        snprintf(buf, sizeof(buf), "STATION %d", v.running_sid + 1);
-        lv_label_set_text(lbl_eyebrow, buf);
-
-        // Station name
+    // ---- Shared running status render (manual + program) ---------------
+    // ONE render path drives the shared status stack (eyebrow / name /
+    // countdown / paused block) and the Pause button label for BOTH modes.
+    // Only the eyebrow and station-name TEXT differ by mode.
+    if (any_running) {
         const auto& stns = g_model.stations();
-        const char* name = (v.running_sid >= 0 &&
-                            v.running_sid < static_cast<int>(stns.size()))
-                            ? stns[v.running_sid].name.c_str() : "Station";
-        lv_label_set_text(lbl_stn_name, name);
 
-        // Countdown (MM:SS)
+        if (prog_running) {
+            const auto& pr = v.prog_run;
+            // Eyebrow: identified program -> "STATION N OF M"; unidentified /
+            // external run -> honest "N STATIONS LEFT".
+            const std::string eyebrow = osp::program_run_eyebrow(
+                pr.program_index, pr.current_station_number, pr.station_count);
+            lv_label_set_text(lbl_eyebrow, eyebrow.c_str());
+
+            // Headline: current station name.
+            if (pr.current_sid >= 0 &&
+                    pr.current_sid < static_cast<int>(stns.size())) {
+                lv_label_set_text(lbl_stn_name, stns[pr.current_sid].name.c_str());
+            } else {
+                lv_label_set_text(lbl_stn_name, "Finishing...");
+            }
+        } else {
+            // Manual run: "STATION N" + the running zone name.
+            snprintf(buf, sizeof(buf), "STATION %d", v.running_sid + 1);
+            lv_label_set_text(lbl_eyebrow, buf);
+            const char* name = (v.running_sid >= 0 &&
+                                v.running_sid < static_cast<int>(stns.size()))
+                                ? stns[v.running_sid].name.c_str() : "Station";
+            lv_label_set_text(lbl_stn_name, name);
+        }
+
+        // Countdown (M:SS) — frozen while paused (view holds countdown_s).
         char cd[16];
         fmt_countdown(cd, v.countdown_s);
         lv_label_set_text(lbl_countdown, cd);
+
+        // Option B paused block: "PAUSED" + zero-padded "Resumes in MM:SS".
+        if (v.paused) {
+            int rs = v.pause_remaining_s;
+            if (rs < 0) rs = 0;
+            snprintf(buf, sizeof(buf), "Resumes in %02d:%02d", rs / 60, rs % 60);
+            lv_label_set_text(lbl_resume, buf);
+            obj_set_hidden(lbl_paused, false);
+            obj_set_hidden(lbl_resume, false);
+        } else {
+            obj_set_hidden(lbl_paused, true);
+            obj_set_hidden(lbl_resume, true);
+        }
+
+        // Pause button toggles to Resume while paused.
+        if (lbl_pause_txt) {
+            lv_label_set_text(lbl_pause_txt, v.paused ? "Resume" : "Pause");
+        }
     }
 
-    // M9: Program queue view
+    // M9: Program queue view (right-side queue list, program-only)
     if (prog_running) {
         const auto& pr = v.prog_run;
         const auto& progs = g_ps->program_list().programs;
         const auto& stns = g_model.stations();
 
-        // Program name — shown only as the queue-list header (right panel),
-        // not on the status column (matches the mockup).
-        const char* prog_name = "Station Queue";  // generic header until a program is identified
+        // Program name — shown only as the queue-list header (right panel).
+        const char* prog_name = "Station Queue";  // generic until identified
         if (pr.program_index >= 0 &&
                 pr.program_index < static_cast<int>(progs.size())) {
             prog_name = progs[pr.program_index].name.c_str();
-        }
-
-        // Eyebrow: identified program -> "STATION N OF M"; unidentified/external
-        // run -> honest "N STATIONS LEFT" (we do not know the full set/position).
-        const std::string eyebrow = osp::program_run_eyebrow(
-            pr.program_index, pr.current_station_number, pr.station_count);
-        lv_label_set_text(lbl_prog_eyebrow, eyebrow.c_str());
-
-        // Headline: current station name.
-        if (pr.current_sid >= 0 &&
-                pr.current_sid < static_cast<int>(stns.size())) {
-            lv_label_set_text(lbl_prog_name, stns[pr.current_sid].name.c_str());
-        } else {
-            lv_label_set_text(lbl_prog_name, "Finishing...");
-        }
-
-        // Countdown (station remaining).
-        {
-            char cd[16];
-            fmt_countdown(cd, v.countdown_s);
-            lv_label_set_text(lbl_prog_cd, cd);
-        }
-
-        // Resume line: only while paused.
-        if (v.paused) {
-            int rs = v.pause_remaining_s;
-            if (rs < 0) rs = 0;
-            snprintf(buf, sizeof(buf), "Resumes in %d:%02d", rs / 60, rs % 60);
-            lv_label_set_text(lbl_prog_resume, buf);
-            obj_set_hidden(lbl_prog_resume, false);
-        } else {
-            obj_set_hidden(lbl_prog_resume, true);
-        }
-
-        // Pause button label.
-        if (lbl_prog_pause_txt) {
-            lv_label_set_text(lbl_prog_pause_txt, v.paused ? "Resume" : "Pause");
         }
 
         // ---- Right-side queue list -------------------------------------
