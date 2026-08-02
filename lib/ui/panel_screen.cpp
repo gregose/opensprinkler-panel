@@ -219,7 +219,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // panel down into that band, stopping NAV_BOT_GAP above the pills, so
         // the Programs + History nav buttons can be taller and reach closer to
         // the grid (the stepper + auto-advance above are unaffected).
-        static constexpr int NAV_BOT_GAP   = 6;      // breathing gap above pills
+        static constexpr int NAV_BOT_GAP   = 5;      // breathing gap above pills
         static constexpr int RIGHT_PANEL_H =
             (GRID_Y + 18 - NAV_BOT_GAP) - CONTENT_Y;  // taller than CONTENT_H
         lv_obj_set_size(pnl, RIGHT_W, RIGHT_PANEL_H);
@@ -229,22 +229,23 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_set_style_pad_all(pnl, 10, 0);
         lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
 
-        // Tightened vertical rhythm (#127): the right column now stacks TWO
-        // nav buttons (Programs + History) below auto-advance, so the stepper
-        // and auto-advance sit a few px higher and are slightly shorter than
-        // the original single-button layout to free room. (STEP_Y 18->14,
-        // STEP_H 44->40, AA gap 8->6, AA_H 38->34.)
-        static constexpr int STEP_Y = 14;
+        // Vertical rhythm (#127 + bench polish): the right column stacks the
+        // run-time stepper, auto-advance, then two nav buttons (Programs +
+        // History). STEP_Y clears the "RUN TIME" label (montserrat_14, ~19px)
+        // so the label is not crowded by the "-" button below it.
+        static constexpr int STEP_Y = 24;
         static constexpr int STEP_H = 40;
         static constexpr int PANEL_PAD = 10;
         static constexpr int PANEL_CONTENT_W = RIGHT_W - (2 * PANEL_PAD);
 
-        // Run time label
+        // Run time label — tucked just above the stepper (small gap) so it
+        // reads clearly as that control's label rather than floating between
+        // the panel top and the stepper.
         lv_obj_t* rt_lbl = lv_label_create(pnl);
         lv_label_set_text(rt_lbl, "RUN TIME");
         lv_obj_set_style_text_font(rt_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(rt_lbl, hex_color(CLR_MUTED), 0);
-        lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+        lv_obj_align(rt_lbl, LV_ALIGN_TOP_LEFT, 0, 6);
 
         // Run-time stepper: [-] MM:SS [+]
         ps.btn_rt_minus = make_btn(pnl, LV_SYMBOL_MINUS,
@@ -308,10 +309,10 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // the two buttons fill a taller nav band below auto-advance (8px
         // breathing gap below the toggle) down to NAV_BOT_GAP above the pills,
         // overlapping the 10px bottom pad (same bg) to reclaim it. This makes
-        // each button noticeably taller (31->37px) and lets the pair reach
+        // each button noticeably taller (31->33px) and lets the pair reach
         // closer to the grid, while the stepper + auto-advance above keep their
-        // current legible spacing.
-        static constexpr int NAV_BTN2_H  = 37;  // shared nav-button height
+        // legible spacing (with RUN TIME no longer crowding the stepper).
+        static constexpr int NAV_BTN2_H  = 33;  // shared nav-button height
         static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
         static constexpr int NAV_TOP_GAP = 8;   // gap below auto-advance toggle
         const int nav_top    = AA_Y + AA_H + NAV_TOP_GAP;  // below auto-adv
