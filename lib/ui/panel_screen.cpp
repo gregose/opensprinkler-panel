@@ -218,8 +218,13 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_set_style_pad_all(pnl, 10, 0);
         lv_obj_clear_flag(pnl, LV_OBJ_FLAG_SCROLLABLE);
 
-        static constexpr int STEP_Y = 18;
-        static constexpr int STEP_H = 44;
+        // Tightened vertical rhythm (#127): the right column now stacks TWO
+        // nav buttons (Programs + History) below auto-advance, so the stepper
+        // and auto-advance sit a few px higher and are slightly shorter than
+        // the original single-button layout to free room. (STEP_Y 18->14,
+        // STEP_H 44->40, AA gap 8->6, AA_H 38->34.)
+        static constexpr int STEP_Y = 14;
+        static constexpr int STEP_H = 40;
         static constexpr int PANEL_PAD = 10;
         static constexpr int PANEL_CONTENT_W = RIGHT_W - (2 * PANEL_PAD);
 
@@ -255,8 +260,8 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // Auto-advance row sits directly under the stepper (no divider) so the
         // two run-time controls read as a group. ~8 px gap keeps touch targets
         // from colliding.
-        static constexpr int AA_Y = STEP_Y + STEP_H + 8;  // just below stepper
-        static constexpr int AA_H = 38;
+        static constexpr int AA_Y = STEP_Y + STEP_H + 6;  // just below stepper
+        static constexpr int AA_H = 34;
         lv_obj_t* row_auto_adv = lv_obj_create(pnl);
         lv_obj_set_size(row_auto_adv, PANEL_CONTENT_W, AA_H);
         lv_obj_align(row_auto_adv, LV_ALIGN_TOP_LEFT, 0, AA_Y);
@@ -281,26 +286,34 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
                                   LV_PART_INDICATOR | LV_STATE_CHECKED);
         lv_obj_clear_flag(ps.sw_auto_adv, LV_OBJ_FLAG_CLICKABLE);
 
-        // "Programs" entry button - vertically centred in the space between the
-        // Auto-advance row and the panel's bottom edge (biased a few px lower so
-        // it reads as centred in the column rather than hugging Auto-advance).
-        // Height matches the run-time stepper (STEP_H) so the right column reads
-        // as one family of controls. A leading list glyph reads as "a list of
-        // programs" (the screen it opens); text uses CLR_TEXT like the other
-        // secondary buttons (-, +, Pause) rather than a teal accent.
-        static constexpr int PROG_BTN_H = STEP_H;
+        // Programs + History entry buttons, stacked in the space below the
+        // Auto-advance row. Both share the same width/style/height so the right
+        // column reads as one family; a leading glyph names the screen each
+        // opens (list -> programs, loop -> history). Text uses CLR_TEXT like the
+        // other secondary buttons rather than a teal accent.
+        static constexpr int NAV_BTN2_H  = 29;  // shared nav-button height
+        static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
         static constexpr int PANEL_USABLE_H = CONTENT_H - (2 * PANEL_PAD);
-        const int aa_bottom = AA_Y + AA_H;
-        int prog_btn_y = aa_bottom + ((PANEL_USABLE_H - aa_bottom) - PROG_BTN_H) / 2 + 6;
-        if (prog_btn_y > PANEL_USABLE_H - PROG_BTN_H) {
-            prog_btn_y = PANEL_USABLE_H - PROG_BTN_H;
-        }
+        const int nav_top   = AA_Y + AA_H;                     // below auto-adv
+        const int nav_space = PANEL_USABLE_H - nav_top;        // remaining band
+        const int nav_block = 2 * NAV_BTN2_H + NAV_BTN2_G;     // both + gap
+        int prog_btn_y = nav_top + (nav_space - nav_block) / 2;
+        if (prog_btn_y < nav_top) prog_btn_y = nav_top;
+        const int hist_btn_y = prog_btn_y + NAV_BTN2_H + NAV_BTN2_G;
+
         ps.btn_programs = make_btn(pnl, LV_SYMBOL_LIST " Programs",
                                    CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
-        lv_obj_set_size(ps.btn_programs, PANEL_CONTENT_W, PROG_BTN_H);
+        lv_obj_set_size(ps.btn_programs, PANEL_CONTENT_W, NAV_BTN2_H);
         lv_obj_align(ps.btn_programs, LV_ALIGN_TOP_LEFT, 0, prog_btn_y);
         if (cbs.on_open_programs)
             lv_obj_add_event_cb(ps.btn_programs, cbs.on_open_programs, LV_EVENT_CLICKED, nullptr);
+
+        ps.btn_history = make_btn(pnl, LV_SYMBOL_LOOP " History",
+                                  CLR_LINE, CLR_TEXT, &lv_font_montserrat_16, 8);
+        lv_obj_set_size(ps.btn_history, PANEL_CONTENT_W, NAV_BTN2_H);
+        lv_obj_align(ps.btn_history, LV_ALIGN_TOP_LEFT, 0, hist_btn_y);
+        if (cbs.on_open_history)
+            lv_obj_add_event_cb(ps.btn_history, cbs.on_open_history, LV_EVENT_CLICKED, nullptr);
     }
 
     // ---- Right-side program QUEUE list (M9) ----------------------------
@@ -606,6 +619,154 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         lv_obj_add_flag(ps.prog_page_next, LV_OBJ_FLAG_HIDDEN);
     }
 
+    // ---- History list panel (#127) - full-width overlay ----------------
+    // Mirrors the programs overlay (same header/Back, same pager) but with
+    // COMPACT single-line rows so ~7 fit per page instead of 4. Each row is:
+    //   [icon]  name .....(flex)..... duration  short-timestamp
+    // No day grouping, no touch scrolling; paging is the pager only.
+    static constexpr int HIST_HDR_H  = 44;
+    static constexpr int HIST_ROW_H  = 29;
+    static constexpr int HIST_ROWS_BOTTOM = HIST_HDR_H + MAX_HIST_ROWS * HIST_ROW_H;
+    static constexpr int HIST_PAGER_CY = HIST_ROWS_BOTTOM +
+                                         (PROG_LIST_H - HIST_ROWS_BOTTOM) / 2;
+    static constexpr int HIST_DOT_Y  = HIST_PAGER_CY - PROG_DOT_H / 2;
+    // Row content geometry. Duration + timestamp are right-aligned in a fixed
+    // right zone; icon + name are left-aligned; the name flexes and ellipsizes.
+    static constexpr int HIST_ICON_X = 10;
+    static constexpr int HIST_NAME_X = 36;
+    static constexpr int HIST_RP     = 10;  // right inset from row edge
+    static constexpr int HIST_WHEN_W = 96;  // timestamp column width
+    static constexpr int HIST_DUR_W  = 52;  // duration column width
+    static constexpr int HIST_COL_G  = 6;   // gap between duration + timestamp
+    static constexpr int HIST_NAME_W =
+        SCREEN_W - HIST_NAME_X -
+        (HIST_RP + HIST_WHEN_W + HIST_COL_G + HIST_DUR_W + 8);
+
+    ps.pnl_history = lv_obj_create(scr);
+    lv_obj_set_size(ps.pnl_history, SCREEN_W, PROG_LIST_H);
+    lv_obj_set_pos(ps.pnl_history, 0, CONTENT_Y);
+    lv_obj_set_style_bg_color(ps.pnl_history, hex_color(CLR_BG), 0);
+    lv_obj_set_style_border_width(ps.pnl_history, 0, 0);
+    lv_obj_set_style_pad_all(ps.pnl_history, 0, 0);
+    lv_obj_clear_flag(ps.pnl_history, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ps.pnl_history, LV_OBJ_FLAG_HIDDEN);
+
+    // Header row: "HISTORY" + Back (same treatment as the programs list).
+    {
+        lv_obj_t* hdr = lv_obj_create(ps.pnl_history);
+        lv_obj_set_size(hdr, SCREEN_W, HIST_HDR_H);
+        lv_obj_set_pos(hdr, 0, 0);
+        lv_obj_set_style_bg_color(hdr, hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t* lbl_title = lv_label_create(hdr);
+        lv_label_set_text(lbl_title, "HISTORY");
+        lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl_title, hex_color(CLR_TEXT), 0);
+        lv_obj_align(lbl_title, LV_ALIGN_LEFT_MID, 10, 0);
+
+        lv_obj_t* btn_back = make_btn(hdr, LV_SYMBOL_LEFT " Back",
+                                      CLR_LINE, CLR_TEXT,
+                                      &lv_font_montserrat_20, 8);
+        lv_obj_set_size(btn_back, 128, NAV_BTN_H);
+        lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
+        if (cbs.on_close_history)
+            lv_obj_add_event_cb(btn_back, cbs.on_close_history, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Empty-state message (centred), shown when there is no history yet.
+    ps.lbl_hist_empty = lv_label_create(ps.pnl_history);
+    lv_label_set_text(ps.lbl_hist_empty, "No history yet");
+    lv_obj_set_style_text_font(ps.lbl_hist_empty, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(ps.lbl_hist_empty, hex_color(CLR_MUTED), 0);
+    lv_obj_align(ps.lbl_hist_empty, LV_ALIGN_CENTER, 0, HIST_HDR_H / 2);
+    lv_obj_add_flag(ps.lbl_hist_empty, LV_OBJ_FLAG_HIDDEN);
+
+    // Compact rows.
+    for (int r = 0; r < MAX_HIST_ROWS; ++r) {
+        const int ry = HIST_HDR_H + r * HIST_ROW_H;
+
+        ps.hist_rows[r] = lv_obj_create(ps.pnl_history);
+        lv_obj_set_size(ps.hist_rows[r], SCREEN_W, HIST_ROW_H);
+        lv_obj_set_pos(ps.hist_rows[r], 0, ry);
+        lv_obj_set_style_bg_color(ps.hist_rows[r], hex_color(CLR_BG), 0);
+        lv_obj_set_style_border_width(ps.hist_rows[r], 0, 0);
+        lv_obj_set_style_pad_all(ps.hist_rows[r], 0, 0);
+        lv_obj_clear_flag(ps.hist_rows[r], LV_OBJ_FLAG_SCROLLABLE);
+
+        // Leading kind icon (colour/glyph set per-frame in update).
+        ps.hist_row_icon[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_icon[r], "");
+        lv_obj_set_style_text_font(ps.hist_row_icon[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(CLR_TEAL), 0);
+        lv_obj_align(ps.hist_row_icon[r], LV_ALIGN_LEFT_MID, HIST_ICON_X, 0);
+
+        // Station/program name (single line, ellipsized).
+        ps.hist_row_name[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_name[r], "");
+        lv_obj_set_width(ps.hist_row_name[r], HIST_NAME_W);
+        lv_label_set_long_mode(ps.hist_row_name[r], LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_font(ps.hist_row_name[r], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(CLR_TEXT), 0);
+        lv_obj_align(ps.hist_row_name[r], LV_ALIGN_LEFT_MID, HIST_NAME_X, 0);
+
+        // Duration (right-aligned column).
+        ps.hist_row_dur[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_dur[r], "");
+        lv_obj_set_width(ps.hist_row_dur[r], HIST_DUR_W);
+        lv_obj_set_style_text_align(ps.hist_row_dur[r], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_font(ps.hist_row_dur[r], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_row_dur[r], hex_color(CLR_LEDE), 0);
+        lv_obj_align(ps.hist_row_dur[r], LV_ALIGN_RIGHT_MID,
+                     -(HIST_RP + HIST_WHEN_W + HIST_COL_G), 0);
+
+        // Short timestamp (right-aligned column at the row edge).
+        ps.hist_row_when[r] = lv_label_create(ps.hist_rows[r]);
+        lv_label_set_text(ps.hist_row_when[r], "");
+        lv_obj_set_width(ps.hist_row_when[r], HIST_WHEN_W);
+        lv_obj_set_style_text_align(ps.hist_row_when[r], LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_font(ps.hist_row_when[r], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ps.hist_row_when[r], hex_color(CLR_MUTED), 0);
+        lv_obj_align(ps.hist_row_when[r], LV_ALIGN_RIGHT_MID, -HIST_RP, 0);
+    }
+
+    // Pager: dots + arrows, identical geometry to the programs list.
+    {
+        for (int d = 0; d < MAX_HIST_PAGES; ++d) {
+            ps.hist_page_dots[d] = lv_obj_create(ps.pnl_history);
+            lv_obj_remove_style_all(ps.hist_page_dots[d]);
+            lv_obj_set_size(ps.hist_page_dots[d], PROG_DOT_W, PROG_DOT_H);
+            lv_obj_set_pos(ps.hist_page_dots[d], 0, HIST_DOT_Y);
+            lv_obj_set_style_radius(ps.hist_page_dots[d], LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_opa(ps.hist_page_dots[d], LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(ps.hist_page_dots[d], hex_color(CLR_LINE), 0);
+            lv_obj_add_flag(ps.hist_page_dots[d], LV_OBJ_FLAG_HIDDEN);
+        }
+
+        static constexpr int ARROW_INSET = 14;
+        const int arrow_y = HIST_PAGER_CY - NAV_BTN_H / 2;
+
+        ps.hist_page_prev = make_btn(ps.pnl_history, LV_SYMBOL_LEFT,
+                                     CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(ps.hist_page_prev, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(ps.hist_page_prev, ARROW_INSET, arrow_y);
+        if (cbs.on_hist_page_prev)
+            lv_obj_add_event_cb(ps.hist_page_prev, cbs.on_hist_page_prev,
+                                LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(ps.hist_page_prev, LV_OBJ_FLAG_HIDDEN);
+
+        ps.hist_page_next = make_btn(ps.pnl_history, LV_SYMBOL_RIGHT,
+                                     CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
+        lv_obj_set_size(ps.hist_page_next, PROG_ARROW_W, NAV_BTN_H);
+        lv_obj_set_pos(ps.hist_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
+        if (cbs.on_hist_page_next)
+            lv_obj_add_event_cb(ps.hist_page_next, cbs.on_hist_page_next,
+                                LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_flag(ps.hist_page_next, LV_OBJ_FLAG_HIDDEN);
+    }
+
     return ps;
 }
 
@@ -660,6 +821,7 @@ void update_panel_screen(PanelScreen& ps,
                          const PanelView& v,
                          StationModel& model,
                          const JpData& programs,
+                         const HistoryView& history,
                          const HostStatus& host) {
     char buf[80];
 
@@ -668,6 +830,7 @@ void update_panel_screen(PanelScreen& ps,
     const bool prog_running = (v.phase == Phase::ProgramRunning);
     const bool any_running  = running || prog_running;
     const bool show_programs = v.showing_programs_list;
+    const bool show_history  = v.showing_history;
 
     const TopBarState top_state = resolve_top_bar_state(v);
     const std::string status_text = top_bar_status_text(v);
@@ -732,14 +895,16 @@ void update_panel_screen(PanelScreen& ps,
     // Phase visibility. The shared status panel + action row show for BOTH the
     // manual and program run; the right column (settings+grid vs queue list) is
     // the only per-mode difference.
-    obj_set_hidden(ps.pnl_idle,       any_running || show_programs);
+    obj_set_hidden(ps.pnl_idle,       any_running || show_programs || show_history);
     obj_set_hidden(ps.pnl_status,     !any_running);
     obj_set_hidden(ps.pnl_prog_qlist, !prog_running);
     obj_set_hidden(ps.pnl_programs,   !show_programs);
-    obj_set_hidden(ps.pnl_right,      show_programs || prog_running);
-    // The Programs entry button lives in the right panel; hide it while a
-    // manual station is running (open_programs_list only works from idle).
+    obj_set_hidden(ps.pnl_history,    !show_history);
+    obj_set_hidden(ps.pnl_right,      show_programs || show_history || prog_running);
+    // The Programs/History entry buttons live in the right panel; hide them
+    // while a manual station is running (the overlays only open from idle).
     obj_set_hidden(ps.btn_programs,   any_running);
+    obj_set_hidden(ps.btn_history,    any_running);
     obj_set_hidden(ps.btn_next,       !any_running);
     obj_set_hidden(ps.btn_pause,      !any_running);
     obj_set_hidden(ps.btn_stop,       !any_running);
@@ -1055,6 +1220,112 @@ void update_panel_screen(PanelScreen& ps,
                 // set the color on the child label, so target that.
                 lv_obj_t* pl = lv_obj_get_child(ps.prog_page_prev, 0);
                 lv_obj_t* nl = lv_obj_get_child(ps.prog_page_next, 0);
+                if (pl) lv_obj_set_style_text_color(pl,
+                    hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
+                if (nl) lv_obj_set_style_text_color(nl,
+                    hex_color(page >= total_pages - 1 ? CLR_MUTED : CLR_TEXT), 0);
+            }
+        }
+    }
+
+    // #127: History list content
+    if (show_history) {
+        const int count = history.count;
+        const int total_pages =
+            count > 0 ? (count + MAX_HIST_ROWS - 1) / MAX_HIST_ROWS : 0;
+        int page = history.page;
+        if (page < 0) page = 0;
+        if (total_pages > 0 && page > total_pages - 1) page = total_pages - 1;
+        const int start = page * MAX_HIST_ROWS;
+
+        obj_set_hidden(ps.lbl_hist_empty, count > 0);
+
+        for (int r = 0; r < MAX_HIST_ROWS; ++r) {
+            const int idx = start + r;
+            if (count > 0 && idx < count) {
+                const HistoryEntry& e = history.entries[idx];
+
+                // Kind -> glyph + colours. Runs read bright (teal/lede); events
+                // (rain delay, sensors) are dimmed so the log scans as "runs
+                // with the occasional event".
+                const char* icon = LV_SYMBOL_TINT;
+                uint32_t icon_col = CLR_TEAL;
+                uint32_t name_col = CLR_TEXT;
+                uint32_t dur_col  = CLR_LEDE;
+                switch (e.kind) {
+                    case HistoryEntry::ProgramRun:
+                        icon = LV_SYMBOL_TINT; icon_col = CLR_TEAL; break;
+                    case HistoryEntry::ManualRun:
+                        // Droplet in a distinct (lighter) tint so a manual run
+                        // reads differently from a scheduled program run.
+                        icon = LV_SYMBOL_TINT; icon_col = CLR_LEDE; break;
+                    case HistoryEntry::RunOnce:
+                        icon = LV_SYMBOL_LOOP; icon_col = CLR_TEAL; break;
+                    case HistoryEntry::RainDelay:
+                        icon = LV_SYMBOL_WARNING; icon_col = CLR_AMBER;
+                        name_col = CLR_AMBER; dur_col = CLR_MUTED; break;
+                    case HistoryEntry::Sensor1:
+                    case HistoryEntry::Sensor2:
+                        icon = LV_SYMBOL_BELL; icon_col = CLR_AMBER;
+                        name_col = CLR_MUTED; dur_col = CLR_MUTED; break;
+                }
+
+                lv_label_set_text(ps.hist_row_icon[r], icon);
+                lv_obj_set_style_text_color(ps.hist_row_icon[r], hex_color(icon_col), 0);
+                lv_label_set_text(ps.hist_row_name[r], e.name ? e.name : "");
+                lv_obj_set_style_text_color(ps.hist_row_name[r], hex_color(name_col), 0);
+
+                // Duration: compact ("45s" / "8m" / "1h05m"); blank for events
+                // (rain delay, sensor trips) which have no run duration.
+                const bool is_run = e.kind == HistoryEntry::ProgramRun ||
+                                    e.kind == HistoryEntry::ManualRun ||
+                                    e.kind == HistoryEntry::RunOnce;
+                if (!is_run || e.dur_s == 0) {
+                    lv_label_set_text(ps.hist_row_dur[r], "");
+                } else if (e.dur_s < 60) {
+                    snprintf(buf, sizeof(buf), "%us", e.dur_s);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                } else if (e.dur_s < 3600) {
+                    snprintf(buf, sizeof(buf), "%um", (e.dur_s + 30) / 60);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                } else {
+                    const unsigned h = e.dur_s / 3600;
+                    const unsigned m = (e.dur_s % 3600) / 60;
+                    snprintf(buf, sizeof(buf), "%uh%02um", h, m);
+                    lv_label_set_text(ps.hist_row_dur[r], buf);
+                }
+                lv_obj_set_style_text_color(ps.hist_row_dur[r], hex_color(dur_col), 0);
+
+                lv_label_set_text(ps.hist_row_when[r], e.when ? e.when : "");
+
+                obj_set_hidden(ps.hist_rows[r], false);
+            } else {
+                obj_set_hidden(ps.hist_rows[r], true);
+            }
+        }
+
+        // Pager: dots + arrows, only when >1 page (same behaviour as programs).
+        const bool need_pager = total_pages > 1;
+        const int dots_w = need_pager
+            ? total_pages * PROG_DOT_W + (total_pages - 1) * PROG_DOT_GAP
+            : 0;
+        const int dots_x0 = (SCREEN_W - dots_w) / 2;
+        for (int d = 0; d < MAX_HIST_PAGES; ++d) {
+            if (!ps.hist_page_dots[d]) continue;
+            obj_set_hidden(ps.hist_page_dots[d], !need_pager || d >= total_pages);
+            if (need_pager && d < total_pages) {
+                lv_obj_set_x(ps.hist_page_dots[d],
+                             dots_x0 + d * (PROG_DOT_W + PROG_DOT_GAP));
+                lv_obj_set_style_bg_color(ps.hist_page_dots[d],
+                    hex_color(d == page ? CLR_TEAL : CLR_LINE), 0);
+            }
+        }
+        if (ps.hist_page_prev && ps.hist_page_next) {
+            obj_set_hidden(ps.hist_page_prev, !need_pager);
+            obj_set_hidden(ps.hist_page_next, !need_pager);
+            if (need_pager) {
+                lv_obj_t* pl = lv_obj_get_child(ps.hist_page_prev, 0);
+                lv_obj_t* nl = lv_obj_get_child(ps.hist_page_next, 0);
                 if (pl) lv_obj_set_style_text_color(pl,
                     hex_color(page <= 0 ? CLR_MUTED : CLR_TEXT), 0);
                 if (nl) lv_obj_set_style_text_color(nl,

@@ -28,6 +28,11 @@ struct Fixture {
     JpData          programs;
     ui::HostStatus  host;
     std::string     ref;  // "" when no committed bench reference exists
+
+    // #127: render-only history rows for the History overlay. Owned here so the
+    // borrowed const char* fields in each entry (string literals) stay valid;
+    // sim_main builds a ui::HistoryView spanning this vector.
+    std::vector<ui::HistoryEntry> history_entries;
 };
 
 // Build the fixture for a named state (see kAllStates for the list). Unknown

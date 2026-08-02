@@ -18,6 +18,7 @@
 #include <lvgl.h>
 
 #include "battery_monitor.h"  // osp::BatteryTier
+#include "history_view.h"     // osp::ui::HistoryView, osp::ui::HistoryEntry
 #include "os_client.h"        // osp::JpData
 #include "panel_state.h"      // osp::PanelView
 #include "station_model.h"    // osp::StationModel, osp::GridLayout
@@ -57,6 +58,11 @@ struct Callbacks {
     lv_event_cb_t on_prog_page_next = nullptr;
     lv_event_cb_t on_prog_toggle    = nullptr;
     lv_event_cb_t on_prog_run       = nullptr;
+    // #127 History overlay: entry button + Back + pager (mirrors programs).
+    lv_event_cb_t on_open_history   = nullptr;
+    lv_event_cb_t on_close_history  = nullptr;
+    lv_event_cb_t on_hist_page_prev = nullptr;
+    lv_event_cb_t on_hist_page_next = nullptr;
 };
 
 // All widget handles produced by build_panel_screen(). Grouped by screen region
@@ -94,6 +100,7 @@ struct PanelScreen {
     lv_obj_t* btn_rt_plus   = nullptr;
     lv_obj_t* sw_auto_adv   = nullptr;
     lv_obj_t* btn_programs  = nullptr;
+    lv_obj_t* btn_history   = nullptr;
 
     // Station grid (bottom). pill_count pills are live in stn_pills[].
     lv_obj_t* lbl_grid_title           = nullptr;
@@ -124,6 +131,18 @@ struct PanelScreen {
     lv_obj_t* prog_page_prev                        = nullptr;
     lv_obj_t* prog_page_next                        = nullptr;
 
+    // History overlay (#127) - full-width, compact single-line rows.
+    lv_obj_t* pnl_history                           = nullptr;
+    lv_obj_t* lbl_hist_empty                        = nullptr;
+    lv_obj_t* hist_rows[MAX_HIST_ROWS]              = {};
+    lv_obj_t* hist_row_icon[MAX_HIST_ROWS]          = {};
+    lv_obj_t* hist_row_name[MAX_HIST_ROWS]          = {};
+    lv_obj_t* hist_row_dur[MAX_HIST_ROWS]           = {};
+    lv_obj_t* hist_row_when[MAX_HIST_ROWS]          = {};
+    lv_obj_t* hist_page_dots[MAX_HIST_PAGES]        = {};
+    lv_obj_t* hist_page_prev                        = nullptr;
+    lv_obj_t* hist_page_next                        = nullptr;
+
     // Sleep overlay.
     lv_obj_t* sleep_overlay = nullptr;
 
@@ -143,12 +162,14 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs);
 void build_station_grid(PanelScreen& ps, StationModel& model);
 
 // Drive every widget from the current view model. `programs` is the /jp cache
-// used by the programs list + program-run queue header. Mirrors the old
-// ui_update() exactly. The backlight side-effect stays in the firmware caller.
+// used by the programs list + program-run queue header; `history` is the
+// render-only log span for the History overlay (#127). The backlight
+// side-effect stays in the firmware caller.
 void update_panel_screen(PanelScreen& ps,
                          const PanelView& v,
                          StationModel& model,
                          const JpData& programs,
+                         const HistoryView& history,
                          const HostStatus& host);
 
 }  // namespace ui

@@ -154,6 +154,45 @@ Fixture make_fixture(const std::string& state) {
     } else if (state == "programs-list-paged") {
         f.view.showing_programs_list = true;
         f.view.prog_list_page = 1;
+    } else if (state == "history-list" || state == "history-list-paged") {
+        // Realistic mixed log across named yard zones: program runs, one manual
+        // run, one run-once. 11 rows -> 2 pages (7 + 4) so the pager engages.
+        f.view.showing_history = true;
+        f.view.hist_list_page = (state == "history-list-paged") ? 1 : 0;
+        using HE = ui::HistoryEntry;
+        f.history_entries = {
+            {"Front Lawn",  600, "Today 6:32a", HE::ProgramRun},
+            {"Back Lawn",   600, "Today 6:22a", HE::ProgramRun},
+            {"Rose Bed",    300, "Today 6:12a", HE::ProgramRun},
+            {"Garden Drip", 900, "Today 6:00a", HE::ProgramRun},
+            {"Patio Pots",  120, "Today 5:45a", HE::ManualRun},
+            {"Veggie Beds", 480, "Today 5:30a", HE::RunOnce},
+            {"Side Yard",   300, "Tue 8:15p",   HE::ProgramRun},
+            {"Front Lawn",  600, "Tue 6:32a",   HE::ProgramRun},
+            {"Back Lawn",   600, "Tue 6:22a",   HE::ProgramRun},
+            {"Parkway",     240, "Mon 7:10p",   HE::ManualRun},
+            {"Garden Drip", 900, "Jul 28",      HE::ProgramRun},
+        };
+    } else if (state == "history-mixed-events") {
+        // A page that mixes runs with a rain-delay + sensor events so their
+        // icons and dimming are visible alongside normal runs.
+        f.view.showing_history = true;
+        f.view.hist_list_page = 0;
+        using HE = ui::HistoryEntry;
+        f.history_entries = {
+            {"Front Lawn",   600,   "Today 6:32a", HE::ProgramRun},
+            {"Rain delay",   86400, "Today 5:00a", HE::RainDelay},
+            {"Back Lawn",    600,   "Mon 6:22a",   HE::ProgramRun},
+            {"Rain sensor",  0,     "Mon 4:15a",   HE::Sensor1},
+            {"Garden Drip",  900,   "Sun 6:00a",   HE::ProgramRun},
+            {"Rose Bed",     300,   "Sun 5:48a",   HE::ProgramRun},
+            {"Soil sensor",  0,     "Sat 9:30p",   HE::Sensor2},
+        };
+    } else if (state == "history-empty") {
+        // No log yet: centred empty-state message, Back + top bar still shown.
+        f.view.showing_history = true;
+        f.view.hist_list_page = 0;
+        f.history_entries = {};
     } else if (state == "sleep") {
         f.view.sleeping = true;
     }
@@ -165,7 +204,8 @@ const std::vector<std::string>& all_states() {
         "idle-connected", "idle-loading", "idle-syncing", "idle-reconnecting",
         "idle-offline", "idle-auth", "run-manual", "run-manual-paused",
         "run-program", "run-program-paused", "programs-list",
-        "programs-list-paged", "sleep"};
+        "programs-list-paged", "history-list", "history-list-paged",
+        "history-mixed-events", "history-empty", "sleep"};
     return kAll;
 }
 
