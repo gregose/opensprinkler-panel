@@ -211,7 +211,18 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
     {
         ps.pnl_right = lv_obj_create(scr);
         lv_obj_t* pnl = ps.pnl_right;
-        lv_obj_set_size(pnl, RIGHT_W, CONTENT_H);
+        // The right column is an INVISIBLE panel (bg == CLR_BG, no border), so
+        // its height is free to change with no visual box. Its old height
+        // (CONTENT_H) put its bottom flush with the grid *container* top, but
+        // the station pills actually begin ~18px lower (grid_cont sits at
+        // GRID_Y+18), leaving an empty band on the right column. Extend the
+        // panel down into that band, stopping NAV_BOT_GAP above the pills, so
+        // the Programs + History nav buttons can be taller and reach closer to
+        // the grid (the stepper + auto-advance above are unaffected).
+        static constexpr int NAV_BOT_GAP   = 6;      // breathing gap above pills
+        static constexpr int RIGHT_PANEL_H =
+            (GRID_Y + 18 - NAV_BOT_GAP) - CONTENT_Y;  // taller than CONTENT_H
+        lv_obj_set_size(pnl, RIGHT_W, RIGHT_PANEL_H);
         lv_obj_set_pos(pnl, LEFT_W, CONTENT_Y);
         lv_obj_set_style_bg_color(pnl, hex_color(CLR_BG), 0);
         lv_obj_set_style_border_width(pnl, 0, 0);
@@ -292,19 +303,20 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
         // the screen each opens. Text uses CLR_TEXT like the other secondary
         // buttons rather than a teal accent.
         //
-        // The right panel is already flush to the STATIONS grid (its bottom edge
-        // == grid top) so it cannot grow downward; the buttons fill the nav band
-        // below auto-advance (with an 8px breathing gap so they don't touch the
-        // toggle) down to the panel's inner bottom edge, overlapping the 10px
-        // bottom pad (same bg) to reclaim it. This grows each button 29->31px
-        // (+2) vs the initial #127 layout while leaving the stepper +
-        // auto-advance at their current legible spacing.
-        static constexpr int NAV_BTN2_H  = 31;  // shared nav-button height
+        // The panel now extends past the old grid-flush bottom (see
+        // RIGHT_PANEL_H above) into the empty band above the station pills, so
+        // the two buttons fill a taller nav band below auto-advance (8px
+        // breathing gap below the toggle) down to NAV_BOT_GAP above the pills,
+        // overlapping the 10px bottom pad (same bg) to reclaim it. This makes
+        // each button noticeably taller (31->37px) and lets the pair reach
+        // closer to the grid, while the stepper + auto-advance above keep their
+        // current legible spacing.
+        static constexpr int NAV_BTN2_H  = 37;  // shared nav-button height
         static constexpr int NAV_BTN2_G  = 6;   // gap between the two buttons
         static constexpr int NAV_TOP_GAP = 8;   // gap below auto-advance toggle
-        const int nav_top    = AA_Y + AA_H + NAV_TOP_GAP;  // below auto-adv (=102)
-        const int nav_bottom = CONTENT_H - PANEL_PAD;   // overlap bottom pad (=171)
-        const int nav_space  = nav_bottom - nav_top;    // usable band (=77)
+        const int nav_top    = AA_Y + AA_H + NAV_TOP_GAP;  // below auto-adv
+        const int nav_bottom = RIGHT_PANEL_H - PANEL_PAD;  // overlap bottom pad
+        const int nav_space  = nav_bottom - nav_top;       // usable band
         const int nav_block  = 2 * NAV_BTN2_H + NAV_BTN2_G;  // both + gap
         int prog_btn_y = nav_top + (nav_space - nav_block) / 2;
         if (prog_btn_y < nav_top) prog_btn_y = nav_top;
@@ -682,6 +694,9 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
                                       &lv_font_montserrat_20, 8);
         lv_obj_set_size(btn_back, 128, NAV_BTN_H);
         lv_obj_align(btn_back, LV_ALIGN_RIGHT_MID, -8, 0);
+        // Resistive touch near the screen edge is imprecise; enlarge the hit
+        // zone well past the visual button so brief/edge taps still register.
+        lv_obj_set_ext_click_area(btn_back, 16);
         if (cbs.on_close_history)
             lv_obj_add_event_cb(btn_back, cbs.on_close_history, LV_EVENT_CLICKED, nullptr);
     }
@@ -778,6 +793,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
                                      CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
         lv_obj_set_size(ps.hist_page_prev, PROG_ARROW_W, HIST_ARROW_H);
         lv_obj_set_pos(ps.hist_page_prev, ARROW_INSET, arrow_y);
+        lv_obj_set_ext_click_area(ps.hist_page_prev, 14);  // slim arrow: grow hit zone
         if (cbs.on_hist_page_prev)
             lv_obj_add_event_cb(ps.hist_page_prev, cbs.on_hist_page_prev,
                                 LV_EVENT_CLICKED, nullptr);
@@ -787,6 +803,7 @@ PanelScreen build_panel_screen(lv_obj_t* scr, const Callbacks& cbs) {
                                      CLR_LINE, CLR_TEXT, &lv_font_montserrat_20, 8);
         lv_obj_set_size(ps.hist_page_next, PROG_ARROW_W, HIST_ARROW_H);
         lv_obj_set_pos(ps.hist_page_next, SCREEN_W - PROG_ARROW_W - ARROW_INSET, arrow_y);
+        lv_obj_set_ext_click_area(ps.hist_page_next, 14);  // slim arrow: grow hit zone
         if (cbs.on_hist_page_next)
             lv_obj_add_event_cb(ps.hist_page_next, cbs.on_hist_page_next,
                                 LV_EVENT_CLICKED, nullptr);
