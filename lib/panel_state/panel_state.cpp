@@ -51,12 +51,10 @@ TopBarState resolve_top_bar_state(const PanelView& view) {
   if (view.rain_delay_seconds_remaining > 0) {
     return TopBarState::RainDelay;
   }
-  // Paused is a normal running state (a manual or program run held by /pq), so
-  // it ranks below the connectivity/disabled/rain-delay words but above Clean.
-  if (view.paused &&
-      (view.phase == Phase::Running || view.phase == Phase::ProgramRunning)) {
-    return TopBarState::Paused;
-  }
+  // A paused run (manual or program) is NOT surfaced in the top bar: the
+  // on-panel two-line PAUSED block is the sole paused indicator, so the top bar
+  // keeps reflecting the underlying connection/enabled/rain-delay state with no
+  // extra amber cue.
   return TopBarState::Clean;
 }
 
@@ -80,10 +78,6 @@ std::string top_bar_status_text(const PanelView& view) {
       }
       return "RAIN DELAY " + duration;
     }
-    case TopBarState::Paused:
-      // Manual runs show a bare "Paused"; a program run keeps the existing
-      // "Program paused" wording. Both render amber.
-      return view.phase == Phase::ProgramRunning ? "Program paused" : "Paused";
     case TopBarState::Clean:
       return "";
   }

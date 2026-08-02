@@ -176,8 +176,9 @@ queue (`ps[]`):
 The paused presentation is **shared with the manual run screen** (same Option B
 two-line block, same code path):
 
-- Top-bar status becomes **`Program paused`** (amber) for a program run, or
-  **`Paused`** for a manual run.
+- The **top bar is unchanged** by pause: there is deliberately **no** top-bar
+  "Paused"/"Program paused" status word or amber cue for either mode. The shared
+  two-line `PAUSED` block on the run screen is the sole paused indicator.
 - The big countdown **freezes** (dead-reckoned by `tick()` but held while paused).
 - A two-line amber block appears beside the frozen countdown: **`PAUSED`** on line
   1 and **`Resumes in MM:SS`** (zero-padded, from the controller's pause countdown
@@ -309,11 +310,12 @@ Reuses the panel's existing palette and fonts (see `01` §5). Programs-specific:
   symbol font (no custom glyphs, no `\u…` literals that render as tofu).
 - **Casing:** eyebrow/caption micro-labels are UPPERCASE (`PROGRAMS`,
   `STATION N OF M`); content/buttons are sentence case (`Run ›`, `Pause`,
-  `Resume`, `Enable`, `Disable`, `Program running`, `Program paused`,
-  `Resumes in M:SS`, `Not scheduled`).
+  `Resume`, `Enable`, `Disable`, `Program running`,
+  `Resumes in MM:SS`, `Not scheduled`).
 - **Top-bar status strings** (with a link glyph prefix): `Program running`
-  (teal), `Program paused` (amber) — alongside the shared `Running`, `Connected`,
-  `Syncing...`, `Auth error`, `Controller offline`, `Reconnecting...`.
+  (teal) alongside the shared `Running`, `Connected`, `Syncing...`, `Auth error`,
+  `Controller offline`, `Reconnecting...`. A paused run is **not** surfaced in the
+  top bar (the on-panel `PAUSED` block is the sole paused indicator).
 
 ---
 
@@ -328,7 +330,7 @@ follows — this list is why the original mockup is **not** committed as referen
 | Pager with **"Page N of M"** text label | Dots + `‹` / `›` arrows, no page text; dots re-centre live. |
 | **"Disabled"** word tag on disabled rows | Teal power (⏻) enabled vs muted dash (–) disabled + dimmed name; no word. Next-run still computed and shown. |
 | Row action **`View ›` / `● Running now`** for the active program | Row button is always **`Run ›`**; the running program is reflected by the screen switching to the program-run view, not by a per-row state. |
-| Status **"Running program"** | **"Program running"** (and "Program paused"). |
+| Status **"Running program"** | **"Program running"**. A paused run is not shown as a top-bar word (the on-panel `PAUSED` block indicates pause). |
 | Queue rows counting down per-row | Queue rows show **static** full durations; only the left-column big countdown ticks. |
 | Configurable pause | **Fixed 10-minute** pause (`/pq?dur=600`) with auto-resume. |
 | `STATION N OF M` with a shrinking M | M is the program's **fixed** total; N counts up; completed stations stay in the (windowed) queue as `✓`. |

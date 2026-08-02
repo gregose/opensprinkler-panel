@@ -67,8 +67,10 @@ swaps its label to **Resume** while paused.
     countdown flexes; both the run time and the pause cap at `10:00`, so the layout
     is sized for `10:00` and `Resumes in 10:00` co-occurring.
   - The **Pause** button reads **Resume**.
-  - The top-bar status word shows **`Paused`** (manual) or **`Program paused`**
-    (program), both amber.
+  - The **top bar is unchanged** by pause: there is deliberately **no** top-bar
+    "Paused" status word or amber cue, since the two-line `PAUSED` block on the
+    run screen is the sole paused indicator. The top bar keeps reflecting the
+    underlying connection/enabled/rain-delay state.
 - **Auto-advance while paused:** a station does **not** advance while paused (the
   frozen countdown never reaches 0). On resume it continues the current station's
   remaining time, and auto-advance fires normally when that time elapses.
@@ -130,7 +132,7 @@ running" station — selecting a station *is* running it.
 - Auto-advance label: `Auto-advance` (toggle switch, no helper sub-text)
 - Buttons: `Next ›` (advance), `Pause` / `Resume`, `■ Stop`
 - Paused block: `PAUSED` (line 1) + `Resumes in MM:SS` (line 2, zero-padded), both amber
-- Status (top-left): droplet `LV_SYMBOL_TINT` + status word (`Connected` teal · `Syncing...`/`Reconnecting...`/`Paused`/`Program paused` amber · `Controller offline`/`Auth error` red). Signal bars labelled `PANEL` / `CTRL`; CTRL shows `— —` when unreachable.
+- Status (top-left): droplet `LV_SYMBOL_TINT` + status word (`Connected` teal · `Syncing...`/`Reconnecting...` amber · `Controller offline`/`Auth error` red). A paused run is **not** shown here (see the on-panel `PAUSED` block). Signal bars labelled `PANEL` / `CTRL`; CTRL shows `— —` when unreachable.
 - **No transient toasts.** Completion is conveyed by the confirmed-state UI (return to idle, countdown at `0:00`, no highlight); errors by the top-bar banner. (An earlier toast affordance was removed as redundant.)
 
 Voice: plain, active, no apologies. A control names what it does; the same word

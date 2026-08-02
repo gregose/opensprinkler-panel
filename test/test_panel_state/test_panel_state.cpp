@@ -1321,21 +1321,23 @@ void test_manual_resume_line_mmss_formatting() {
   TEST_ASSERT_EQUAL_STRING("00:05", fmt_resume_mmss(5).c_str());
 }
 
-// The top-bar status word distinguishes a manual pause ("Paused") from a program
-// pause ("Program paused"); both resolve to the amber Paused state.
+// A paused run (manual or program) is deliberately NOT surfaced in the top bar:
+// the on-panel two-line PAUSED block is the sole paused indicator, so the status
+// word stays empty (Clean) while paused rather than showing "Paused" /
+// "Program paused".
 void test_manual_vs_program_paused_status_word() {
   PanelView v;
   v.paused = true;
 
   v.phase = Phase::Running;
-  TEST_ASSERT_EQUAL_INT((int)TopBarState::Paused, (int)resolve_top_bar_state(v));
-  TEST_ASSERT_EQUAL_STRING("Paused", top_bar_status_text(v).c_str());
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("", top_bar_status_text(v).c_str());
 
   v.phase = Phase::ProgramRunning;
-  TEST_ASSERT_EQUAL_INT((int)TopBarState::Paused, (int)resolve_top_bar_state(v));
-  TEST_ASSERT_EQUAL_STRING("Program paused", top_bar_status_text(v).c_str());
+  TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
+  TEST_ASSERT_EQUAL_STRING("", top_bar_status_text(v).c_str());
 
-  // Not paused, or idle -> no Paused word.
+  // Not paused, or idle -> still Clean / empty.
   v.paused = false;
   TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
   v.paused = true;

@@ -2548,9 +2548,6 @@ static void ui_update() {
             status_color = CLR_RED;
             rule_color = CLR_RED;
             break;
-        case osp::TopBarState::Paused:
-            status_color = CLR_AMBER;
-            break;
         case osp::TopBarState::RainDelay:
         case osp::TopBarState::Clean:
             break;
