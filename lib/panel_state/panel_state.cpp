@@ -611,19 +611,28 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     await_close_at_ms_ = 0;
     enter_running(jc_running_sid, jc_running_rem);
   } else {
-    // A panel-launched program run is confirmed asynchronously: we issue /mp,
-    // then wait for a /jc that reports the run. On real hardware the first
-    // poll(s) after tapping the program can still report idle (the controller
-    // has not scheduled the queue yet). While that RunProgram intent is still
-    // pending we must NOT wipe the panel-launched identity
-    // (run_initiated_by_panel_ / launched_program_index_): doing so makes the
-    // run come back as a generic "Program" with a live-shrinking queue instead
-    // of the launched program's name and full station set. The
-    // live_stations_in_program() consistency guard in the ProgramRun path still
-    // prevents a stale hint from mislabelling a genuinely different run.
+    // A panel-launched run is confirmed asynchronously: after we issue the
+    // command (single manual station via /cm, or a program via /mp), the first
+    // /jc poll(s) can still report idle before the controller schedules the run.
+    // While that launch intent is still pending we must NOT wipe the panel-
+    // launched identity (run_initiated_by_panel_ / launched_program_index_):
+    //  - for a program, dropping it makes the run come back as a generic
+    //    "Program" with a live-shrinking queue instead of the launched program's
+    //    name and full station set;
+    //  - for a single manual station, dropping run_initiated_by_panel_ makes the
+    //    confirming pid=99 poll look like an *external* manual run, which is
+    //    rendered as the program "Station Queue" screen instead of the manual-
+    //    station view (a hardware-only bug: the emulator reflects /cm instantly,
+    //    so no intermediate idle poll ever cleared the flag).
+    // The live_stations_in_program() consistency guard in the ProgramRun path
+    // still prevents a stale hint from mislabelling a genuinely different run,
+    // and sync_stale() bounds how long a never-confirmed manual launch keeps the
+    // flag so a failed /cm can't hold the panel awake indefinitely.
     const bool program_launch_pending =
         (desired_.kind == IntentKind::RunProgram);
-    if (!program_launch_pending) {
+    const bool manual_launch_pending =
+        (desired_.kind == IntentKind::Run) && !sync_stale();
+    if (!program_launch_pending && !manual_launch_pending) {
       // Idle: clear run_initiated flag so backlight/sleep behave normally.
       run_initiated_by_panel_ = false;
       view_.run_initiated_by_panel = false;
