@@ -285,6 +285,16 @@ static void bring_up_display() {
     // (TFT_MISO=-1), so there is no MISO pin to attach.
     tft.init();
     tft.setRotation(SCREEN_ROTATION);
+    // LVGL 9 renders RGB565 little-endian; tft.pushPixels() sends 16-bit words
+    // MSB-first, so the LVGL buffer flush needs a byte swap or colours shift
+    // (dark bg -> grey, teal -> green/yellow) and anti-aliased glyph edges
+    // speckle. Only affects pushPixels/pushColors; raw fillScreen/drawString
+    // compute colour internally and are unaffected. Same fix as CYD PR #38.
+    tft.setSwapBytes(true);
+    // This board's ST7796 panel needs display inversion ON (INVON). Without it
+    // colours are complemented: dark bg -> white, teal -> light red, white text
+    // -> black. (The CYD's ST7796 wanted invert OFF; per-panel difference.)
+    tft.invertDisplay(true);
     tft.fillScreen(TFT_BLACK);
     Serial.println("[ OK ]");
 
