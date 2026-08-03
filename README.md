@@ -31,6 +31,10 @@ New to OpenSprinkler? It's an open-source sprinkler/irrigation controller; learn
 
 - Drive a running program with a live queue: advance, pause/resume, or stop, reflected against the controller's state.
 
+- Review recent runs in a paged History log: every station run and event from the controller, including scheduled programs and app-initiated runs.
+
+  ![The run history log](site/assets/img/screenshots/history-list.png)
+
 ## Supported hardware
 
 Hosyond 3.5" ESP32 display (SKU E32R35T, community name ESP32-3248S035R, a "CYD"). The same board is sold under several brands; validated on the Hosyond unit:
@@ -63,6 +67,7 @@ The design docs under [`docs/`](docs/) are the in-repo source of truth; start wi
 docs/          Design docs, the source of truth (read docs/README.md first)
 src/           Firmware entry point (hardware glue: display/touch/LVGL/WiFi)
 lib/           Hardware-independent domain logic (pure C++, native-testable)
+sim/           Host LVGL UI simulator: renders lib/ui screens to PNG (env:sim)
 test/          Native (host) unit tests, run in CI, no board needed
 tools/         Local flash & debug helpers (see tools/README.md)
 docs/mock_os.py  OpenSprinkler controller emulator for developing without hardware
@@ -81,6 +86,19 @@ pio run  -e cyd-35r     # compile the firmware
 ```
 
 `.github/workflows/ci.yml` runs the native tests, compiles the firmware, and publishes a flashable `cyd-35r-firmware` artifact on every push/PR; `release.yml` publishes release binaries (including `merged-firmware.bin`, which the hosted browser flasher installs) on a `v*` tag; `zizmor.yml` security-audits the workflows themselves; and `copilot-setup-steps.yml` pre-installs the same toolchain for cloud sessions. Full CI/CD reference in [`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
+
+### Iterate on the UI without hardware
+
+A host LVGL simulator renders the **real firmware screen code** (`lib/ui`) to 480×320 PNGs on your machine, using the **same `lv_conf.h` and Montserrat fonts as the ESP32 build** — so what you see is what the panel draws, with no board and no flashing.
+
+```bash
+brew install sdl2                                       # or: apt-get install -y libsdl2-dev
+pio run -e sim                                          # build the host sim
+SDL_VIDEODRIVER=dummy ./.pio/build/sim/program          # render every state -> sim/out/*.png
+./.pio/build/sim/program --window --state history-list  # or preview one state in a live window
+```
+
+Every screen/state is driven from portable view-model fixtures (`sim/fixtures.cpp`): the idle prompt (connected / loading / syncing / reconnecting / offline / auth), the unified run screen (manual and program, running and paused), the programs list, the History log, and sleep. This is also how the user-manual screenshots are rendered. See [`sim/README.md`](sim/README.md) and [`docs/09-ui-simulator.md`](docs/09-ui-simulator.md).
 
 ### Flashing & debugging locally
 

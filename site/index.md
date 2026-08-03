@@ -37,6 +37,11 @@ open-source sprinkler/irrigation controller; learn more at
 
   ![A program running with its live queue]({{ '/assets/img/screenshots/program-running.png' | relative_url }})
 
+- **Review recent runs** in a paged History log — every station run and event
+  from the controller, including scheduled programs and app-initiated runs.
+
+  ![The run history log]({{ '/assets/img/screenshots/history-list.png' | relative_url }})
+
 ## Get started
 
 1. [Flash the firmware]({{ '/flashing/' | relative_url }}) onto a supported board

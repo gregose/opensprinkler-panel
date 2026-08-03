@@ -153,6 +153,24 @@ way to reach the program / multi-station states deterministically is to point
 the panel at the **mock controller** ([`mock_os.py`](mock_os.py)), which serves
 24 stations and several programs, instead of a live controller.
 
+Alternatively — and the current default when no panel is on the bench — render
+the shots from the **host LVGL sim** ([`09-ui-simulator.md`](09-ui-simulator.md)),
+which draws the real `lib/ui` screens to 480×320 PNGs with the same
+`lv_conf.h`/fonts as firmware:
+
+```bash
+pio run -e sim && SDL_VIDEODRIVER=dummy ./.pio/build/sim/program   # -> sim/out/*.png
+cp sim/out/idle-connected.png    site/assets/img/screenshots/home-connected.png
+cp sim/out/run-manual.png        site/assets/img/screenshots/manual-run.png
+cp sim/out/history-list.png      site/assets/img/screenshots/history-list.png
+# ...and the other run/program states as needed
+```
+
+Sim renders differ from on-panel captures only in cosmetic top-bar data (the
+host label, battery %, and `mA`); the drawn screens are pixel-for-pixel the
+firmware's. The two captive-portal shots can only be taken in a browser. Real
+on-panel re-shoots remain a valid (optional) final pass before a release.
+
 | Filename | UI state to show | Fixture / how to get there |
 |---|---|---|
 | `home-connected.png` | Idle, connected: "Select a station" prompt, full station grid, top bar showing a teal droplet, controller name/IP, dim `0 mA`, P/C signal meters, and battery. | Boot connected to a controller (or `mock_os.py`). Don't start any station. |
@@ -161,15 +179,16 @@ the panel at the **mock controller** ([`mock_os.py`](mock_os.py)), which serves
 | `programs-list.png` | Programs list: `PROGRAMS` header, several program rows each with name, next-run/zones/minutes meta line, Enable/Disable + **Run ›** buttons. | Tap **≡ Programs** from idle. Use `mock_os.py` so multiple programs (incl. a disabled one) are present. |
 | `program-running.png` | Program running: left column `STATION N OF M`, station name, big countdown; right column live queue with a ✓ completed row, the current ▶ row, and upcoming rows; **Next ›**, **Pause**, **■ Stop** at the shared action-row Y (matching the manual screen); live current in the top bar. | From the programs list tap **Run ›** on a multi-station program (the mock's >9-station program shows the windowed queue nicely). Capture a few stations in. |
 | `program-paused.png` | A program run **paused**: frozen amber countdown with the two-line **`PAUSED` / `Resumes in MM:SS`** block, the middle button reading **Resume**, and the current queue row showing the ⏸ pause glyph. The top bar is unchanged (no paused status word). | From a program run, tap **Pause**. Capture while `Resumes in` shows a clean value. |
+| `history-list.png` | The History log: `HISTORY` header with a `Last 30 days` subtitle, **‹ Back** button, and rows of recent runs — station name, trigger label (a program name, or `Manual`), duration, and a friendly timestamp — with a **‹ Page N / M ›** pager at the bottom. | Tap **History** from idle. Use `mock_os.py` (or the `history-list` sim state) so a realistic multi-page log is present. |
 | `setup-portal.png` | First-boot WiFiManager captive-portal landing menu (`OSPanel-Setup` with Configure / Info / Update / Exit). | Boot a freshly-flashed panel (empty NVS), join the `OSPanel-Setup` AP, and screenshot the portal landing page from the connecting device's browser. |
 | `setup-portal-config.png` | The captive-portal configuration form: SSID + Password, OpenSprinkler host, device password, OTA password, sleep timeout, remote-debug-log fields. | Tap **Configure** in the portal and screenshot the form. Browser screenshot, not `panel.py`. |
 
 Notes:
 
 - **When to re-shoot:** Any PR that changes on-panel UI, especially the top
-  status bar, home/idle, manual-run, programs list, or program-running screens,
-  must re-capture the affected images above in the same PR using this procedure.
-  Keep filenames stable.
+  status bar, home/idle, manual-run, programs list, program-running, or History
+  screens, must re-capture the affected images above in the same PR using this
+  procedure. Keep filenames stable.
 - Keep on-panel captures at the native **480×320**; don't upscale or add device
   frames. The two captive-portal shots are browser screenshots and will differ
   in size — that's fine.

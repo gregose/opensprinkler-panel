@@ -10,15 +10,20 @@ namespace osp {
 namespace sim {
 namespace {
 
-// Shared demo station set (8 named zones, all enabled, no master). Mirrors a
+// Shared demo station set (14 named zones, all enabled, no master). Mirrors a
 // typical residential controller; used by every scene so the grid and run
-// screens have stable, human-readable labels.
+// screens have stable, human-readable labels. 14 stations wrap to two grid
+// rows (ceil(14/12) = 2 -> 7 x 2), matching a real multi-zone yard. The first
+// eight names are pinned because the program-run and history fixtures below
+// reference specific sids/names.
 StationModel demo_stations() {
     StationModel m;
     const std::vector<std::string> names = {
         "Front Lawn", "Back Lawn", "Garden Drip", "Side Yard",
-        "Rose Bed",   "Veggie Beds", "Patio Pots", "Parkway"};
-    m.load(names, /*stn_dis=*/{0}, /*mas=*/0, /*mas2=*/0);
+        "Rose Bed",   "Veggie Beds", "Patio Pots", "Parkway",
+        "Driveway Strip", "Planters", "Orchard", "Herb Garden",
+        "Raised Beds", "Fenceline"};
+    m.load(names, /*stn_dis=*/{0, 0}, /*mas=*/0, /*mas2=*/0);
     return m;
 }
 
