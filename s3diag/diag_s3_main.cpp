@@ -280,6 +280,9 @@ static void draw_lvgl_smoke_screen() {
 
 static void bring_up_display() {
     Serial.print("[lcd ] TFT_eSPI/ST7796 init ... ");
+    // NOTE: TFT_eSPI logs "spiAttachMISO(): HSPI Does not have default pins on
+    // ESP32S3!" here. Benign: MISO is unused on this write-only panel
+    // (TFT_MISO=-1), so there is no MISO pin to attach.
     tft.init();
     tft.setRotation(SCREEN_ROTATION);
     tft.fillScreen(TFT_BLACK);
@@ -309,6 +312,9 @@ static void bring_up_display() {
 // ---------------------------------------------------------------------------
 static bool bring_up_touch() {
     Serial.print("[tch ] FT6336 begin @0x38 ... ");
+    // NOTE: passing the same SDA/SCL again makes the Arduino core log
+    // "Wire setPins(): bus already initialized". Benign: the I2C bus was already
+    // brought up on these pins during the AXP2101 stage; the call is a no-op.
     if (!touch.begin(Wire, ADDR_FT6336, PIN_I2C_SDA, PIN_I2C_SCL)) {
         Serial.println("[FAIL] FT6336 not responding - check the shared I2C bus");
         return false;
