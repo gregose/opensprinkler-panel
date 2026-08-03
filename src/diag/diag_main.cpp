@@ -704,6 +704,8 @@ static void a_adc_probe() {
 
         char line[192];
         int n = snprintf(line, sizeof(line), "ADC:");
+        if (n < 0) n = 0;
+        if (n >= (int)sizeof(line)) n = (int)sizeof(line) - 1;
         unsigned bat_raw = 0, bat_mv = 0;
         unsigned mv[3] = {0, 0, 0}, raw[3] = {0, 0, 0};
         for (int i = 0; i < kNumPins; ++i) {
@@ -715,8 +717,11 @@ static void a_adc_probe() {
             raw[i] = (unsigned)(raw_sum / kSamples);
             mv[i]  = (unsigned)(mv_sum / kSamples);
             if (kPins[i] == BAT_ADC_PIN) { bat_raw = raw[i]; bat_mv = mv[i]; }
-            n += snprintf(line + n, sizeof(line) - n,
-                          "  %s raw=%4u mV=%4u", kNames[i], raw[i], mv[i]);
+            int w = snprintf(line + n, sizeof(line) - n,
+                             "  %s raw=%4u mV=%4u", kNames[i], raw[i], mv[i]);
+            if (w < 0) break;
+            n += w;
+            if (n >= (int)sizeof(line)) { n = (int)sizeof(line) - 1; break; }
         }
         const unsigned vbat = (unsigned)(bat_mv * BAT_DIV_RATIO + 0.5f);
         snprintf(line + n, sizeof(line) - n, "  => VBAT=%u mV", vbat);
