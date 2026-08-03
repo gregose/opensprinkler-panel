@@ -35,6 +35,7 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 
+#include "board/board.h"
 #include "bench_probe.h"
 #include "history_model.h"
 #include "os_client.h"
@@ -53,10 +54,6 @@
 // ---------------------------------------------------------------------------
 static constexpr int PIN_BACKLIGHT = 27;
 static constexpr int PIN_BOOT_BTN  = 0;
-// Battery sense: BAT_ADC on GPIO34 (ADC1_CH6, input-only, Wi-Fi-safe) reads
-// VBAT/2 through an even 100K/100K divider (schematic E32R35T, ratio confirmed
-// 1.991 on-device). See lib/battery_monitor.
-static constexpr int PIN_BAT_ADC   = 34;
 static constexpr int LEDC_CHANNEL  = 0;
 static constexpr int LEDC_FREQ_HZ  = 5000;
 static constexpr int LEDC_RES_BITS = 8;
@@ -74,9 +71,9 @@ static constexpr int           CALIBRATION_COMPLETE_DELAY_MS = 1000;
 static constexpr uint32_t UI_TICK_MS = 5;
 static constexpr uint32_t NETWORK_LOOP_MS = 50;
 static constexpr uint32_t JC_POLL_INTERVAL_MS = 2000;
-// Battery: multisample count per read and how often to sample the ADC. The
-// gauge is coarse and EMA-smoothed, so a slow cadence keeps it calm and cheap.
-static constexpr int      BAT_ADC_SAMPLES  = 16;
+// Battery: how often to sample the ADC. The gauge is coarse and EMA-smoothed,
+// so a slow cadence keeps it calm and cheap. The multisample count and the ADC
+// channel itself live in the board HAL (board_battery_read).
 static constexpr uint32_t BAT_SAMPLE_MS    = 3000;
 static constexpr uint32_t JN_RETRY_INITIAL_MS = 1000;
 static constexpr uint32_t JN_RETRY_MAX_MS = 10000;
@@ -115,7 +112,10 @@ static constexpr const char* PROVISION_AP_SSID = "OSPanel-Setup";
 // ---------------------------------------------------------------------------
 // Hardware objects
 // ---------------------------------------------------------------------------
-static TFT_eSPI tft;
+// External linkage (not static): the CYD board HAL (src/board/board_cyd.cpp)
+// shares this same instance via `extern TFT_eSPI tft;` for the display/touch
+// seams, while the boot screens + LVGL flush callback below keep using it here.
+TFT_eSPI tft;
 
 // Convert a 0xRRGGBB constant to a TFT_eSPI 16-bit (RGB565) color.
 static inline uint16_t tft565(uint32_t hex) {
@@ -1185,61 +1185,6 @@ static bool ensure_network_config() {
 }
 
 // ---------------------------------------------------------------------------
-// Touch calibration
-// ---------------------------------------------------------------------------
-// Load a saved calData[5] blob from NVS and apply it via setTouch().
-// Returns true if a valid 10-byte calibration was found and applied.
-// NVS namespace/key matches the diag firmware so a diag-seeded calibration
-// is honored by production and vice-versa.
-static bool load_touch_cal() {
-    uint16_t calData[5] = {0};
-    Preferences prefs;
-    prefs.begin(NVS_NS, true);
-    const size_t got = prefs.getBytes(NVS_TOUCHCAL, calData, sizeof(calData));
-    prefs.end();
-    if (got == sizeof(calData)) {
-        tft.setTouch(calData);
-        Serial.println("Touch: loaded calibration from NVS.");
-        return true;
-    }
-    Serial.println("Touch: no saved calibration.");
-    return false;
-}
-
-// Run TFT_eSPI's interactive calibration, persist the result, and apply it.
-// Must be called with the display active and BEFORE lv_init() — calibrateTouch()
-// draws directly via TFT_eSPI and must not fight an active LVGL display.
-static void run_touch_calibration() {
-    uint16_t calData[5] = {0};
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setTextSize(2);
-    tft.setCursor(10, 10);
-    tft.println("Touch calibration");
-    tft.setTextSize(1);
-    tft.println("");
-    tft.println(" Tap each highlighted corner arrow.");
-    Serial.println("Touch: tap the corner arrows as they appear...");
-    tft.calibrateTouch(calData, TFT_MAGENTA, TFT_BLACK, 20);
-    tft.setTouch(calData);
-    Preferences prefs;
-    prefs.begin(NVS_NS, false);
-    prefs.putBytes(NVS_TOUCHCAL, calData, sizeof(calData));
-    prefs.end();
-    Serial.println("Touch: calibration complete and saved to NVS.");
-    draw_boot_notice("Calibration saved");
-    delay(CALIBRATION_COMPLETE_DELAY_MS);
-}
-
-// Ensure touch is calibrated: load from NVS if present, otherwise run the
-// interactive calibration routine and persist the result.
-static void ensure_touch_calibration() {
-    if (!load_touch_cal()) {
-        run_touch_calibration();
-    }
-}
-
-// ---------------------------------------------------------------------------
 // LVGL callbacks
 // ---------------------------------------------------------------------------
 static void disp_flush_cb(lv_display_t* disp, const lv_area_t* area,
@@ -1283,7 +1228,7 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
         ty = static_cast<uint16_t>(inj.y);
         pressed = inj.pressed;
     } else {
-        pressed = tft.getTouch(&tx, &ty);
+        board_touch_read(tx, ty, pressed);
     }
 
     if (!pressed) {
@@ -1500,17 +1445,14 @@ static void ev_touch_any(lv_event_t* e) {
 // Screen geometry constants (GRID_H, ACTION_Y, RIGHT_W, etc.) now live in
 // lib/ui/ui_layout.h, shared byte-for-byte between firmware and the host sim.
 
-// Sample the battery ADC (multisampled) on a slow cadence and feed the monitor.
+// Sample the battery ADC (multisampled by the board HAL) on a slow cadence and
+// feed the monitor.
 static void poll_battery() {
     static uint32_t last_ms = 0;
     const uint32_t now = millis();
     if (last_ms != 0 && (now - last_ms) < BAT_SAMPLE_MS) return;
     last_ms = now;
-    uint32_t sum = 0;
-    for (int i = 0; i < BAT_ADC_SAMPLES; ++i) {
-        sum += analogReadMilliVolts(PIN_BAT_ADC);
-    }
-    g_batt.add_tap_sample(static_cast<int>(sum / BAT_ADC_SAMPLES));
+    g_batt.add_tap_sample(board_battery_read());
 }
 
 // ---------------------------------------------------------------------------
@@ -2127,20 +2069,11 @@ void setup() {
 
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
 
-    // Battery sense ADC: ~0–3.1 V range so VBAT/2 (1.5–2.1 V) sits in the
-    // linear region. Uses the eFuse Vref calibration via analogReadMilliVolts.
-    analogSetPinAttenuation(PIN_BAT_ADC, ADC_11db);
-
-    // ---- TFT init -------------------------------------------------------
-    tft.init();
-    // LVGL 9 renders RGB565 in the ESP32's native little-endian byte order, but
-    // tft.pushPixels() sends 16-bit words MSB-first — so LVGL buffers must be
-    // byte-swapped or colours come out wrong (near-black bg renders red-ish,
-    // anti-aliased text edges turn to rainbow speckle). setSwapBytes only affects
-    // buffer pushes (pushPixels/pushImage), NOT fillScreen/drawString, so raw
-    // graphics are unaffected. Must be set before any LVGL flush.
-    tft.setSwapBytes(true);
-    tft.setRotation(1);  // landscape — tune rotation/offset on-device (docs/03)
+    // ---- Display bring-up (board HAL) -----------------------------------
+    // Panel reset (no-op on CYD) then display init; fillScreen stays here as
+    // app boot chrome. Battery ADC setup now lives in board_battery_read().
+    board_reset_panel();
+    board_display_init();
     tft.fillScreen(TFT_BLACK);
 
     // ---- Load NVS config ------------------------------------------------
@@ -2168,7 +2101,12 @@ void setup() {
     // ---- Touch calibration -----------------------------------------------
     // Must run AFTER WiFi/provisioning (portal is phone-based, no panel touch
     // needed) and BEFORE lv_init() (calibrateTouch draws directly via TFT_eSPI).
-    ensure_touch_calibration();
+    // board_touch_init() returns true iff it just ran interactive calibration,
+    // so we show the "saved" notice here (app boot chrome).
+    if (board_touch_init()) {
+        draw_boot_notice("Calibration saved");
+        delay(CALIBRATION_COMPLETE_DELAY_MS);
+    }
 
     // ---- LVGL init ------------------------------------------------------
     lv_init();
