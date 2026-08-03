@@ -22,7 +22,7 @@ panel or the controller that's having trouble.
 ![Idle, connected screen]({{ '/assets/img/screenshots/home-connected.png' | relative_url }})
 
 The right-hand settings column has a **Run time** stepper, an **Auto-advance**
-toggle, and a **≡ Programs** button.
+toggle, and **Programs** and **History** buttons.
 
 ## Run a single station
 
@@ -90,6 +90,32 @@ Controls during a program run:
 The controller is always the source of truth. If a station stops on the
 controller (a cap is reached, or someone uses the app), the panel updates to
 match on its next poll.
+
+## History
+
+Tap **History** from the idle screen to see a log of recent runs and events
+from the controller, most recent first.
+
+![The run history log]({{ '/assets/img/screenshots/history-list.png' | relative_url }})
+
+Each row shows what ran, how it was triggered, how long it ran, and when it
+started:
+
+- **Station and trigger** — the station name on the left, and how the run
+  started in the middle: a program name for scheduled runs, or **Manual** for a
+  run you started from the panel or the OpenSprinkler app.
+- **Duration** — how long that station actually ran.
+- **When** — a friendly timestamp, for example `Today 6:32a` or `Tue 8:15p`.
+
+The log covers roughly the **last 30 days** and is paged: use **‹** and **›** to
+move between pages, with the current page shown as **Page N / M**. **‹ Back**
+returns to the idle screen. If the controller has no recent activity, History
+shows an empty state instead of a list.
+
+{: .note }
+History is read from the controller's own log, so it reflects **every** run —
+scheduled programs and runs started from the OpenSprinkler app included, not
+just the ones you start from the panel.
 
 ## Sleep
 
