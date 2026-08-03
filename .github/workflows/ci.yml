@@ -21,6 +21,9 @@ env:
   # these by prefix). Keep in sync with tools/flash.sh.
   PROD_ARTIFACT_BASE: "cyd-35r-firmware"
   DIAG_ARTIFACT_BASE: "cyd-35r-diag-firmware"
+  # S3 bring-up spike (#140) diag artifact base. Raw bins only (esp32s3, 16 MB)
+  # since tools/package-firmware.sh targets the esp32 CYD layout.
+  S3_DIAG_ARTIFACT_BASE: "s3-touch-35-diag-firmware"
 
 # Least-privilege default token: every job here only reads the repo (tests +
 # firmware build). Artifact uploads use the Actions API, which the read token
@@ -145,6 +148,23 @@ jobs:
         with:
           name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
           path: firmware-artifact/diag/
+
+      # S3 bring-up spike (issue #140). DIAG ONLY, fully additive: proves the env
+      # compiles in CI. Built LAST so it cannot perturb the cyd-35r/diag outputs
+      # packaged above. tools/package-firmware.sh targets the esp32 CYD flash
+      # layout, so we just upload the raw esp32s3 build outputs for bench flashing.
+      - name: Build S3 diagnostic firmware (s3-touch-35-diag)
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+        run: pio run -e s3-touch-35-diag
+      - name: Upload S3 diagnostic firmware artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.S3_DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
+          path: |
+            .pio/build/s3-touch-35-diag/firmware.bin
+            .pio/build/s3-touch-35-diag/bootloader.bin
+            .pio/build/s3-touch-35-diag/partitions.bin
 
   # Host LVGL simulator (issue #123): builds the `sim` env (platform = native,
   # LVGL + SDL2) and renders the REAL firmware top-bar code (lib/ui) to a
