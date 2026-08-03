@@ -67,3 +67,10 @@ jobs:
           pio pkg install -g --library "tzapu/WiFiManager@^2.0"
           # GT911 capacitive touch — for the ESP32-3248S035C port (#63, cyd-35c env).
           pio pkg install -g --library "tamctec/TAMC_GT911@^1.0.2"
+          # S3 bring-up spike libs — for the Waveshare ESP32-S3-Touch-LCD-3.5
+          # (non-B) port (#140, s3-touch-35-diag env): FT6336 touch, AXP2101 PMIC,
+          # TCA9554 LCD-reset expander. Keep pinned to the same ranges as the
+          # s3-touch-35-diag lib_deps in platformio.ini.
+          pio pkg install -g --library "lewisxhe/SensorLib@^0.4.1"
+          pio pkg install -g --library "lewisxhe/XPowersLib@^0.3.3"
+          pio pkg install -g --library "RobTillaart/TCA9554@^0.1.3"

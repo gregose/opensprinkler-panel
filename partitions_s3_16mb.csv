@@ -1,0 +1,13 @@
+# 16 MB dual-OTA partition table for the Waveshare ESP32-S3-Touch-LCD-3.5 (non-B)
+# bring-up spike (issue #140). Mirrors the dual-app OTA philosophy of the CYD's
+# built-in min_spiffs.csv, scaled to the S3R8's 16 MB flash so the eventual
+# production port has OTA headroom. This spike itself is USB-flashed; the layout
+# just future-proofs the env. Do NOT reuse for cyd-* envs (those keep min_spiffs).
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x640000,
+app1,       app,  ota_1,    0x650000,  0x640000,
+spiffs,     data, spiffs,   0xc90000,  0x360000,
+coredump,   data, coredump, 0xff0000,  0x10000,
