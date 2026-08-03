@@ -219,7 +219,13 @@ int main(int argc, char** argv) {
     if (want_window) {
         const std::string state = one_state.empty() ? "idle-connected" : one_state;
         lv_display_t* win = lv_sdl_window_create(kW, kH);
-        (void)win;
+        // lv_display_create() only auto-assigns the default display when none
+        // exists yet, so the headless `disp` created above stays default and
+        // lv_sdl_window_create() does NOT take over. Without this, render_scene()
+        // (which builds on lv_screen_active() == the default display's screen)
+        // draws into the headless display and the SDL window shows its own empty
+        // screen -> a blank window. Make the window the default before building.
+        lv_display_set_default(win);
         std::printf("SDL window: rendering '%s'; close it to exit.\n",
                     state.c_str());
         render_scene(osp::sim::make_fixture(state));
