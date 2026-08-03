@@ -483,6 +483,37 @@ void test_external_manual_queue_stays_program_running_when_one_remains() {
   TEST_ASSERT_EQUAL_INT(2, f.ps.view().prog_run.current_sid);
 }
 
+// Regression (#hardware): a panel-initiated single manual station run must land
+// on the full manual-station view (Phase::Running), NOT the program "Station
+// Queue" screen — even when the controller reports an intermediate idle /jc poll
+// between our /cm and the first poll that shows the run. On real hardware the
+// controller often needs a poll or two to schedule the queue, so /jc still reads
+// idle right after /cm. That idle poll must not wipe run_initiated_by_panel_,
+// otherwise the confirming pid=99 poll is misread as an *external* manual run and
+// collapsed into the program-queue phase (the emulator reflected /cm instantly,
+// so this never reproduced off-hardware).
+void test_panel_manual_run_survives_idle_poll_gap_before_running() {
+  Fixture f(3);
+
+  // Tap a station: panel queues the manual run and marks it as panel-initiated.
+  f.ps.select_station(0);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+  f.ps.mark_desired_delivered();  // /cm sent to the controller.
+
+  // Hardware gap: the very next /jc still reports idle (queue not scheduled yet).
+  f.ps.on_jc(make_jc_idle(3), 1000);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);  // must NOT be cleared
+
+  // The controller now reports the manual run (pid=99 on the tapped station).
+  f.ps.on_jc(make_jc_running(0, 58), 1500);
+
+  // It must be the manual-station view, not the program "Station Queue" screen.
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+
 void test_program_run_counts_up_through_full_station_set() {
   // Program index 0 (pid=1) with 3 stations. Station 0 already finished
   // (dropped from ps), station 1 running, station 2 upcoming. The panel should
@@ -1423,6 +1454,7 @@ int main(int, char**) {
   RUN_TEST(test_manual_run_classified_as_running_phase);
   RUN_TEST(test_external_manual_queue_uses_program_running_phase);
   RUN_TEST(test_external_manual_queue_stays_program_running_when_one_remains);
+  RUN_TEST(test_panel_manual_run_survives_idle_poll_gap_before_running);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
   RUN_TEST(test_external_program_run_shows_live_queue_without_identity);
