@@ -67,16 +67,19 @@
   <body>
     <h1>Flash the OpenSprinkler panel firmware</h1>
     <p>
-      Install the latest OpenSprinkler Panel firmware straight
-      from your browser. Connect the panel over USB-C, then click Install.
+      Install the latest OpenSprinkler Panel firmware for the classic-ESP32 CYD
+      or the Waveshare ESP32-S3 panel. Connect the panel over USB-C, then click
+      Install. The flasher detects the connected chip and selects the matching
+      firmware automatically.
     </p>
 
     <p class="note">
       <strong>Chromium browsers only.</strong> This flasher uses WebSerial, so
       it works in <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong>.
       Firefox and Safari are not supported. The first install erases the flash.
-      If the board's port doesn't appear, install the <code>CH340</code> or
-      <code>CP210x</code> USB-serial driver.
+      CYD users may need the <code>CH340</code> or <code>CP210x</code>
+      USB-serial driver if the port does not appear. The ESP32-S3 board uses
+      native USB-CDC.
     </p>
 
     <esp-web-install-button manifest="manifest.json">

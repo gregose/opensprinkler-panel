@@ -7,7 +7,8 @@ nav_order: 7
 # Updating firmware
 
 The web flasher always installs the **latest release**, so updating is the same
-as installing:
+as installing. It detects a classic ESP32 CYD or ESP32-S3 panel and selects the
+matching release image automatically:
 
 1. Connect the panel over **USB-C**.
 2. Open the [web flasher]({{ '/flash/' | relative_url }}) in Chrome or Edge.
@@ -29,3 +30,5 @@ during [setup]({{ '/configuration/' | relative_url }}), and it's driven from the
 command line rather than the browser. The OTA workflow is documented in the
 [`tools/`](https://github.com/gregose/opensprinkler-panel/tree/main/tools) and
 [`docs/`](https://github.com/gregose/opensprinkler-panel/tree/main/docs) folders.
+When downloading an app-only release image manually, use `firmware.bin` for the
+CYD and `s3-firmware.bin` for the Waveshare ESP32-S3 board.

@@ -92,11 +92,12 @@ are authoritative. Don't invent behavior for the manual.
   matter through verbatim, so the raw HTML/JS is served as-is. Do not add front
   matter to it.
 - [`site/flash/manifest.json`](../site/flash/manifest.json) is **always-latest**:
-  `version: "latest"`, `new_install_prompt_erase: true`, and the firmware part
-  path is the absolute GitHub release asset
-  `https://github.com/gregose/opensprinkler-panel/releases/latest/download/merged-firmware.bin`.
-  **Keep that a `github.com` release URL** — it is *not* a Pages URL and must not
-  be rewritten to the custom domain. The binary comes from `release.yml`.
+  `version: "latest"`, `new_install_prompt_erase: true`, and two builds let ESP
+  Web Tools select by connected chip family. `ESP32` points to
+  `merged-firmware.bin`; `ESP32-S3` points to `s3-merged-firmware.bin`. Both use
+  absolute `https://github.com/gregose/opensprinkler-panel/releases/latest/download/`
+  URLs. Keep them as `github.com` release URLs, not Pages URLs. The binaries
+  come from `release.yml`.
 
 ## Build & deploy
 

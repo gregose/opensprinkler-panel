@@ -37,17 +37,27 @@ New to OpenSprinkler? It's an open-source sprinkler/irrigation controller; learn
 
 ## Supported hardware
 
-Hosyond 3.5" ESP32 display (SKU E32R35T, community name ESP32-3248S035R, a "CYD"). The same board is sold under several brands; validated on the Hosyond unit:
+| Board | MCU | Display | Touch | Battery | PlatformIO env |
+|---|---|---|---|---|---|
+| CYD E32R35T | ESP32-WROOM-32 | ST7796 SPI | XPT2046 resistive | ADC divider on GPIO34 | `cyd-35r` |
+| Waveshare ESP32-S3-Touch-LCD-3.5 non-B | ESP32-S3 | ST7796 SPI | FT6336 capacitive | AXP2101 fuel gauge | `s3-touch-35` |
+
+The CYD is sold under several brands. The firmware was validated on the Hosyond
+3.5" ESP32 display (SKU E32R35T, community name ESP32-3248S035R):
 
 - Buy it (affiliate link, supports the project): <https://link.amazon/B072rCpB0>
 - Buy it (non-affiliate): <https://www.amazon.com/dp/B0D93MBWC2>
 - Reference wiki: <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
 
-Classic ESP32-WROOM-32E (no PSRAM, 4 MB flash), ST7796U 480x320 display, XPT2046 resistive touch on the same SPI bus, USB-C 5 V power. Use the resistive touch version; capacitive variants aren't supported yet. Full detail in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/) and the pin map in [`docs/03-architecture.md`](docs/03-architecture.md).
+Both boards are shipped in every release and can be flashed from the browser.
+Full details are in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/)
+and the pin maps in [`docs/03-architecture.md`](docs/03-architecture.md).
 
 ## Flash it in your browser
 
-Install the latest firmware from a Chromium browser (Chrome or Edge):
+Install the latest firmware from a Chromium browser (Chrome or Edge). The
+flasher detects whether the connected board is a classic ESP32 CYD or ESP32-S3
+and selects the matching release image:
 
 <https://www.nullmethod.com/opensprinkler-panel/flash/>
 
@@ -81,11 +91,12 @@ Hardware-independent logic (domain models, API client, parsing, state machines) 
 > Builds and tests run in CI and cloud sessions, not on a local machine. The ESP32 toolchain is pinned in `platformio.ini`, so every environment builds identically.
 
 ```bash
-pio test -e native      # hardware-independent unit tests
-pio run  -e cyd-35r     # compile the firmware
+pio test -e native         # hardware-independent unit tests
+pio run  -e cyd-35r        # compile CYD firmware
+pio run  -e s3-touch-35    # compile Waveshare ESP32-S3 firmware
 ```
 
-`.github/workflows/ci.yml` runs the native tests, compiles the firmware, and publishes a flashable `cyd-35r-firmware` artifact on every push/PR; `release.yml` publishes release binaries (including `merged-firmware.bin`, which the hosted browser flasher installs) on a `v*` tag; `zizmor.yml` security-audits the workflows themselves; and `copilot-setup-steps.yml` pre-installs the same toolchain for cloud sessions. Full CI/CD reference in [`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
+`.github/workflows/ci.yml` runs the native tests, compiles both board environments, and publishes browser-flashable artifacts on every push/PR. `release.yml` publishes CYD and S3 release binaries, including both merged images used by the hosted browser flasher, on a `v*` tag. `zizmor.yml` security-audits the workflows themselves, and `copilot-setup-steps.yml` pre-installs the same toolchain for cloud sessions. Full CI/CD reference in [`docs/07-ci-cd-and-releases.md`](docs/07-ci-cd-and-releases.md).
 
 ### Iterate on the UI without hardware
 
@@ -102,7 +113,7 @@ Every screen/state is driven from portable view-model fixtures (`sim/fixtures.cp
 
 ### Flashing & debugging locally
 
-[`tools/flash.sh`](tools/flash.sh) downloads a branch/PR/release build and writes `merged-firmware.bin` over USB (`--release` grabs the latest release); [`tools/ota.sh`](tools/ota.sh) pushes updates over Wi-Fi; [`tools/panel.py`](tools/panel.py) pulls pixel-exact screenshots and injects synthetic touch. See [`tools/README.md`](tools/README.md) for the full workflow.
+For the CYD, [`tools/flash.sh`](tools/flash.sh) downloads a branch/PR/release build and writes `merged-firmware.bin` over USB (`--release` grabs the latest release), while [`tools/ota.sh`](tools/ota.sh) pushes updates over Wi-Fi. [`tools/panel.py`](tools/panel.py) pulls pixel-exact screenshots and injects synthetic touch. S3 CI artifacts include a browser-flash page. See [`tools/README.md`](tools/README.md) for the full workflow.
 
 ### Develop without the controller
 

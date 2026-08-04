@@ -90,6 +90,24 @@ jobs:
       - name: Package diagnostic firmware
         run: tools/package-firmware.sh cyd-35r-diag release/diag
 
+      # Package each S3 environment immediately after its build for the same
+      # shared-output reason as the CYD environments above.
+      - name: Build S3 production firmware (s3-touch-35)
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+          FW_VERSION: ${{ steps.meta.outputs.version }}
+        run: pio run -e s3-touch-35
+      - name: Package S3 production firmware
+        run: tools/package-firmware.sh s3-touch-35 release/s3-production --web
+
+      - name: Build S3 diagnostic firmware (s3-touch-35-diag)
+        env:
+          GIT_SHA: ${{ steps.meta.outputs.sha }}
+          FW_VERSION: ${{ steps.meta.outputs.version }}
+        run: pio run -e s3-touch-35-diag
+      - name: Package S3 diagnostic firmware
+        run: tools/package-firmware.sh s3-touch-35-diag release/s3-diag
+
       - name: Assemble release assets
         id: assets
         env:
@@ -111,10 +129,18 @@ jobs:
           cp release/diag/merged-firmware.bin "$stage/diag-merged-firmware.bin"
           cp release/diag/firmware.bin        "$stage/diag-firmware.bin"
 
-          # Version-pinned manifest: same shape as flash/manifest.json but the
-          # part path is the ABSOLUTE GitHub release download URL for this tag's
-          # merged prod image, so the web flasher works standalone.
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/merged-firmware.bin"
+          # S3 production and diagnostic assets use an s3- prefix.
+          cp release/s3-production/merged-firmware.bin "$stage/s3-merged-firmware.bin"
+          cp release/s3-production/bootloader.bin      "$stage/s3-bootloader.bin"
+          cp release/s3-production/partitions.bin      "$stage/s3-partitions.bin"
+          cp release/s3-production/boot_app0.bin       "$stage/s3-boot_app0.bin"
+          cp release/s3-production/firmware.bin        "$stage/s3-firmware.bin"
+          cp release/s3-diag/merged-firmware.bin "$stage/s3-diag-merged-firmware.bin"
+          cp release/s3-diag/firmware.bin        "$stage/s3-diag-firmware.bin"
+
+          # Version-pinned manifest selects the matching image from the connected
+          # chip family.
+          url_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}"
           cat > "$stage/manifest.json" <<EOF
           {
             "name": "OpenSprinkler Panel",
@@ -125,7 +151,16 @@ jobs:
                 "chipFamily": "ESP32",
                 "parts": [
                   {
-                    "path": "${url}",
+                    "path": "${url_base}/merged-firmware.bin",
+                    "offset": 0
+                  }
+                ]
+              },
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  {
+                    "path": "${url_base}/s3-merged-firmware.bin",
                     "offset": 0
                   }
                 ]
@@ -160,6 +195,13 @@ jobs:
             release/assets/firmware.bin
             release/assets/diag-merged-firmware.bin
             release/assets/diag-firmware.bin
+            release/assets/s3-merged-firmware.bin
+            release/assets/s3-bootloader.bin
+            release/assets/s3-partitions.bin
+            release/assets/s3-boot_app0.bin
+            release/assets/s3-firmware.bin
+            release/assets/s3-diag-merged-firmware.bin
+            release/assets/s3-diag-firmware.bin
             release/assets/manifest.json
             release/assets/SHA256SUMS
           )

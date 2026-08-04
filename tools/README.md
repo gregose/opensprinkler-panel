@@ -54,10 +54,12 @@ Options:
 - `--run-id 1234567890` flashes a specific workflow run.
 - `--repo gregose/opensprinkler-panel` overrides the current repository remote.
 
-Each CI run publishes two artifacts, suffixed with the short commit SHA so
-multiple builds are distinguishable: `cyd-35r-firmware-<sha>` (production) and
-`cyd-35r-diag-firmware-<sha>` (diagnostic). `flash.sh` resolves the right one
-for a run by prefix, downloads it with `gh run download`, finds
+Each CI run publishes production and diagnostic artifacts for both supported
+boards, suffixed with the short commit SHA. The CYD artifacts are
+`cyd-35r-firmware-<sha>` and `cyd-35r-diag-firmware-<sha>`; the S3 artifacts are
+`s3-touch-35-firmware-<sha>` and `s3-touch-35-diag-firmware-<sha>`. `flash.sh`
+resolves the selected CYD artifact by prefix, downloads it with
+`gh run download`, finds
 `merged-firmware.bin`, then writes it at `0x0`. It prints the **resolved
 artifact name** (`Flashing cyd-35r-firmware-<sha> ...`) so you can confirm you
 flashed the build you intended.
@@ -338,4 +340,3 @@ monitor (`./tools/monitor.sh`), send a single character:
 
 If `o` reports PASS, the M5 API client and the controller credentials are good,
 so a blank production grid points at the UI rather than the network.
-
