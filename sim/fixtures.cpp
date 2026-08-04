@@ -113,6 +113,8 @@ Fixture make_fixture(const std::string& state) {
 
     if (state == "idle-connected") {
         f.ref = "home-connected.png";
+    } else if (state == "idle-charging") {
+        f.host.battery_source = osp::PowerSource::External;
     } else if (state == "idle-loading") {
         f.view.station_list_loaded = false;
         f.view.has_current = false;
@@ -246,9 +248,9 @@ Fixture make_fixture(const std::string& state) {
 
 const std::vector<std::string>& all_states() {
     static const std::vector<std::string> kAll = {
-        "idle-connected", "idle-loading", "idle-syncing", "idle-reconnecting",
-        "idle-offline", "idle-auth", "run-manual", "run-manual-paused",
-        "run-program", "run-program-paused", "programs-list",
+        "idle-connected", "idle-charging", "idle-loading", "idle-syncing",
+        "idle-reconnecting", "idle-offline", "idle-auth", "run-manual",
+        "run-manual-paused", "run-program", "run-program-paused", "programs-list",
         "programs-list-paged", "history-list", "history-list-paged",
         "history-mixed-events", "history-empty", "history-many", "sleep"};
     return kAll;

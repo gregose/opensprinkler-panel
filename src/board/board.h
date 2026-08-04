@@ -34,3 +34,8 @@ void board_touch_read(uint16_t& x, uint16_t& y, bool& pressed);
 // Read the battery sense channel and return the (multisampled) millivolts at
 // the sense tap. The caller owns sampling cadence and any smoothing/gauge.
 int board_battery_read();
+
+// True when the panel is running on external (USB/VBUS) power rather than the
+// battery. Drives the top-bar charge glyph. Boards with no charger telemetry
+// (e.g. CYD) return false.
+bool board_external_power();

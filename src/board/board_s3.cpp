@@ -221,9 +221,12 @@ int board_battery_read() {
     // before mapping to a LiPo %-of-charge curve. The AXP2101 reports TRUE VBAT
     // directly (no divider), so we return VBAT/2 here: the caller's x2 then
     // recovers the real VBAT and the SAME curve produces the same gauge as the
-    // CYD. Keeps board.h and the gauge behaviour unchanged. (Charge/plug state is
-    // deliberately left for a later PR, #136/#118.)
+    // CYD. Keeps board.h and the gauge behaviour unchanged.
     return static_cast<int>(pmu.getBattVoltage()) / 2;
+}
+
+bool board_external_power() {
+    return pmu.isVbusIn();
 }
 
 #endif  // OSP_BOARD_S3

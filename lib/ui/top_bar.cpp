@@ -112,6 +112,7 @@ static BattGlyph build_batt_glyph(lv_obj_t* parent) {
 
     // Pictogram holder (body + nub in absolute layout).
     lv_obj_t* pic = lv_obj_create(row);
+    g.pic = pic;
     lv_obj_remove_style_all(pic);
     lv_obj_set_style_bg_opa(pic, LV_OPA_TRANSP, 0);
     lv_obj_set_size(pic, BATT_BODY_W + 2, BATT_BODY_H);  // +2 for the nub
@@ -148,6 +149,14 @@ static BattGlyph build_batt_glyph(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(g.fill, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(g.fill, 1, 0);
     lv_obj_clear_flag(g.fill, LV_OBJ_FLAG_SCROLLABLE);
+
+    g.charge = lv_label_create(pic);
+    lv_obj_set_style_text_font(g.charge, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(g.charge, hex_color(CLR_TEAL), 0);
+    lv_label_set_text(g.charge, LV_SYMBOL_CHARGE);
+    lv_obj_center(g.charge);
+    lv_obj_add_flag(g.charge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g.charge, LV_OBJ_FLAG_SCROLLABLE);
 
     // Percent label.
     g.pct = lv_label_create(row);
@@ -259,10 +268,17 @@ void update_sig_meter(const SigMeter& m, int quality, bool connected) {
     }
 }
 
-void update_batt_glyph(const BattGlyph& g, int percent, osp::BatteryTier tier) {
+void update_batt_glyph(const BattGlyph& g, int percent, osp::BatteryTier tier,
+                       osp::PowerSource source) {
     if (!g.body) return;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
+    const bool ext = osp::power_is_external(source);
+    obj_set_hidden(g.body, ext);
+    obj_set_hidden(g.nub, ext);
+    obj_set_hidden(g.fill, ext);
+    obj_set_hidden(g.charge, !ext);
+
     const uint32_t clr = (tier == osp::BatteryTier::Healthy) ? CLR_TEAL
                        : (tier == osp::BatteryTier::Low)     ? CLR_AMBER
                                                              : CLR_RED;

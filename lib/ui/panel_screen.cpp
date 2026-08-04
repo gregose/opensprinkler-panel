@@ -934,7 +934,8 @@ void update_panel_screen(PanelScreen& ps,
     // Battery gauge: the firmware samples the ADC and passes the smoothed
     // state-of-charge. Always shown - an absent cell floats the sense node high
     // (indistinguishable from full), so there is no reliable "no battery" state.
-    update_batt_glyph(ps.tb.batt, host.battery_percent, host.battery_tier);
+    update_batt_glyph(ps.tb.batt, host.battery_percent, host.battery_tier,
+                      host.battery_source);
 
     // Phase visibility. The shared status panel + action row show for BOTH the
     // manual and program run; the right column (settings+grid vs queue list) is

@@ -37,6 +37,7 @@ struct HostStatus {
     bool        panel_connected = false; // WiFi.status() == WL_CONNECTED
     int         battery_percent = 0;
     BatteryTier battery_tier    = BatteryTier::Healthy;
+    PowerSource battery_source  = PowerSource::Unknown;
     const char* host_name       = "";    // configured OpenSprinkler host
 };
 
