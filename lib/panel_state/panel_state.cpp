@@ -7,6 +7,20 @@
 namespace osp {
 
 namespace {
+// Saturating monotonic elapsed-time in ms. now_ms and the anchor are sampled
+// independently by the UI task (tick) and the network task (on_jc), each from
+// its own millis() read, so `now` can momentarily be a few ms *behind* an anchor
+// stamped by the other task (e.g. tick() queues the auto-advance and stamps the
+// session/await anchors, then the immediately-following on_jc runs with a
+// slightly earlier now). A raw `now - anchor` underflows to ~4.29e9 in that
+// window, which used to trip the manual-session grace and the sync timeout at
+// the exact auto-advance boundary and misclassify the next panel-launched
+// station as an external run (#143). Clamp the skew to 0 so elapsed time is
+// never spuriously huge.
+inline uint32_t ms_since(uint32_t now, uint32_t anchor) {
+  return (now >= anchor) ? (now - anchor) : 0u;
+}
+
 // True when every station currently queued for `pid` in the live ps[] belongs
 // to program `prog_idx`'s definition (and at least one such station exists).
 // Used to decide whether a panel-launched program index still describes the
@@ -242,7 +256,7 @@ bool PanelState::pending_sync() const {
 bool PanelState::sync_stale() const {
   if (!pending_sync()) return false;
   const uint32_t started_at = await_close_ ? await_close_at_ms_ : desired_at_ms_;
-  return (now_ms_ - started_at) > kSyncTimeoutMs;
+  return ms_since(now_ms_, started_at) > kSyncTimeoutMs;
 }
 
 void PanelState::update_sync_view() {
@@ -415,7 +429,7 @@ void PanelState::tick(uint32_t now_ms) {
   // wall clock so they all tick smoothly between the 2 s /jc polls that
   // re-sync them.
   if (view_.phase == Phase::Running || view_.phase == Phase::ProgramRunning) {
-    const uint32_t elapsed = now_ms - last_countdown_tick_ms_;
+    const uint32_t elapsed = ms_since(now_ms, last_countdown_tick_ms_);
     const uint32_t secs = elapsed / 1000u;
     if (secs > 0u) {
       last_countdown_tick_ms_ += secs * 1000u;
@@ -466,7 +480,7 @@ void PanelState::tick(uint32_t now_ms) {
   // Sleep timer: applies when idle, and also for external program runs.
   if (should_allow_sleep() && !view_.sleeping) {
     if (sleep_timeout_ms_ != 0 &&
-        (now_ms - last_touch_ms_) >= sleep_timeout_ms_) {
+        ms_since(now_ms, last_touch_ms_) >= sleep_timeout_ms_) {
       view_.sleeping = true;
     }
   }
@@ -654,6 +668,28 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     await_close_at_ms_ = 0;
     enter_running(jc_running_sid, jc_running_rem);
   } else {
+    // Auto-advance robustness (companion to the #143 latch fix): the primary
+    // next-station trigger lives in tick(), which fires when the dead-reckoned
+    // countdown hits 0 between polls. But if a /jc poll observes the station
+    // already finished while that local countdown is still > 0 (the controller
+    // ended a beat before the panel's countdown reached 0 — the same cross-task
+    // timing skew behind the underflow bug), the tick() trigger is skipped and
+    // auto-advance silently stalls on the finished station. Catch the finished
+    // transition here: when a panel-owned manual run we were showing as Running
+    // has gone idle, auto-advance is on, and neither tick() nor a prior poll has
+    // already begun the handoff (await_close/desired), queue the next station
+    // now. This makes the handoff driven by the observed finish rather than the
+    // fragile countdown==0 race.
+    if (view_.phase == Phase::Running && view_.auto_advance &&
+        run_initiated_by_panel_ && panel_manual_active_ && !await_close_ &&
+        !has_desired() &&
+        view_.countdown_s <= kAutoAdvanceFinishSlackS) {
+      const int next_sid = model_.auto_next_sid(view_.running_sid);
+      if (next_sid != -1) {
+        queue_desired_run(next_sid);
+        begin_await_close();
+      }
+    }
     // A panel-launched run is confirmed asynchronously: after we issue the
     // command (single manual station via /cm, or a program via /mp), the first
     // /jc poll(s) can still report idle before the controller schedules the run.
@@ -683,7 +719,7 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     // failed /cm self-heals. run_initiated_by_panel_ is cleared only when neither
     // a program launch is pending nor a manual session is latched.
     if (panel_manual_active_ && !manual_launch_pending &&
-        (now_ms_ - panel_manual_seen_ms_) > kManualSessionGraceMs) {
+        ms_since(now_ms_, panel_manual_seen_ms_) > kManualSessionGraceMs) {
       end_panel_manual_session();
     }
     if (!program_launch_pending && !panel_manual_active_) {

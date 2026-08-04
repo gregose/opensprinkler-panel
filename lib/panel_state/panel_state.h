@@ -97,6 +97,11 @@ class PanelState {
   // reclassified as external. Picked comfortably above 2x the ~2 s poll interval
   // and well under the 15 s minimum run time.
   static constexpr uint32_t kManualSessionGraceMs = 5000;
+  // #143: when auto-advancing a panel-manual run, an idle /jc poll only means the
+  // station genuinely finished (as opposed to a transient mid-run idle blip) when
+  // the dead-reckoned countdown is essentially spent. Used to drive advancing off
+  // an observed finish when a dead-reckoned tick() did not fire the boundary first.
+  static constexpr int kAutoAdvanceFinishSlackS = 3;
 
   explicit PanelState(StationModel& model,
                       int default_run_time_s = kDefaultRunTime);
@@ -149,7 +154,9 @@ class PanelState {
   uint32_t sleep_timeout_ms() const { return sleep_timeout_ms_; }
   // Milliseconds since the last touch/interaction (idle age). Useful for
   // heartbeat/telemetry so a bench can watch the idle timer climb.
-  uint32_t idle_elapsed_ms() const { return now_ms_ - last_touch_ms_; }
+  uint32_t idle_elapsed_ms() const {
+    return (now_ms_ >= last_touch_ms_) ? now_ms_ - last_touch_ms_ : 0u;
+  }
 
   const PanelView& view() const { return view_; }
   DesiredIntent desired() const { return desired_; }

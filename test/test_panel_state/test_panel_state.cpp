@@ -669,7 +669,62 @@ void test_stop_ends_panel_manual_session() {
   TEST_ASSERT_FALSE(f.ps.view().run_initiated_by_panel);
 }
 
+// #143 (root cause): at an auto-advance boundary, tick() (UI task) stamps the
+// latch/await-close/desired anchors from its own millis(); the very next on_jc
+// (network task) can read a millis() a few ms EARLIER. A raw now-anchor
+// subtraction then underflows to ~4.29e9, falsely tripping BOTH the manual-
+// session grace and the sync timeout, killing the panel-manual latch exactly at
+// the handoff so the next station flips to the program "Station Queue" view.
+// The saturating ms_since() guard must keep the run ours across backward skew.
+void test_auto_advance_boundary_survives_backward_now_skew() {
+  Fixture f(3);
+  f.ps.set_auto_advance(true);
+  start_panel_manual(f, 0, 1, 3000);  // sid0 confirmed running at now=3000
+  f.ps.tick(4000);                    // countdown 1 -> 0: queue sid1, anchors@4000
+  TEST_ASSERT_TRUE(f.ps.awaiting_close());
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
 
+  // Immediately-following boundary poll runs slightly BEHIND tick()'s clock.
+  f.ps.on_jc(make_jc_idle(3), 3950);  // now (3950) < anchors (4000)
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // Deliver + confirm sid1: must stay OUR manual run, never the program queue.
+  f.ps.mark_desired_delivered();
+  f.ps.on_jc(make_jc_running(1, 15), 4200);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143 (second half — "stopped advancing"): auto-advance was driven ONLY by the
+// dead-reckoned countdown hitting 0 in tick(). If an idle /jc poll observes the
+// station finished while the panel's dead-reckoned countdown is still > 0 (poll
+// landed before the tick that would have zeroed it), the run must still advance
+// to the next station instead of stalling at idle. The observed-finish fallback
+// in on_jc queues the next station when the countdown is essentially spent.
+void test_auto_advance_triggers_on_observed_finish_when_countdown_nonzero() {
+  Fixture f(3);
+  f.ps.set_auto_advance(true);
+  start_panel_manual(f, 0, 1, 1000);  // sid0 running, ~1s left, no tick() to 0
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+
+  // Controller finished sid0 and reports idle; no intervening tick() zeroed the
+  // countdown. The next station must be queued rather than stalling at idle.
+  f.ps.on_jc(make_jc_idle(3), 2000);
+  TEST_ASSERT_EQUAL_INT((int)IntentKind::Run, (int)f.ps.desired().kind);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+
+  // Deliver + confirm sid1 running: stays our manual run.
+  f.ps.mark_desired_delivered();
+  f.ps.on_jc(make_jc_running(1, 15), 2500);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
 
 void test_program_run_counts_up_through_full_station_set() {
   // Program index 0 (pid=1) with 3 stations. Station 0 already finished
@@ -1620,6 +1675,8 @@ int main(int, char**) {
   RUN_TEST(test_external_single_manual_station_is_program_running);
   RUN_TEST(test_panel_manual_session_clears_after_grace_and_self_heals);
   RUN_TEST(test_stop_ends_panel_manual_session);
+  RUN_TEST(test_auto_advance_boundary_survives_backward_now_skew);
+  RUN_TEST(test_auto_advance_triggers_on_observed_finish_when_countdown_nonzero);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
   RUN_TEST(test_external_program_run_shows_live_queue_without_identity);
