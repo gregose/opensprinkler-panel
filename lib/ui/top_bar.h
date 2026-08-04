@@ -28,10 +28,12 @@ struct SigMeter {
 
 // Battery gauge: pictogram (body + nub + fill) followed by a "NN%" label.
 struct BattGlyph {
-    lv_obj_t* body = nullptr;
-    lv_obj_t* nub  = nullptr;
-    lv_obj_t* fill = nullptr;
-    lv_obj_t* pct  = nullptr;
+    lv_obj_t* pic    = nullptr;  // fixed-size pictogram holder (keeps slot width stable)
+    lv_obj_t* body   = nullptr;
+    lv_obj_t* nub    = nullptr;
+    lv_obj_t* fill   = nullptr;
+    lv_obj_t* charge = nullptr;  // bolt glyph shown when on external power
+    lv_obj_t* pct    = nullptr;
 };
 
 // All handles produced by build_top_bar(); the caller keeps these to drive
@@ -57,8 +59,9 @@ TopBar build_top_bar(lv_obj_t* scr);
 // remainder dim; colour by quality tier.
 void update_sig_meter(const SigMeter& m, int quality, bool connected);
 
-// Update the battery fill width, tier colour and percent text.
-void update_batt_glyph(const BattGlyph& g, int percent, osp::BatteryTier tier);
+// Update battery fill, tier colour, percent text, and external-power glyph swap.
+void update_batt_glyph(const BattGlyph& g, int percent, osp::BatteryTier tier,
+                       osp::PowerSource source);
 
 }  // namespace ui
 }  // namespace osp

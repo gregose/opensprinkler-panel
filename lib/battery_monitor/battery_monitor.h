@@ -30,6 +30,15 @@ inline constexpr int kBatteryFullMv  = 4200;  // 100 %
 // Colour tiers for the top-bar glyph (map to teal / amber / red).
 enum class BatteryTier { Healthy, Low, Critical };
 
+// Power source for the top-bar glyph. External means running on USB/VBUS, which
+// swaps the battery gauge for a charge (bolt) glyph. Unknown is reported by
+// boards with no charger telemetry (e.g. CYD) and renders as the battery gauge.
+enum class PowerSource : uint8_t { Unknown, Battery, External };
+
+// True when the top bar should show the charge/plug glyph instead of the
+// battery gauge (i.e. running on external power).
+bool power_is_external(PowerSource source);
+
 // Convert a calibrated tap-node reading (mV at the ADC pin) to VBAT (mV).
 int battery_vbat_from_tap_mv(int tap_mv);
 

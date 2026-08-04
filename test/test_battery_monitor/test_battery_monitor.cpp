@@ -68,6 +68,12 @@ void test_tier_thresholds() {
   TEST_ASSERT_EQUAL_INT((int)BatteryTier::Critical, (int)battery_tier_from_percent(0));
 }
 
+void test_power_is_external() {
+  TEST_ASSERT_FALSE(power_is_external(PowerSource::Unknown));
+  TEST_ASSERT_FALSE(power_is_external(PowerSource::Battery));
+  TEST_ASSERT_TRUE(power_is_external(PowerSource::External));
+}
+
 // --- BatteryMonitor (smoothing) --------------------------------------------
 
 void test_monitor_no_reading_until_first_sample() {
@@ -124,6 +130,7 @@ int main(int, char**) {
   RUN_TEST(test_percent_interpolates_between_knots);
   RUN_TEST(test_percent_is_monotonic_non_decreasing);
   RUN_TEST(test_tier_thresholds);
+  RUN_TEST(test_power_is_external);
   RUN_TEST(test_monitor_no_reading_until_first_sample);
   RUN_TEST(test_monitor_first_sample_seeds_directly);
   RUN_TEST(test_monitor_ema_moves_gradually);

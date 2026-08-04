@@ -5,6 +5,10 @@
 
 namespace osp {
 
+bool power_is_external(PowerSource source) {
+  return source == PowerSource::External;
+}
+
 int battery_vbat_from_tap_mv(int tap_mv) {
   if (tap_mv < 0) tap_mv = 0;
   return static_cast<int>(tap_mv * kBatteryDividerRatio + 0.5f);

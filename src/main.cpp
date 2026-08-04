@@ -1525,6 +1525,8 @@ static void ui_update() {
     host.panel_connected = WiFi.status() == WL_CONNECTED;
     host.battery_percent = battery_percent;
     host.battery_tier    = osp::battery_tier_from_percent(battery_percent);
+    host.battery_source = board_external_power() ? osp::PowerSource::External
+                                                 : osp::PowerSource::Battery;
     host.host_name       = g_os_host.c_str();
 
     osp::ui::HistoryView history;

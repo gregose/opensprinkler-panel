@@ -125,4 +125,8 @@ int board_battery_read() {
     return static_cast<int>(sum / BAT_ADC_SAMPLES);
 }
 
+bool board_external_power() {
+    return false;  // no charger-status telemetry on this board
+}
+
 #endif  // OSP_BOARD_CYD
