@@ -6,9 +6,20 @@ nav_order: 2
 
 # Supported hardware
 
-The firmware targets the **Hosyond 3.5″ ESP32 display**, a common "cheap yellow
-display" (CYD) board with a resistive touchscreen. The same board is sold under
-several brands; this firmware was validated on the Hosyond unit linked below.
+The firmware supports these two boards:
+
+| Board | MCU | Display | Touch | Battery | PlatformIO env |
+|---|---|---|---|---|---|
+| CYD E32R35T | ESP32-WROOM-32 | ST7796 SPI | XPT2046 resistive | ADC divider on GPIO34 | `cyd-35r` |
+| Waveshare ESP32-S3-Touch-LCD-3.5 non-B | ESP32-S3 | ST7796 SPI | FT6336 capacitive | AXP2101 fuel gauge | `s3-touch-35` |
+
+Both boards are included in every release and supported by the browser flasher.
+
+## CYD E32R35T
+
+The Hosyond 3.5″ ESP32 display is a common "cheap yellow display" (CYD) board
+with a resistive touchscreen. The same board is sold under several brands; this
+firmware was validated on the Hosyond unit linked below.
 
 - **Buy it (affiliate link, supports the project):** [Amazon (affiliate)](https://link.amazon/B072rCpB0)
 - **Buy it (non-affiliate):** [Amazon: B0D93MBWC2](https://www.amazon.com/dp/B0D93MBWC2)
@@ -17,7 +28,7 @@ several brands; this firmware was validated on the Hosyond unit linked below.
 You may also see this board sold under other brands, as **SKU E32R35T**, or by
 the community name **ESP32-3248S035R**.
 
-## Key specs
+### Key specs
 
 | Component | Detail |
 |---|---|
@@ -31,7 +42,13 @@ the community name **ESP32-3248S035R**.
 Make sure you get the **resistive** touch version (the "R" in E32R**35T** /
 ESP32-3248S035**R**). Capacitive-touch variants are not supported yet.
 
-## Flashing driver
+## Waveshare ESP32-S3-Touch-LCD-3.5 non-B
+
+The Waveshare board has an ESP32-S3, 16 MB flash, 8 MB PSRAM, an ST7796 SPI
+display, and an FT6336 capacitive touchscreen. Its AXP2101 PMIC reports battery
+and external-power state. It flashes over the ESP32-S3 native USB-CDC port.
+
+## Flashing drivers
 
 To flash over USB you may need a USB-to-serial driver so the board's port shows
 up on your computer:
@@ -40,7 +57,8 @@ up on your computer:
 - **CP210x** (Silicon Labs) driver
 
 Install the one that matches your board's USB chip if the serial port doesn't
-appear during [flashing]({{ '/flashing/' | relative_url }}).
+appear during [flashing]({{ '/flashing/' | relative_url }}). This applies to the
+CYD. The Waveshare ESP32-S3 board uses native USB-CDC.
 
 {: .note }
 Capacitive-touch CYD variants may be added later. For now, stick to the

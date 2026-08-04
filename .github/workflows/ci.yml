@@ -21,11 +21,8 @@ env:
   # these by prefix). Keep in sync with tools/flash.sh.
   PROD_ARTIFACT_BASE: "cyd-35r-firmware"
   DIAG_ARTIFACT_BASE: "cyd-35r-diag-firmware"
-  # S3 bring-up spike (#140) diag artifact base. Raw bins only (esp32s3, 16 MB)
-  # since tools/package-firmware.sh targets the esp32 CYD layout.
+  # ESP32-S3 production and diagnostic artifact names.
   S3_DIAG_ARTIFACT_BASE: "s3-touch-35-diag-firmware"
-  # S3 production firmware (#137). Raw esp32s3 bins, same rationale as the diag
-  # artifact above (CYD flash-layout packager does not apply to the S3).
   S3_PROD_ARTIFACT_BASE: "s3-touch-35-firmware"
 
 # Least-privilege default token: every job here only reads the repo (tests +
@@ -152,41 +149,33 @@ jobs:
           name: ${{ env.DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
           path: firmware-artifact/diag/
 
-      # S3 bring-up spike (issue #140). DIAG ONLY, fully additive: proves the env
-      # compiles in CI. Built LAST so it cannot perturb the cyd-35r/diag outputs
-      # packaged above. tools/package-firmware.sh targets the esp32 CYD flash
-      # layout, so we just upload the raw esp32s3 build outputs for bench flashing.
+      # S3 diagnostic firmware is built after both CYD artifacts are packaged.
+      # Package it before building the S3 production environment.
       - name: Build S3 diagnostic firmware (s3-touch-35-diag)
         env:
           GIT_SHA: ${{ steps.meta.outputs.sha }}
         run: pio run -e s3-touch-35-diag
+      - name: Package S3 diagnostic firmware
+        run: tools/package-firmware.sh s3-touch-35-diag firmware-artifact/s3-diag
       - name: Upload S3 diagnostic firmware artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.S3_DIAG_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
-          path: |
-            .pio/build/s3-touch-35-diag/firmware.bin
-            .pio/build/s3-touch-35-diag/bootloader.bin
-            .pio/build/s3-touch-35-diag/partitions.bin
+          path: firmware-artifact/s3-diag/
 
-      # S3 production firmware (issue #137, part of #120): full M6 UI on the
-      # Waveshare S3 panel. Built after the CYD artifacts are packaged so it
-      # cannot perturb their shared .pio/build outputs. Raw esp32s3 bins are
-      # uploaded for Greg's bench flash-check (the CYD flash-layout packager does
-      # not apply here). This PR is CI-green + build-only; on-board validation is
-      # a separate bench step.
+      # S3 production firmware is packaged with its ESP32-S3 web manifest before
+      # any later environment can perturb its build outputs.
       - name: Build S3 production firmware (s3-touch-35)
         env:
           GIT_SHA: ${{ steps.meta.outputs.sha }}
         run: pio run -e s3-touch-35
+      - name: Package S3 production firmware
+        run: tools/package-firmware.sh s3-touch-35 firmware-artifact/s3-production --web
       - name: Upload S3 production firmware artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.S3_PROD_ARTIFACT_BASE }}-${{ steps.meta.outputs.sha }}
-          path: |
-            .pio/build/s3-touch-35/firmware.bin
-            .pio/build/s3-touch-35/bootloader.bin
-            .pio/build/s3-touch-35/partitions.bin
+          path: firmware-artifact/s3-production/
 
   # Host LVGL simulator (issue #123): builds the `sim` env (platform = native,
   # LVGL + SDL2) and renders the REAL firmware top-bar code (lib/ui) to a

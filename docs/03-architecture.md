@@ -1,6 +1,8 @@
 # 03 — Architecture & Build Brief
 
-## Target
+## Supported boards
+
+### Hosyond E32R35T / ESP32-3248S035R (CYD)
 
 - **Board:** Hosyond **3.5″ ESP32 display** (SKU **E32R35T**, community name **ESP32-3248S035R**) (a "CYD" / Cheap Yellow Display). Classic **ESP32-D0WD-V3** (ESP32-WROOM-32E module, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB flash), 320×480 **TN** TFT, **ST7796U** display over 4-wire SPI, **XPT2046 resistive** touch over the **same SPI bus**, RGB status LED, on-board Li-battery charge circuit (no fuel gauge), BOOT + RESET side buttons, TF slot (unused), Type-C for power + flashing.
 - **Orientation:** landscape, **480×320**. (TN panel — pick the landscape flip whose best viewing angle faces the installed direction; tune during bring-up.)
@@ -27,6 +29,33 @@
 | Spare inputs | 35, 39 | input-only, broken out on headers, unused |
 
 > **The LCD and the XPT2046 touch share one SPI bus** (SCLK 14 / MOSI 13 / MISO 12) with separate chip-selects (LCD 15, touch 33). TFT_eSPI drives both on the same bus — keep the touch SPI clock low (~2.5 MHz) even though the display runs fast.
+
+### Waveshare ESP32-S3-Touch-LCD-3.5 (non-B)
+
+The Waveshare board uses an ESP32-S3R8 with **16 MB flash** and **8 MB OPI
+PSRAM**. Its ST7796 display is write-only on SPI3 (HSPI), while touch, panel
+reset, and power management use one shared I2C bus. It uses native USB-CDC for
+flashing and logs, with no separate UART bridge.
+
+| Function | ESP32-S3 GPIO / bus | Notes |
+|---|---|---|
+| LCD MOSI | 1 | ST7796 write-only SPI |
+| LCD SCLK | 5 | SPI3 (HSPI), 80 MHz |
+| LCD DC | 3 | data/command |
+| LCD CS | not connected | `TFT_CS = -1` |
+| LCD MISO | not connected | `TFT_MISO = -1` |
+| LCD reset | TCA9554 pin 1 | IO expander drives reset over I2C |
+| LCD backlight | 6 | high = on; LEDC PWM controls dimming |
+| Touch | I2C address `0x38` | FT6336 capacitive controller |
+| I2C SDA / SCL | 8 / 7 | shared by touch, PMIC, and IO expander |
+| PMIC | I2C address `0x34` | AXP2101 provides battery, charge, and VBUS data |
+| IO expander | I2C address `0x20` | TCA9554 controls LCD reset |
+
+The display uses QIO flash mode and an 80 MHz SPI clock. TFT_eSPI is configured
+with `USE_HSPI_PORT`, the panel needs color inversion enabled, and LVGL RGB565
+buffers are byte-swapped before display writes. The S3 pin values above come
+from `[env:s3-touch-35]` in `platformio.ini`; I2C pins and device addresses come
+from `src/board/board_s3.cpp`.
 
 ---
 

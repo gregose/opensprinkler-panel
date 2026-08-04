@@ -12,6 +12,10 @@ over its HTTP API, on your own network. New to OpenSprinkler? It's an
 open-source sprinkler/irrigation controller; learn more at
 [opensprinkler.com](https://opensprinkler.com/).
 
+The firmware supports the classic-ESP32 CYD E32R35T and the Waveshare
+ESP32-S3-Touch-LCD-3.5 non-B. Both boards are included in releases and supported
+by the browser flasher.
+
 ![The panel on its idle, connected screen]({{ '/assets/img/screenshots/home-connected.png' | relative_url }})
 
 [Flash it in your browser →]({{ '/flashing/' | relative_url }}){: .btn .btn-primary }

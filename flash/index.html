@@ -25,7 +25,13 @@
   </head>
   <body>
     <h1>OpenSprinkler panel firmware</h1>
-    <p>Connect the ESP32 panel over USB, then flash the merged CI image over WebSerial.</p>
+    <p>
+      The classic-ESP32 CYD and Waveshare ESP32-S3 panels are supported.
+      Connect the panel over USB, then flash the merged CI image over WebSerial.
+      The release flasher detects the connected chip automatically. This
+      single-board CI artifact contains the firmware for the environment named
+      in the artifact.
+    </p>
     <p>
       If you opened this page from the downloaded CI artifact, keep
       <code>merged-firmware.bin</code> one directory above this page so the manifest

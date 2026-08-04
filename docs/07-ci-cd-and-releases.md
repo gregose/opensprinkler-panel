@@ -84,6 +84,12 @@ It copies the individual parts and produces a single flashable image in
 - with `--web`: a `flash/` dir (ESP Web Tools page + manifest) for browser
   flashing
 
+The packaging profile follows the environment name. CYD environments use
+`esp32`, 4 MB DIO flash, and bootloader offset `0x1000`. S3 environments use
+`esp32s3`, 16 MB QIO flash, and bootloader offset `0x0`. Both profiles keep the
+partition table at `0x8000`, `boot_app0.bin` at `0xe000`, and the application at
+`0x10000`.
+
 ---
 
 ## Workflow 1 — `ci.yml` (build & test)
@@ -103,7 +109,7 @@ use the Actions API, which the read token already covers).
 | `tools-tests` | `python3 tools/test_panel.py` — bench probe tool tests (stdlib only). |
 | `toolchain-consistency` | `python3 tools/check_toolchain_consistency.py` — fails if the pinned versions disagree across `platformio.ini`, the workflows, and this doc's toolchain table. |
 | `mock-os-tests` | `python3 docs/test_mock_os.py` — OpenSprinkler emulator contract tests. |
-| `firmware-build` | Builds + packages prod, then diag; uploads two artifacts. |
+| `firmware-build` | Builds and packages production and diagnostic firmware for both boards; uploads four artifacts. |
 
 **`firmware-build` artifacts** (names suffixed with the short SHA so multiple
 builds are distinguishable; `tools/flash.sh` and `tools/ota.sh` match them by
@@ -111,8 +117,12 @@ prefix):
 
 - `cyd-35r-firmware-<sha>` — production, packaged with `--web`
 - `cyd-35r-diag-firmware-<sha>` — diagnostic
+- `s3-touch-35-firmware-<sha>` - S3 production, packaged with `--web`
+- `s3-touch-35-diag-firmware-<sha>` - S3 diagnostic
 
-These artifacts are what the local bench tools consume. See
+The local `flash.sh` and `ota.sh` helpers currently select the CYD artifact
+names. S3 artifacts include their own browser-flash page and can also be flashed
+manually with esptool using the ESP32-S3 profile. See
 [Flashing artifacts](#flashing-what-ci-built) below.
 
 The job caches `~/.platformio` + `~/.cache/pip` keyed on `platformio.ini`'s
@@ -132,11 +142,12 @@ hash (`pio-fw-…`) to keep incremental builds fast.
 (`refs/tags/` stripped, or the dispatch input) and the short SHA like `ci.yml`.
 Tags containing `-rc` (e.g. `v1.2.0-rc1`) are marked **prerelease**.
 
-**Build:** same toolchain env and **prod-then-diag** order as `ci.yml`,
+**Build:** same toolchain env and build-then-package ordering as `ci.yml`,
 exporting both `GIT_SHA` and `FW_VERSION` on each `pio run` so the released
-binaries carry the version string. Unlike `ci.yml`, **there is no build cache**
-— a release builds from a clean runner so a poisoned cache can never taint a
-published image (releases are rare; the extra minute is worth it).
+binaries carry the version string. Each environment is packaged before the next
+environment is built. Unlike `ci.yml`, **there is no build cache** because a
+release builds from a clean runner so a poisoned cache can never taint a
+published image.
 
 **Publish:** assets are staged, then published with the **`gh` CLI**
 (`gh release create` on first run, `gh release upload --clobber` on a dispatch
@@ -152,6 +163,10 @@ Diag assets are renamed so they don't collide with the production parts:
 | `bootloader.bin`, `partitions.bin`, `boot_app0.bin`, `firmware.bin` | prod individual parts |
 | `diag-merged-firmware.bin` | diag merged image (renamed) |
 | `diag-firmware.bin` | diag app partition (renamed) |
+| `s3-merged-firmware.bin` | S3 production single 0x0 image |
+| `s3-bootloader.bin`, `s3-partitions.bin`, `s3-boot_app0.bin`, `s3-firmware.bin` | S3 production individual parts |
+| `s3-diag-merged-firmware.bin` | S3 diagnostic merged image |
+| `s3-diag-firmware.bin` | S3 diagnostic app partition |
 | `manifest.json` | version-pinned web-flasher manifest (see below) |
 | `SHA256SUMS` | `sha256sum` over every `.bin` + `manifest.json` (relative names) |
 
@@ -160,14 +175,17 @@ Diag assets are renamed so they don't collide with the production parts:
 `flash/manifest.json` in the repo points at a **relative** path
 (`../merged-firmware.bin`) and carries `version: "ci-artifact"` — that's for the
 per-artifact browser-flash page. The **release** manifest is regenerated with
-`version` = the tag and `parts[0].path` = the **absolute** release download URL:
+`version` = the tag and each build points to its **absolute** release download
+URL:
 
 ```
 https://github.com/gregose/opensprinkler-panel/releases/download/<tag>/merged-firmware.bin
+https://github.com/gregose/opensprinkler-panel/releases/download/<tag>/s3-merged-firmware.bin
 ```
 
-so the web flasher installs the release image standalone, always tracking the
-latest release. `new_install_prompt_erase: true` is preserved.
+The manifest has an `ESP32` build for the CYD and an `ESP32-S3` build for the
+Waveshare board. ESP Web Tools selects the matching image from the connected
+chip. `new_install_prompt_erase: true` is preserved.
 
 ### Cutting a release
 
