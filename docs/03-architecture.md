@@ -223,6 +223,14 @@ the same code serves both board variants. The exact divider ratio and ADC-Vref
 calibration are confirmed empirically on the bench via the diagnostic firmware's
 `a` (ADC/battery probe) command before the ratio is trusted.
 
+- **S3 board (`ESP32-S3-Touch-LCD-3.5`) PWR button:** The AXP2101's PWRKEY defaults
+  are used as-is: a short press powers the board on from off, and holding PWR for
+  ~6 s cuts all rails, even if firmware is wedged. This is bench-confirmed in
+  battery mode. We deliberately do **not** implement a firmware graceful shutdown:
+  the panel is only a display and must not stop irrigation, while NVS changes are
+  written synchronously with no state to flush; depleted-battery cutoff is handled
+  by `setSysPowerDownVoltage(2600)` in `board_s3.cpp`.
+
 ## Signal indicators
 
 Two Wi-Fi RSSI readouts in the top bar (see `01`, `02`):
