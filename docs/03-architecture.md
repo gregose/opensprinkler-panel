@@ -147,13 +147,13 @@ optional/nice-to-have.
 
 ## Wireless updates (OTA + network logs)
 
-OTA is a first-class production feature, always compiled into `cyd-35r`. **Why
-it works:** OTA rewrites only the **app partition** — the bootloader, partition
-table, and **NVS** (Wi-Fi creds + `os_host` + `os_pw_md5` + `ota_pass` +
-`dev_log`) are left intact, so connectivity and config survive every OTA.
-Contrast the USB `flash.sh` path, which writes `merged-firmware.bin` at `0x0`
-(**full flash → wipes NVS**); use USB only for bootstrap/recovery, then OTA for
-iteration.
+OTA is a first-class production feature, always compiled into `cyd-35r` and
+`s3-touch-35`. **Why it works:** OTA rewrites only the **app partition**. The
+bootloader, partition table, and **NVS** (Wi-Fi creds + `os_host` +
+`os_pw_md5` + `ota_pass` + `dev_log`) are left intact, so connectivity and
+config survive every OTA. Contrast the USB `flash.sh` path, which writes the
+board's merged image at `0x0` (**full flash → wipes NVS**); use USB only for
+bootstrap/recovery, then OTA for iteration.
 
 - **OTA responder:** `ArduinoOTA` (framework built-in) compiled unconditionally.
   `ArduinoOTA.begin()` is called at runtime **only when the NVS `ota_pass` key
@@ -165,10 +165,12 @@ iteration.
   (default false, toggled via the config portal). When `dev_log` is false,
   `TeeSerial` forwards to UART0 only — no open port, negligible overhead.
 - **Local push (no compiler):** `tools/ota.sh` downloads the **app-only
-  `firmware.bin`** from the CI artifact (not the merged bin) and pushes it with
-  the standalone **`espota.py`** (Python only — mirrors how `flash.sh` shells out
-  to `esptool`). CI bundles `espota.py` into the production artifact so the
-  local bridge stays PlatformIO-free.
+  `firmware.bin`** from the selected board's CI artifact (not the merged bin)
+  and pushes it with the standalone **`espota.py`** (Python only, mirroring how
+  `flash.sh` shells out to `esptool`). Pass `--board s3` to `flash.sh` or
+  `ota.sh` for the `s3-touch-35` board; both default to `cyd`. CI bundles
+  `espota.py` into each production artifact so the local bridge stays
+  PlatformIO-free.
 - **Local logs:** `tools/logs.sh` connects to the TCP log port, tees to
   `logs/serial.log`, and auto-reconnects across OTA reboots (same ergonomics as
   `monitor.sh`).

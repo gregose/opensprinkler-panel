@@ -48,8 +48,9 @@ worktrees) under `.bench-tmp/` too, and `rm -rf .bench-tmp` when done.
 
 Options:
 
+- `--board cyd|s3` selects the target board (default: `cyd`).
 - `--diag` flashes the diagnostic bring-up firmware
-  (`cyd-35r-diag-firmware-<sha>`) instead of the production firmware.
+  for the selected board instead of the production firmware.
 - `--port /dev/ttyUSB0` overrides auto-detection.
 - `--run-id 1234567890` flashes a specific workflow run.
 - `--repo gregose/opensprinkler-panel` overrides the current repository remote.
@@ -58,11 +59,11 @@ Each CI run publishes production and diagnostic artifacts for both supported
 boards, suffixed with the short commit SHA. The CYD artifacts are
 `cyd-35r-firmware-<sha>` and `cyd-35r-diag-firmware-<sha>`; the S3 artifacts are
 `s3-touch-35-firmware-<sha>` and `s3-touch-35-diag-firmware-<sha>`. `flash.sh`
-resolves the selected CYD artifact by prefix, downloads it with
+resolves the selected board artifact by prefix, downloads it with
 `gh run download`, finds
 `merged-firmware.bin`, then writes it at `0x0`. It prints the **resolved
-artifact name** (`Flashing cyd-35r-firmware-<sha> ...`) so you can confirm you
-flashed the build you intended.
+artifact name** (`Flashing s3-touch-35-firmware-<sha> ...`) so you can confirm
+you flashed the build you intended.
 
 ## Flash a tagged release
 
@@ -70,15 +71,17 @@ flashed the build you intended.
 ./tools/flash.sh --release           # latest published release
 ./tools/flash.sh --release v1.0.0    # a specific tag
 ./tools/flash.sh --release --diag    # the diagnostic image from the latest release
+./tools/flash.sh --release --board s3 # the S3 image from the latest release
 ```
 
 Instead of a CI artifact, `--release [tag]` downloads the merged image from a
 [GitHub Release](../docs/07-ci-cd-and-releases.md#workflow-2--releaseyml-tagged-releases)
 with `gh release download` — the newest release when no tag (or `latest`) is
-given, otherwise the named tag. It grabs `merged-firmware.bin` (production) or,
-with `--diag`, `diag-merged-firmware.bin`, and writes it at `0x0` like the
-artifact path. `--release` can't be combined with `--branch`/`--pr`/`--run-id`.
-`--port` and `--repo` still apply.
+given, otherwise the named tag. CYD uses `merged-firmware.bin` (production) or
+`diag-merged-firmware.bin`; S3 uses `s3-merged-firmware.bin` or
+`s3-diag-merged-firmware.bin`. All are written at `0x0` like the artifact path.
+`--release` can't be combined with `--branch`/`--pr`/`--run-id`. `--port` and
+`--repo` still apply.
 
 > `flash.sh` writes the merged image at `0x0`, which **wipes NVS** (Wi-Fi + OS
 > config + touch calibration + `ota_pass` + `dev_log`). Snapshot NVS with
@@ -88,9 +91,10 @@ artifact path. `--release` can't be combined with `--branch`/`--pr`/`--run-id`.
 
 ## OTA (wireless firmware updates)
 
-ArduinoOTA is compiled into the production `cyd-35r` firmware. It is activated
-at runtime only when the NVS `ota_pass` key is non-empty, so a panel with no
-OTA password never exposes an unauthenticated update endpoint on the LAN.
+ArduinoOTA is compiled into the production `cyd-35r` and `s3-touch-35`
+firmware. It is activated at runtime only when the NVS `ota_pass` key is
+non-empty, so a panel with no OTA password never exposes an unauthenticated
+update endpoint on the LAN.
 
 After the one-time USB bootstrap you can push new firmware over Wi-Fi. NVS
 (Wi-Fi creds, OpenSprinkler config, OTA password, dev_log flag) survives every
@@ -103,6 +107,7 @@ Flash the production firmware with `merged-firmware.bin` at `0x0`:
 
 ```bash
 ./tools/flash.sh
+./tools/flash.sh --board s3
 ```
 
 On first boot with an empty NVS, the panel starts the Wi-Fi provisioning
@@ -117,11 +122,13 @@ in the config portal. The log server is off by default.
 
 ```bash
 ./tools/ota.sh
+./tools/ota.sh --board s3
 ```
 
-`ota.sh` downloads the latest successful `cyd-35r-firmware-<sha>` artifact
-for the current branch, extracts `firmware.bin` (app partition only) and the
-bundled `espota.py`, then calls:
+`ota.sh` downloads the latest successful `cyd-35r-firmware-<sha>` artifact by
+default, or `s3-touch-35-firmware-<sha>` with `--board s3`, for the current
+branch. It extracts `firmware.bin` (app partition only) and the bundled
+`espota.py`, then calls:
 
 ```
 python3 espota.py -i ospanel.local -a <ota_pass> -f firmware.bin
@@ -129,6 +136,7 @@ python3 espota.py -i ospanel.local -a <ota_pass> -f firmware.bin
 
 Options:
 
+- `--board cyd|s3` selects the target board artifact (default: `cyd`).
 - `--host <ip-or-hostname>` overrides the default `ospanel.local` mDNS name.
 - `--ota-pass <password>` provides the OTA password (required).
 - `--branch <name>`, `--pr <number>`, `--run-id <id>` select the CI run
@@ -170,7 +178,7 @@ Options:
 
 ### Full OTA iteration cycle
 
-1. Push a branch. CI builds `cyd-35r-firmware-<sha>`.
+1. Push a branch. CI builds the board-specific production artifacts.
 2. Run `./tools/logs.sh` (once) to stream runtime logs.
 3. Run `./tools/ota.sh` to push the new firmware — the panel reboots, `logs.sh`
    reconnects automatically.
