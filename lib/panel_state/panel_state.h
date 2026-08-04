@@ -91,6 +91,17 @@ class PanelState {
   static constexpr uint32_t kDefaultSleepTimeoutMs = 300000;  // 5 minutes
   static constexpr uint32_t kSyncTimeoutMs = 20000;
   static constexpr int kConfirmGraceSeconds = 10;
+  // #143: hysteresis window for the panel-manual session latch. A panel-launched
+  // manual run must survive a transient idle/non-manual /jc poll (auto-advance
+  // boundary gap, launch lag, pause blip, a single dropped poll) without being
+  // reclassified as external. Picked comfortably above 2x the ~2 s poll interval
+  // and well under the 15 s minimum run time.
+  static constexpr uint32_t kManualSessionGraceMs = 5000;
+  // #143: when auto-advancing a panel-manual run, an idle /jc poll only means the
+  // station genuinely finished (as opposed to a transient mid-run idle blip) when
+  // the dead-reckoned countdown is essentially spent. Used to drive advancing off
+  // an observed finish when a dead-reckoned tick() did not fire the boundary first.
+  static constexpr int kAutoAdvanceFinishSlackS = 3;
 
   explicit PanelState(StationModel& model,
                       int default_run_time_s = kDefaultRunTime);
@@ -143,7 +154,9 @@ class PanelState {
   uint32_t sleep_timeout_ms() const { return sleep_timeout_ms_; }
   // Milliseconds since the last touch/interaction (idle age). Useful for
   // heartbeat/telemetry so a bench can watch the idle timer climb.
-  uint32_t idle_elapsed_ms() const { return now_ms_ - last_touch_ms_; }
+  uint32_t idle_elapsed_ms() const {
+    return (now_ms_ >= last_touch_ms_) ? now_ms_ - last_touch_ms_ : 0u;
+  }
 
   const PanelView& view() const { return view_; }
   DesiredIntent desired() const { return desired_; }
@@ -174,6 +187,16 @@ class PanelState {
   bool refreshing_ = false;
   bool initialized_ = false;
   bool run_initiated_by_panel_ = false;
+  // #143: durable panel-manual session latch. Manual stations report pid=99 in
+  // /jc whether the panel or the OpenSprinkler app started them, so the panel's
+  // own memory is the only way to tell "mine" from "external". Unlike the raw
+  // run_initiated_by_panel_ boolean (which a single idle poll wipes), this latch
+  // survives transient idle/non-manual polls via identity + hysteresis, so an
+  // ongoing panel manual run can't be misread as external and stuck in
+  // Phase::ProgramRunning.
+  bool panel_manual_active_ = false;   // a panel-launched manual session is live
+  int panel_manual_sid_ = -1;          // sid the panel launched (identity)
+  uint32_t panel_manual_seen_ms_ = 0;  // last confirm/launch (hysteresis anchor)
   // 0-based index of a program the panel launched via /mp. Manual program runs
   // report pid=254 in /jc (program_index=-1), so we remember what we started to
   // label the running screen. Cleared on idle.
@@ -183,6 +206,8 @@ class PanelState {
   void queue_desired_run(int sid);
   void queue_desired_stop();
   void clear_desired();
+  void begin_panel_manual_session(int sid);
+  void end_panel_manual_session();
   void enter_running(int sid, int countdown_s);
   void enter_program_running(const ProgramRunState& prog_state);
   void enter_idle();
