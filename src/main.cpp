@@ -52,7 +52,14 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+// Backlight enable pin: GPIO27 on the CYD, IO6 on the Waveshare S3 panel. The
+// LEDC PWM setup and sleep-dimming logic below are board-agnostic — only the pin
+// differs — so it is selected here by the board build flag.
+#if defined(OSP_BOARD_S3)
+static constexpr int PIN_BACKLIGHT = 6;
+#else
 static constexpr int PIN_BACKLIGHT = 27;
+#endif
 static constexpr int PIN_BOOT_BTN  = 0;
 static constexpr int LEDC_CHANNEL  = 0;
 static constexpr int LEDC_FREQ_HZ  = 5000;
@@ -248,7 +255,9 @@ static const char* phase_snapshot_name(uint32_t phase) {
 
 // Save a pointer to the real UART0 Serial before the #define redirect below,
 // so TeeSerial methods and OTA callbacks can reach UART0 without the macro.
-static HardwareSerial* const g_hw_serial = &Serial;
+// decltype(&Serial) resolves to HardwareSerial* on the CYD and HWCDC* on the S3
+// (native USB-CDC); both expose the begin/write/printf surface used below.
+static decltype(&Serial) const g_hw_serial = &Serial;
 
 static constexpr uint16_t LOG_PORT = 2323;
 static WiFiServer g_log_server(LOG_PORT);
@@ -1246,11 +1255,20 @@ static void touchpad_read_cb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
             StateLock lock;
             if (lock && g_ps) idle_ms = g_ps->idle_elapsed_ms();
         }
+        // getTouchRawZ() is a TFT_eSPI resistive-touch API that only compiles
+        // when TOUCH_CS is defined (CYD only). The S3 uses capacitive touch with
+        // no pressure reading, so report z=0 there.
+#if defined(OSP_BOARD_CYD)
+        const unsigned int touch_z =
+            injected ? 0u : static_cast<unsigned int>(tft.getTouchRawZ());
+#else
+        const unsigned int touch_z = 0u;
+#endif
         Serial.printf("[%s] x=%u y=%u z=%u idle_ms=%lu\n",
                       injected ? "INJ" : "TOUCH",
                       static_cast<unsigned int>(tx),
                       static_cast<unsigned int>(ty),
-                      injected ? 0u : static_cast<unsigned int>(tft.getTouchRawZ()),
+                      touch_z,
                       static_cast<unsigned long>(idle_ms));
     }
     g_touch_was_pressed = true;
