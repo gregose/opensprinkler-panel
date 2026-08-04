@@ -50,7 +50,9 @@ jobs:
           pio pkg install -e cyd-35r
           pio pkg install -e native
           pio pkg install -e sim
-
+          # S3 production env (#137). Its board libs (SensorLib/XPowersLib/
+          # TCA9554) are pre-warmed globally below; resolve the env itself here.
+          pio pkg install -e s3-touch-35
       # Pre-warm libraries that individual milestones will add to platformio.ini
       # DURING the agent's work phase, after these setup steps have already run.
       # The agent's runtime firewall may block registry.platformio.org, so fetch
