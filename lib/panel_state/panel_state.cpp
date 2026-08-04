@@ -103,6 +103,21 @@ void PanelState::clear_desired() {
   update_sync_view();
 }
 
+// #143: start (or re-affirm) a panel-manual session. Records the launched sid as
+// the session identity and anchors the hysteresis grace at now. Called from
+// queue_desired_run(), so it also covers advance/prev/reselect and every
+// auto-advance target the tick loop queues.
+void PanelState::begin_panel_manual_session(int sid) {
+  panel_manual_active_ = true;
+  panel_manual_sid_ = sid;
+  panel_manual_seen_ms_ = now_ms_;
+}
+
+void PanelState::end_panel_manual_session() {
+  panel_manual_active_ = false;
+  panel_manual_sid_ = -1;
+}
+
 void PanelState::queue_desired_run(int sid) {
   desired_.kind = IntentKind::Run;
   desired_.sid = sid;
@@ -111,6 +126,7 @@ void PanelState::queue_desired_run(int sid) {
   desired_at_ms_ = now_ms_;
   run_initiated_by_panel_ = true;
   view_.run_initiated_by_panel = true;
+  begin_panel_manual_session(sid);
   update_sync_view();
 }
 
@@ -591,10 +607,37 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     }
   }
 
-  const bool external_manual =
-      prog_state.run_class == RunClass::ManualRun && !run_initiated_by_panel_;
+  // #143: classify the live manual run using the durable panel-manual session
+  // latch rather than the raw run_initiated_by_panel_ boolean. The run is ours
+  // when the latch is active AND either the currently-on manual station is the
+  // sid we launched, or a panel manual Run intent is still in flight (an
+  // advance/reselect/auto-advance where the controller may momentarily still
+  // report the previous station). Any manual run we can't account for is a
+  // genuine external run and is rendered as the program "Station Queue" view.
+  const bool manual_run = (prog_state.run_class == RunClass::ManualRun);
+  const bool manual_intent_pending = (desired_.kind == IntentKind::Run);
+  bool manual_is_ours = false;
+  if (manual_run && panel_manual_active_) {
+    manual_is_ours =
+        (jc_running_sid == panel_manual_sid_) || manual_intent_pending;
+  }
+  if (manual_is_ours) {
+    // Re-affirm the session: refresh the hysteresis anchor so the grace only
+    // counts genuine idle time, and keep identity aligned with the station the
+    // controller actually reports on (handles the advance handoff).
+    panel_manual_seen_ms_ = now_ms_;
+    if (jc_running_sid != -1) panel_manual_sid_ = jc_running_sid;
+    run_initiated_by_panel_ = true;
+    view_.run_initiated_by_panel = true;
+  }
+  const bool external_manual = manual_run && !manual_is_ours;
   ProgramRunState manual_q;
   if (external_manual) {
+    // A pid=99 run the panel did not launch ends any (mismatched) session latch
+    // and drops the panel-initiated flags so it renders/sleeps as external.
+    end_panel_manual_session();
+    run_initiated_by_panel_ = false;
+    view_.run_initiated_by_panel = false;
     manual_q = resolve_manual_queue_state(ps, static_cast<long>(jc.devt));
   }
 
@@ -632,7 +675,18 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
         (desired_.kind == IntentKind::RunProgram);
     const bool manual_launch_pending =
         (desired_.kind == IntentKind::Run) && !sync_stale();
-    if (!program_launch_pending && !manual_launch_pending) {
+    // #143: the panel-manual session is durable. This idle/non-manual poll only
+    // ends it once the controller has been idle past the hysteresis grace (which
+    // absorbs the auto-advance boundary gap, launch lag, a pause blip and a
+    // single dropped poll). A still-pending manual launch (/cm not yet reflected)
+    // always holds the session; sync_stale() bounds a never-confirmed launch so a
+    // failed /cm self-heals. run_initiated_by_panel_ is cleared only when neither
+    // a program launch is pending nor a manual session is latched.
+    if (panel_manual_active_ && !manual_launch_pending &&
+        (now_ms_ - panel_manual_seen_ms_) > kManualSessionGraceMs) {
+      end_panel_manual_session();
+    }
+    if (!program_launch_pending && !panel_manual_active_) {
       // Idle: clear run_initiated flag so backlight/sleep behave normally.
       run_initiated_by_panel_ = false;
       view_.run_initiated_by_panel = false;
@@ -640,6 +694,11 @@ void PanelState::on_jc(const JcData& jc, uint32_t now_ms) {
     if (await_close_) {
       finish_idle_transition();
     } else if (desired_.kind == IntentKind::Stop) {
+      // Stop confirmed idle: end the panel-manual session now so a later
+      // external pid=99 run isn't claimed as ours during the grace window.
+      end_panel_manual_session();
+      run_initiated_by_panel_ = false;
+      view_.run_initiated_by_panel = false;
       enter_idle();
       clear_desired();
       return;

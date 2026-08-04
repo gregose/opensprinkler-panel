@@ -513,6 +513,163 @@ void test_panel_manual_run_survives_idle_poll_gap_before_running() {
   TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
 }
 
+// #143: an ongoing panel manual run must survive a transient idle /jc poll even
+// when the panel's launch intent has already been confirmed and cleared. This is
+// the exact stuck-in-"Station Queue" defect: a single idle frame used to wipe
+// run_initiated_by_panel_, so the very next pid=99 poll was misread as an
+// external manual run and pinned into Phase::ProgramRunning (where the
+// auto-advance tick, gated on Phase::Running, never fired again). The durable
+// panel-manual session latch must keep the run classified as ours.
+void test_panel_manual_run_survives_transient_idle_after_confirm() {
+  Fixture f(3);
+  f.ps.set_auto_advance(true);
+  start_panel_manual(f, 1, 30, 1000);  // sid1 running; intent confirmed+cleared
+  TEST_ASSERT_FALSE(f.ps.has_desired());
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  // A /jc poll lands inside the sub-second idle gap (station off, ps empty) with
+  // no pending intent. The latch (not the raw flag) must keep the run ours.
+  f.ps.on_jc(make_jc_idle(3), 3000);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // The resumed pid=99 poll must land back on the manual-station view.
+  f.ps.on_jc(make_jc_running(1, 25), 4000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: the idle gap at an auto-advance boundary (old station off, /cm restarts
+// the next) must not flip a panel manual run into the program queue view.
+void test_panel_manual_run_survives_auto_advance_boundary_gap() {
+  Fixture f(3);
+  f.ps.set_auto_advance(true);
+  start_panel_manual(f, 0, 1, 1000);  // sid0, 1s left, panel-owned
+  f.ps.tick(2000);                    // countdown hits 0 -> queue sid1
+  TEST_ASSERT_TRUE(f.ps.awaiting_close());
+  TEST_ASSERT_EQUAL_INT(1, f.ps.desired().sid);
+
+  // Boundary idle-gap poll: must not flip to ProgramRunning, latch preserved.
+  f.ps.on_jc(make_jc_idle(3), 2500);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // Deliver /cm for sid1, then the controller confirms it running.
+  f.ps.mark_desired_delivered();
+  f.ps.on_jc(make_jc_running(1, 58), 3000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: two back-to-back idle polls (a slow/dropped-poll variant) within the
+// hysteresis grace still keep the panel manual run ours.
+void test_panel_manual_run_survives_two_idle_poll_gap() {
+  Fixture f(3);
+  start_panel_manual(f, 1, 40, 1000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+
+  f.ps.on_jc(make_jc_idle(3), 2000);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  f.ps.on_jc(make_jc_idle(3), 3500);  // still within 5s grace of last confirm
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  f.ps.on_jc(make_jc_running(1, 35), 4000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(1, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: launch-lag variant — two pre-run idle polls right after /cm (the
+// original "first 1-2 starts" symptom) must not clear the panel identity.
+void test_panel_manual_run_survives_two_idle_polls_before_running() {
+  Fixture f(3);
+  f.ps.select_station(0);
+  f.ps.mark_desired_delivered();  // /cm sent
+  f.ps.on_jc(make_jc_idle(3), 1000);
+  f.ps.on_jc(make_jc_idle(3), 2000);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+
+  f.ps.on_jc(make_jc_running(0, 58), 2500);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: a pause blip mid manual run (valve turns OFF for a frame before the
+// controller reports pq) must not flip to the program queue view; the resumed
+// paused-manual poll stays ours.
+void test_panel_manual_run_survives_pause_transition() {
+  Fixture f(3);
+  start_panel_manual(f, 0, 40, 1000);
+
+  // Transient idle as the valve drops before pause state is reported.
+  f.ps.on_jc(make_jc_idle(3), 2000);
+  TEST_ASSERT_NOT_EQUAL((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // Controller now reports the manual run paused (sbits off, pq set, pid=99).
+  f.ps.on_jc(make_jc_manual_paused(0, 40, 270), 2500);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Running, (int)f.ps.view().phase);
+  TEST_ASSERT_EQUAL_INT(0, f.ps.view().running_sid);
+  TEST_ASSERT_TRUE(f.ps.view().paused);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: a genuinely external single manual station (the panel launched nothing)
+// must still be classified external and rendered as the program "Station Queue"
+// view — the latch must not over-claim.
+void test_external_single_manual_station_is_program_running() {
+  Fixture f(3);
+  f.ps.on_jc(make_jc_running(2, 45), 1000);  // no panel launch
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_FALSE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: a natural end / real stop — idle persists past the hysteresis grace —
+// clears the panel-manual session so it self-heals: a later external pid=99 run
+// is correctly classified external, and the panel sleeps normally.
+void test_panel_manual_session_clears_after_grace_and_self_heals() {
+  Fixture f(3);
+  start_panel_manual(f, 0, 30, 1000);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // Idle within grace: still latched.
+  f.ps.on_jc(make_jc_idle(3), 2000);
+  TEST_ASSERT_TRUE(f.ps.view().run_initiated_by_panel);
+
+  // Idle past grace (5s from last confirm at 1000): session ends.
+  f.ps.on_jc(make_jc_idle(3), 8000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
+  TEST_ASSERT_FALSE(f.ps.view().run_initiated_by_panel);
+
+  // A later external manual run is now correctly external (Station Queue).
+  f.ps.on_jc(make_jc_running(2, 40), 9000);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_FALSE(f.ps.view().run_initiated_by_panel);
+}
+
+// #143: hitting Stop ends the panel-manual session once the controller confirms
+// idle, so an external pid=99 run that follows is classified external.
+void test_stop_ends_panel_manual_session() {
+  Fixture f(3);
+  start_panel_manual(f, 0, 30, 1000);
+  f.ps.stop();
+  f.ps.mark_desired_delivered();
+  f.ps.on_jc(make_jc_idle(3), 2000);  // stop confirmed idle
+  TEST_ASSERT_EQUAL_INT((int)Phase::Idle, (int)f.ps.view().phase);
+  TEST_ASSERT_FALSE(f.ps.has_desired());
+
+  // External manual run right after the stop must be external, not ours.
+  f.ps.on_jc(make_jc_running(1, 40), 2500);
+  TEST_ASSERT_EQUAL_INT((int)Phase::ProgramRunning, (int)f.ps.view().phase);
+  TEST_ASSERT_FALSE(f.ps.view().run_initiated_by_panel);
+}
+
+
 
 void test_program_run_counts_up_through_full_station_set() {
   // Program index 0 (pid=1) with 3 stations. Station 0 already finished
@@ -1455,6 +1612,14 @@ int main(int, char**) {
   RUN_TEST(test_external_manual_queue_uses_program_running_phase);
   RUN_TEST(test_external_manual_queue_stays_program_running_when_one_remains);
   RUN_TEST(test_panel_manual_run_survives_idle_poll_gap_before_running);
+  RUN_TEST(test_panel_manual_run_survives_transient_idle_after_confirm);
+  RUN_TEST(test_panel_manual_run_survives_auto_advance_boundary_gap);
+  RUN_TEST(test_panel_manual_run_survives_two_idle_poll_gap);
+  RUN_TEST(test_panel_manual_run_survives_two_idle_polls_before_running);
+  RUN_TEST(test_panel_manual_run_survives_pause_transition);
+  RUN_TEST(test_external_single_manual_station_is_program_running);
+  RUN_TEST(test_panel_manual_session_clears_after_grace_and_self_heals);
+  RUN_TEST(test_stop_ends_panel_manual_session);
   RUN_TEST(test_program_run_classified_as_program_running_phase);
   RUN_TEST(test_program_run_counts_up_through_full_station_set);
   RUN_TEST(test_external_program_run_shows_live_queue_without_identity);
