@@ -39,11 +39,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Do not use bundler-cache here: this workflow publishes to Pages (and now
+      # redeploys on release), so a restorable gem cache trips zizmor's
+      # cache-poisoning audit. Install gems fresh instead.
       - name: Setup Ruby
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+      - name: Install site dependencies
+        run: bundle install
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Build with Jekyll
