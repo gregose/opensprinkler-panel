@@ -25,15 +25,10 @@ framework_dir="$HOME/.platformio/packages/framework-arduinoespressif32"
 boot_app0_bin="$framework_dir/tools/partitions/boot_app0.bin"
 
 chip="esp32"
-flash_mode="dio"
-flash_freq="40m"
-flash_size="4MB"
 bootloader_offset="0x1000"
 chip_family="ESP32"
 if [[ "$env_name" == *s3* ]]; then
   chip="esp32s3"
-  flash_mode="qio"
-  flash_size="16MB"
   bootloader_offset="0x0"
   chip_family="ESP32-S3"
 fi
@@ -58,11 +53,12 @@ else
     "$espota_src" >&2
 fi
 
+# Preserve each build's native flash header: S3 DIO at 80 MHz, CYD DIO at 40 MHz.
 python3 -m esptool --chip "$chip" merge-bin \
   -o "$out_dir/merged-firmware.bin" \
-  --flash-mode "$flash_mode" \
-  --flash-freq "$flash_freq" \
-  --flash-size "$flash_size" \
+  --flash-mode keep \
+  --flash-freq keep \
+  --flash-size keep \
   "$bootloader_offset" "$out_dir/bootloader.bin" \
   0x8000 "$out_dir/partitions.bin" \
   0xe000 "$out_dir/boot_app0.bin" \
