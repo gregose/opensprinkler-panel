@@ -13,6 +13,8 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+  # Automated tag-cut releases dispatch this workflow from release.yml because
+  # GITHUB_TOKEN-created releases suppress release events. This covers UI publishes.
   release:
     types: [published]
   workflow_dispatch:

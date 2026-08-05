@@ -16,6 +16,7 @@ on:
 # Needed to create the release and upload assets.
 permissions:
   contents: write
+  actions: write
 
 # Toolchain versions are kept identical to .github/workflows/ci.yml and
 # copilot-setup-steps.yml so every build uses the same tools. The ESP32
@@ -214,3 +215,16 @@ jobs:
             fi
             gh release create "$VERSION" "${create_flags[@]}" "${files[@]}"
           fi
+
+      # GITHUB_TOKEN-created releases do not emit release events to workflows.
+      # workflow_dispatch is exempt from that recursion guard.
+      - name: Trigger Pages redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          if [[ "$PRERELEASE" == "true" ]]; then
+            echo 'Prerelease - skipping Pages redeploy'
+            exit 0
+          fi
+          gh workflow run pages.yml --ref main
