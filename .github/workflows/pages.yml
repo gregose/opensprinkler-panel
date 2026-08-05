@@ -13,10 +13,14 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
-  # Automated tag-cut releases dispatch this workflow from release.yml because
-  # GITHUB_TOKEN-created releases suppress release events. This covers UI publishes.
+  # Covers releases published manually through the GitHub UI.
   release:
     types: [published]
+  # GITHUB_TOKEN-created releases suppress release events. workflow_run is not
+  # subject to that recursion guard, so completed Release runs redeploy the flasher.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 # Least privilege at the workflow level; the deploy job elevates to what Pages needs.
@@ -74,7 +78,11 @@ jobs:
   deploy:
     name: Deploy to Pages
     needs: build
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       pages: write
