@@ -7,7 +7,7 @@
       "chipFamily": "ESP32",
       "parts": [
         {
-          "path": "https://github.com/gregose/opensprinkler-panel/releases/latest/download/merged-firmware.bin",
+          "path": "merged-firmware.bin",
           "offset": 0
         }
       ]
@@ -16,7 +16,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/gregose/opensprinkler-panel/releases/latest/download/s3-merged-firmware.bin",
+          "path": "s3-merged-firmware.bin",
           "offset": 0
         }
       ]

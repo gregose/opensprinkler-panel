@@ -13,6 +13,8 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+  release:
+    types: [published]
   workflow_dispatch:
 
 # Least privilege at the workflow level; the deploy job elevates to what Pages needs.
@@ -48,6 +50,16 @@ jobs:
         env:
           JEKYLL_ENV: production
         run: bundle exec jekyll build -s site -d _site
+      - name: Fetch latest release firmware for same-origin flashing
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p _site/flash
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern 'merged-firmware.bin' \
+            --pattern 's3-merged-firmware.bin' \
+            --dir _site/flash --clobber
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -56,7 +68,7 @@ jobs:
   deploy:
     name: Deploy to Pages
     needs: build
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       pages: write
