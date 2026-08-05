@@ -6,9 +6,10 @@ nav_order: 7
 
 # Updating firmware
 
-The web flasher always installs the **latest release**, so updating is the same
-as installing. It detects a classic ESP32 CYD or ESP32-S3 panel and selects the
-matching release image automatically:
+The site serves the **latest stable release's** merged firmware images directly
+to the web flasher, so updating is the same as installing. The flasher detects a
+classic ESP32 CYD or ESP32-S3 panel and selects the matching image
+automatically:
 
 1. Connect the panel over **USB-C**.
 2. Open the [web flasher]({{ '/flash/' | relative_url }}) in Chrome or Edge.

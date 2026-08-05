@@ -13,6 +13,8 @@ on:
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+  release:
+    types: [published]
   workflow_dispatch:
 
 # Least privilege at the workflow level; the deploy job elevates to what Pages needs.
@@ -37,17 +39,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Do not use bundler-cache here: this workflow publishes to Pages (and now
+      # redeploys on release), so a restorable gem cache trips zizmor's
+      # cache-poisoning audit. Install gems fresh instead.
       - name: Setup Ruby
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+      - name: Install site dependencies
+        run: bundle install
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Build with Jekyll
         env:
           JEKYLL_ENV: production
         run: bundle exec jekyll build -s site -d _site
+      - name: Fetch latest release firmware for same-origin flashing
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p _site/flash
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern 'merged-firmware.bin' \
+            --pattern 's3-merged-firmware.bin' \
+            --dir _site/flash --clobber
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -56,7 +72,7 @@ jobs:
   deploy:
     name: Deploy to Pages
     needs: build
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       pages: write
