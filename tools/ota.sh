@@ -9,7 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 # tools/ota.sh — push production firmware over Wi-Fi via ArduinoOTA.
 #
 # Resolves the CI run the same way flash.sh does (--pr / --branch / --run-id),
-# downloads the cyd-35r-firmware artifact, then pushes the app-only
+# downloads the selected board's production artifact, then pushes the app-only
 # firmware.bin via espota.py (bundled in the artifact by CI).  The board must
 # have ArduinoOTA active (set ota_pass in the config portal to enable it).
 #
@@ -17,6 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 # rewrites only the app partition.  See docs/03 §"Wireless updates".
 
 artifact_prefix="cyd-35r-firmware"
+board="cyd"
 branch=""
 host="ospanel.local"
 ota_pass=""
@@ -26,7 +27,8 @@ run_id=""
 
 usage() {
   cat <<'EOF'
-Usage: tools/ota.sh [--branch <name> | --pr <number> | --run-id <id>]
+Usage: tools/ota.sh [--board <cyd|s3>]
+                    [--branch <name> | --pr <number> | --run-id <id>]
                     [--host <ip-or-hostname>] [--ota-pass <password>]
                     [--repo <owner/name>]
 
@@ -36,6 +38,7 @@ The board must have OTA enabled: set ota_pass in the config portal to activate
 ArduinoOTA.  One-time bootstrap: flash merged-firmware.bin via tools/flash.sh.
 
 Options:
+  --board <cyd|s3>    Select the board artifact (default: cyd).
   --branch <name>      Use the most recent successful CI run on this branch.
                        Defaults to the current git branch.
   --pr <number>        Use the most recent successful CI run for this PR.
@@ -97,6 +100,14 @@ resolve_candidate_run_ids() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --board)
+      board="${2:-}"
+      if [[ -z "$board" ]]; then
+        printf '%s\n' "--board requires cyd or s3." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
     --branch)
       branch="${2:-}"
       shift 2
@@ -132,6 +143,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$board" in
+  cyd)
+    artifact_prefix="cyd-35r-firmware"
+    ;;
+  s3)
+    artifact_prefix="s3-touch-35-firmware"
+    ;;
+  *)
+    printf "Invalid board '%s'. Expected cyd or s3.\n" "$board" >&2
+    exit 1
+    ;;
+esac
 
 if [[ -n "$branch" && -n "$pr" ]]; then
   printf '%s\n' "Use either --branch or --pr, not both." >&2

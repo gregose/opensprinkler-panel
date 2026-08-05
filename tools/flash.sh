@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# tools/flash.sh — download a merged CYD firmware image and flash it at 0x0.
+# tools/flash.sh: download a merged firmware image and flash it at 0x0.
 #
 # Two sources are supported:
 #   * GitHub Actions CI artifacts (default): matched by --branch/--pr/--run-id.
@@ -14,6 +14,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_venv.sh"
 
 artifact_prefix="cyd-35r-firmware"
+board="cyd"
 branch=""
 port=""
 pr=""
@@ -22,22 +23,24 @@ run_id=""
 release=""
 release_mode="no"
 is_diag="no"
+esptool_chip="esp32"
 state_dir="${MON_STATE_DIR:-.serial-monitor}"
 
 usage() {
   cat <<'EOF'
-Usage: tools/flash.sh [--diag] [--branch <name> | --pr <number> | --run-id <id> | --release [tag]] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
+Usage: tools/flash.sh [--board <cyd|s3>] [--diag] [--branch <name> | --pr <number> | --run-id <id> | --release [tag]] [--port <device>] [--repo <owner/name>] [--state-dir <path>]
 
 Download the merged firmware and flash it at 0x0.
 
-By default the production firmware is downloaded from a GitHub Actions CI
-artifact (cyd-35r-firmware-<sha>); pass --diag for the diagnostic bring-up
-firmware (cyd-35r-diag-firmware-<sha>).
+By default the CYD production firmware is downloaded from a GitHub Actions CI
+artifact (cyd-35r-firmware-<sha>). Use --board s3 for the S3 artifact
+(s3-touch-35-firmware-<sha>). Pass --diag for the corresponding diagnostic
+artifact.
 
 With --release [tag] the firmware is instead pulled from a GitHub Release:
 with no tag (or 'latest') the newest release is used, otherwise the given tag.
---diag grabs the diag-merged-firmware.bin asset instead of the prod
-merged-firmware.bin.
+CYD release assets are merged-firmware.bin and diag-merged-firmware.bin. S3
+release assets are s3-merged-firmware.bin and s3-diag-merged-firmware.bin.
 
 If tools/monitor.sh is running, it releases the port for the flash and resumes
 afterward automatically.
@@ -122,9 +125,16 @@ resolve_candidate_run_ids() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --diag)
-      artifact_prefix="cyd-35r-diag-firmware"
       is_diag="yes"
       shift
+      ;;
+    --board)
+      board="${2:-}"
+      if [[ -z "$board" ]]; then
+        printf '%s\n' "--board requires cyd or s3." >&2
+        exit 1
+      fi
+      shift 2
       ;;
     --release)
       release_mode="yes"
@@ -172,6 +182,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$board" in
+  cyd)
+    esptool_chip="esp32"
+    if [[ "$is_diag" == "yes" ]]; then
+      artifact_prefix="cyd-35r-diag-firmware"
+    else
+      artifact_prefix="cyd-35r-firmware"
+    fi
+    ;;
+  s3)
+    esptool_chip="esp32s3"
+    if [[ "$is_diag" == "yes" ]]; then
+      artifact_prefix="s3-touch-35-diag-firmware"
+    else
+      artifact_prefix="s3-touch-35-firmware"
+    fi
+    ;;
+  *)
+    printf "Invalid board '%s'. Expected cyd or s3.\n" "$board" >&2
+    exit 1
+    ;;
+esac
+
 if [[ -n "$branch" && -n "$pr" ]]; then
   printf '%s\n' "Use either --branch or --pr, not both." >&2
   exit 1
@@ -196,9 +229,14 @@ flash_source=""
 
 if [[ "$release_mode" == "yes" ]]; then
   # Pull the merged image from a GitHub Release instead of a CI artifact. The
-  # release workflow publishes merged-firmware.bin (prod) and
-  # diag-merged-firmware.bin (diag) as top-level release assets.
-  if [[ "$is_diag" == "yes" ]]; then
+  # Release assets use an s3- prefix for the S3 board.
+  if [[ "$board" == "s3" ]]; then
+    if [[ "$is_diag" == "yes" ]]; then
+      asset="s3-diag-merged-firmware.bin"
+    else
+      asset="s3-merged-firmware.bin"
+    fi
+  elif [[ "$is_diag" == "yes" ]]; then
     asset="diag-merged-firmware.bin"
   else
     asset="merged-firmware.bin"
@@ -273,4 +311,4 @@ for _ in $(seq 1 50); do
 done
 
 printf 'Flashing %s from %s to %s\n' "$flash_source" "$repo" "$port"
-python3 -m esptool --chip esp32 --port "$port" write-flash 0x0 "$merged_firmware"
+python3 -m esptool --chip "$esptool_chip" --port "$port" write-flash 0x0 "$merged_firmware"
