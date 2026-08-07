@@ -22,6 +22,8 @@ enum class LinkState {
   AuthError,
 };
 
+enum class StatusLed { Off, On, SlowBlink, FastBlink };
+
 enum class TopBarState {
   Clean,
   Syncing,
@@ -220,6 +222,7 @@ class PanelState {
 };
 
 std::string format_rain_delay(int seconds_remaining);
+StatusLed derive_status_led(const PanelView& view, bool provisioning);
 TopBarState resolve_top_bar_state(const PanelView& view);
 std::string top_bar_status_text(const PanelView& view);
 

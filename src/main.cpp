@@ -892,6 +892,7 @@ static bool start_provisioning_portal(const String& current_ssid,
                                       int current_sleep_s,
                                       bool non_destructive,
                                       bool* touch_cal_reset_out) {
+    board_status_led_set(osp::StatusLed::On);
     draw_boot_setup(PROVISION_AP_SSID);
 
     char host_buf[65] = {};
@@ -1513,6 +1514,15 @@ static void build_grid() {
 static void ui_update() {
     if (!g_ps) return;
     const osp::PanelView& v = g_ps->view();
+
+    static bool status_led_initialized = false;
+    static osp::StatusLed last_status_led = osp::StatusLed::Off;
+    const osp::StatusLed status_led = osp::derive_status_led(v, false);
+    if (!status_led_initialized || status_led != last_status_led) {
+        board_status_led_set(status_led);
+        last_status_led = status_led;
+        status_led_initialized = true;
+    }
 
     // Firmware-only status the pure view model can't carry: panel Wi-Fi, battery
     // gauge sample, configured host string. Everything else comes from PanelView.
