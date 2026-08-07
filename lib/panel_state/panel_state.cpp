@@ -56,6 +56,19 @@ std::string format_rain_delay(int seconds_remaining) {
   return std::to_string(days) + "d " + std::to_string(remaining_hours) + "h";
 }
 
+StatusLed derive_status_led(const PanelView& view, bool provisioning) {
+  if (provisioning) return StatusLed::On;
+  if (view.link == LinkState::Offline ||
+      view.link == LinkState::AuthError) {
+    return StatusLed::FastBlink;
+  }
+  if (view.phase == Phase::Running ||
+      view.phase == Phase::ProgramRunning) {
+    return StatusLed::SlowBlink;
+  }
+  return StatusLed::Off;
+}
+
 TopBarState resolve_top_bar_state(const PanelView& view) {
   if (view.show_syncing) return TopBarState::Syncing;
   if (view.link == LinkState::AuthError) return TopBarState::AuthError;

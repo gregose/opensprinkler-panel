@@ -19,6 +19,8 @@
 #include <Wire.h>
 #include <TFT_eSPI.h>
 
+#include "panel_state.h"
+
 // S3-only libraries (registry-resolved; pre-warmed in copilot-setup-steps.yml;
 // never vendored into lib/). Same set + versions as the s3-touch-35-diag env.
 #define XPOWERS_CHIP_AXP2101       // select the AXP2101 variant in XPowersLib
@@ -227,6 +229,23 @@ int board_battery_read() {
 
 bool board_external_power() {
     return pmu.isVbusIn();
+}
+
+void board_status_led_set(osp::StatusLed state) {
+    switch (state) {
+        case osp::StatusLed::Off:
+            pmu.setChargingLedMode(XPOWERS_CHG_LED_OFF);
+            break;
+        case osp::StatusLed::On:
+            pmu.setChargingLedMode(XPOWERS_CHG_LED_ON);
+            break;
+        case osp::StatusLed::SlowBlink:
+            pmu.setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ);
+            break;
+        case osp::StatusLed::FastBlink:
+            pmu.setChargingLedMode(XPOWERS_CHG_LED_BLINK_4HZ);
+            break;
+    }
 }
 
 #endif  // OSP_BOARD_S3

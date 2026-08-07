@@ -1632,6 +1632,66 @@ void test_manual_vs_program_paused_status_word() {
   TEST_ASSERT_EQUAL_INT((int)TopBarState::Clean, (int)resolve_top_bar_state(v));
 }
 
+void test_status_led_mapping() {
+  PanelView v;
+
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::Off,
+                        (int)derive_status_led(v, false));
+
+  v.phase = Phase::Running;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::SlowBlink,
+                        (int)derive_status_led(v, false));
+
+  v.phase = Phase::ProgramRunning;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::SlowBlink,
+                        (int)derive_status_led(v, false));
+
+  v.phase = Phase::Idle;
+  v.link = LinkState::Offline;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::FastBlink,
+                        (int)derive_status_led(v, false));
+
+  v.link = LinkState::AuthError;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::FastBlink,
+                        (int)derive_status_led(v, false));
+
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::On,
+                        (int)derive_status_led(v, true));
+}
+
+void test_status_led_off_fallthrough_states() {
+  PanelView v;
+  v.link = LinkState::Reconnecting;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::Off,
+                        (int)derive_status_led(v, false));
+
+  v.link = LinkState::Connected;
+  v.enabled = false;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::Off,
+                        (int)derive_status_led(v, false));
+
+  v.enabled = true;
+  v.rain_delay_seconds_remaining = 3600;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::Off,
+                        (int)derive_status_led(v, false));
+
+  v.rain_delay_seconds_remaining = 0;
+  v.paused = true;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::Off,
+                        (int)derive_status_led(v, false));
+}
+
+void test_status_led_precedence() {
+  PanelView v;
+  v.phase = Phase::Running;
+  v.link = LinkState::Offline;
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::FastBlink,
+                        (int)derive_status_led(v, false));
+
+  TEST_ASSERT_EQUAL_INT((int)StatusLed::On,
+                        (int)derive_status_led(v, true));
+}
+
 
 
 int main(int, char**) {
@@ -1748,6 +1808,11 @@ int main(int, char**) {
   RUN_TEST(test_manual_external_pause_resume_reconciles_from_pq);
   RUN_TEST(test_manual_resume_line_mmss_formatting);
   RUN_TEST(test_manual_vs_program_paused_status_word);
+
+  // #159 - AXP2101 charge LED status mapping
+  RUN_TEST(test_status_led_mapping);
+  RUN_TEST(test_status_led_off_fallthrough_states);
+  RUN_TEST(test_status_led_precedence);
 
   return UNITY_END();
 }

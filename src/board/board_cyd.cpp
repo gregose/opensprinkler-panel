@@ -15,6 +15,8 @@
 #include <Preferences.h>
 #include <TFT_eSPI.h>
 
+#include "panel_state.h"
+
 // The display object is owned by main.cpp (it is also used by the pre-LVGL boot
 // screens and the LVGL flush callback, which stay in main.cpp). We share it here
 // so the board seams drive the same instance.
@@ -127,6 +129,10 @@ int board_battery_read() {
 
 bool board_external_power() {
     return false;  // no charger-status telemetry on this board
+}
+
+void board_status_led_set(osp::StatusLed) {
+    // The classic ESP32 CYD has no controllable LED.
 }
 
 #endif  // OSP_BOARD_CYD

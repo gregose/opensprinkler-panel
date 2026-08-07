@@ -10,6 +10,10 @@
 
 #include <cstdint>
 
+namespace osp {
+enum class StatusLed;
+}
+
 // One-time panel reset, run before board_display_init(). No-op on boards whose
 // display has no software-driven reset line (e.g. CYD, TFT_RST=-1).
 void board_reset_panel();
@@ -39,3 +43,6 @@ int board_battery_read();
 // battery. Drives the top-bar charge glyph. Boards with no charger telemetry
 // (e.g. CYD) return false.
 bool board_external_power();
+
+// Set the board's controllable status LED pattern.
+void board_status_led_set(osp::StatusLed state);
