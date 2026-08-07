@@ -49,6 +49,12 @@ The CYD is sold under several brands. The firmware was validated on the Hosyond
 - Buy it (non-affiliate): <https://www.amazon.com/dp/B0D93MBWC2>
 - Reference wiki: <https://www.lcdwiki.com/3.5inch_ESP32-32E_Display>
 
+The Waveshare ESP32-S3-Touch-LCD-3.5 (non-B) is the ESP32-S3 board:
+
+- Buy it (affiliate link, supports the project): <https://amzn.to/3S0PVHd>
+- Buy it (non-affiliate): <https://www.amazon.com/dp/B0F3WS2W5R>
+- Reference (pin map, specs): <https://docs.waveshare.com/ESP32-S3-Touch-LCD-3.5>
+
 Both boards are shipped in every release and can be flashed from the browser.
 Full details are in the [hardware guide](https://www.nullmethod.com/opensprinkler-panel/hardware/)
 and the pin maps in [`docs/03-architecture.md`](docs/03-architecture.md).

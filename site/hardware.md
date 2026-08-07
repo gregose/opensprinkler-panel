@@ -48,6 +48,10 @@ The Waveshare board has an ESP32-S3, 16 MB flash, 8 MB PSRAM, an ST7796 SPI
 display, and an FT6336 capacitive touchscreen. Its AXP2101 PMIC reports battery
 and external-power state. It flashes over the ESP32-S3 native USB-CDC port.
 
+- **Buy it (affiliate link, supports the project):** [Amazon (affiliate)](https://amzn.to/3S0PVHd)
+- **Buy it (non-affiliate):** [Amazon: B0F3WS2W5R](https://www.amazon.com/dp/B0F3WS2W5R)
+- **Reference (pin map, specs):** [Waveshare wiki: ESP32-S3-Touch-LCD-3.5](https://docs.waveshare.com/ESP32-S3-Touch-LCD-3.5)
+
 ## Flashing drivers
 
 To flash over USB you may need a USB-to-serial driver so the board's port shows
