@@ -10,6 +10,6 @@
 # identical to the tools that produce the binaries.
 #
 # Install into a repo-local .venv with: ./tools/setup.sh
-platformio==6.1.19
+platformio==6.2.0
 esptool==5.3.1
 pyserial>=3.5
